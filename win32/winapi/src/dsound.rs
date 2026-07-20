@@ -17,8 +17,11 @@ use zerocopy::FromBytes;
 
 use crate::{dllexport::win32flags, heap::Heap, kernel32, locked_state::LockedState};
 
-/// When true, write a debug `out.wav` of the mixed output.
-const WRITE_WAV: bool = false;
+/// Set THESEUS_DSOUND_WAV to a path to dump the mixed output there, for
+/// checking what the mixer actually produced.
+fn wav_debug_path() -> Option<String> {
+    std::env::var("THESEUS_DSOUND_WAV").ok()
+}
 
 /// Host mix rate, in stereo i16.
 const HOST_RATE: u32 = 44100;
@@ -166,11 +169,7 @@ fn init() {
             buffers: HashMap::default(),
             stream: None,
             heap: None,
-            write: if WRITE_WAV {
-                Some(WavWrite::new("out.wav"))
-            } else {
-                None
-            },
+            write: wav_debug_path().map(|path| WavWrite::new(&path)),
         });
     }
 }

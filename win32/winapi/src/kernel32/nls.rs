@@ -1,6 +1,6 @@
 use runtime::Context;
 
-use crate::{Ptr, stub};
+use crate::Ptr;
 
 #[win32_derive::dllexport]
 pub fn GetACP(_ctx: &mut Context) -> u32 {

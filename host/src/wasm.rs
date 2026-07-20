@@ -64,18 +64,19 @@ impl Window {
     }
 }
 
+/// Audio output. Not wired up to the browser yet, so it silently swallows
+/// what the mixer produces rather than stopping the program.
 pub struct AudioStream {}
 impl AudioStream {
     pub fn queued_bytes(&self) -> u32 {
-        todo!()
-    }
-    pub fn put_data(&self, _data: &[u8]) {
-        todo!()
+        // Reporting a full queue keeps the mixer from producing audio that
+        // has nowhere to go.
+        u32::MAX
     }
 
-    pub fn resume(&self) {
-        todo!()
-    }
+    pub fn put_data(&self, _data: &[u8]) {}
+
+    pub fn resume(&self) {}
 }
 
 pub struct Host {
@@ -104,7 +105,7 @@ impl Host {
     }
 
     pub fn create_audio_stream(&self, _spec: host::AudioSpec) -> AudioStream {
-        todo!()
+        AudioStream {}
     }
 
     pub fn time(&self) -> u32 {
@@ -218,6 +219,22 @@ impl WebHostSendChannel {
                     3 => host::Message::MouseUp(mouse),
                     4 => host::Message::MouseMove(mouse),
                     _ => unreachable!(),
+                }
+            }
+            5 | 6 => {
+                // The front end translates the browser's KeyboardEvent.code
+                // into the PC scan code and VK_* pair the guest expects; see
+                // the SDL host's key table for the mapping.
+                let key = host::KeyMessage {
+                    scancode: buf[1] as u8,
+                    vkey: buf[2] as u8,
+                    extended: buf[3] & 1 != 0,
+                    repeat: buf[3] & 2 != 0,
+                };
+                if buf[0] == 5 {
+                    host::Message::KeyDown(key)
+                } else {
+                    host::Message::KeyUp(key)
                 }
             }
             msg => todo!("host message {msg}"),

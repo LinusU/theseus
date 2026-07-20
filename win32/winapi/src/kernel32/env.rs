@@ -20,7 +20,7 @@ pub fn GetEnvironmentStrings(_ctx: &mut Context) -> u32 {
     */
     // An empty environment block: a list of nul-terminated strings,
     // terminated by an extra nul.
-    let mut kernel32 = lock();
+    let kernel32 = lock();
     let addr = kernel32.process_heap.alloc(&mut _ctx.memory, 2);
     _ctx.memory[addr..][..2].fill(0);
     addr
