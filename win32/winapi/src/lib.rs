@@ -5,6 +5,7 @@
 pub mod advapi32;
 pub mod bitmap_format;
 pub mod ddraw;
+pub mod dinput;
 mod dllexport;
 pub mod dsound;
 pub mod gdi32;
@@ -12,7 +13,9 @@ mod handle;
 mod heap;
 pub mod kernel32;
 mod locked_state;
+pub mod msacm32;
 pub mod msvcrt;
+pub mod ole32;
 mod point;
 mod ptr;
 mod rect;
@@ -50,7 +53,7 @@ pub fn load(exe: &EXEData) -> Context {
     host::init();
     crate::trace::init(&thesesus_trace());
 
-    let memory_size = 32 << 20;
+    let memory_size = 64 << 20;
     let memory = Memory::leak_new(memory_size);
 
     kernel32::init_state(exe.image_base, exe.resources.clone());

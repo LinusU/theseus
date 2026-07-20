@@ -178,9 +178,10 @@ impl Surface {
                 let entries = &palette.entries;
                 for &p in pixels {
                     let entry = &entries[p as usize];
-                    buf.push(entry.peBlue);
-                    buf.push(entry.peGreen);
+                    // ABGR8888 layout: R,G,B,A in byte order.
                     buf.push(entry.peRed);
+                    buf.push(entry.peGreen);
+                    buf.push(entry.peBlue);
                     buf.push(0);
                 }
                 buf.as_slice()
@@ -194,6 +195,51 @@ impl Surface {
                 texture.set_pixels(pixels32, self.width * 4);
             }
         }
+    }
+
+    /// Present this surface's own pixel buffer to the window it targets, used
+    /// when an app draws directly to the primary surface (via Lock or Blt)
+    /// instead of flipping. No-op for non-primary surfaces.
+    pub fn present(&mut self, mem: &mut Memory) {
+        let Some(addr) = self.pixels else {
+            return;
+        };
+        let Target::Window(window) = &self.target else {
+            return;
+        };
+        // We have no texture of our own; borrow the back buffer's.
+        let Some(back) = self.attached.clone() else {
+            return;
+        };
+        let size = self.width * self.height * self.bytes_per_pixel;
+        let pixels = &mem[addr..][..size as usize];
+        let mut buf = vec![];
+        let pixels32: &[u8] = match self.bytes_per_pixel {
+            1 => {
+                let Some(palette) = self.palette.as_ref() else {
+                    return;
+                };
+                let palette = palette.borrow();
+                let entries = &palette.entries;
+                for &p in pixels {
+                    let entry = &entries[p as usize];
+                    // ABGR8888 layout: R,G,B,A in byte order.
+                    buf.push(entry.peRed);
+                    buf.push(entry.peGreen);
+                    buf.push(entry.peBlue);
+                    buf.push(0);
+                }
+                buf.as_slice()
+            }
+            4 => pixels,
+            _ => return,
+        };
+        let mut back = back.borrow_mut();
+        let Target::Texture(texture) = &mut back.target else {
+            return;
+        };
+        texture.set_pixels(pixels32, self.width * 4);
+        window.borrow_mut().host.render(texture);
     }
 
     pub fn flip(&mut self, mem: &mut Memory) {

@@ -72,6 +72,19 @@ elif [[ $1 == "sbaitso-read" ]]; then
         --entry-point 1072
     )
     cargo run -p tc -- "${args[@]}"
+elif [[ $1 == "winpin" ]]; then
+    game_dir=~/projects_hobby/pinball-soccer-98/game_run/Soccer98
+    args=(
+        --exe $game_dir/winpin.exe
+        --out out/winpin
+        --scan-memory --scan-immediates --scan-prologues
+    )
+    # feedback loop: addresses discovered at runtime (see THESEUS_MISSING_ADDRS)
+    if [[ -f out/winpin/missing.txt ]]; then
+        args+=(--entry-points-file out/winpin/missing.txt)
+    fi
+    cargo run -p tc -- "${args[@]}"
+    cargo build --profile fast -p winpin
 elif [[ $1 == "sbaitso-sbtalker" ]]; then
     args=(
         --trace

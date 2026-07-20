@@ -201,6 +201,9 @@ pub struct CodeGen<'a> {
     mem: &'a Memory,
     blocks: &'a HashMap<u32, Block>,
     trace: bool,
+    /// Statically-known jump targets with no discovered block; each gets a
+    /// panicking stub function so the output still compiles and runs.
+    unknown: std::collections::BTreeSet<u32>,
     /// Output buffer.
     buf: String,
 }
@@ -212,6 +215,7 @@ impl<'a> CodeGen<'a> {
             mem: &state.mem,
             blocks: &state.blocks,
             trace,
+            unknown: Default::default(),
             buf: Default::default(),
         }
     }
@@ -219,6 +223,19 @@ impl<'a> CodeGen<'a> {
     fn line(&mut self, s: impl AsRef<str>) {
         self.buf.push_str(s.as_ref());
         self.buf.push('\n');
+    }
+
+    /// Codegen a Cont expression for a jump to a statically known address.
+    /// Safe to evaluate in argument position: an unknown target resolves to a
+    /// stub that only panics once actually jumped to.
+    pub fn resolve_cont(&mut self, addr: u32) -> String {
+        if let Some(block) = self.blocks.get(&addr) {
+            format!("Cont({})", block.name())
+        } else {
+            log::warn!("static jmp to unknown block {addr:08x}");
+            self.unknown.insert(addr);
+            format!("Cont(unk_{addr:x})")
+        }
     }
 
     fn todo(&mut self, msg: String) {
@@ -242,9 +259,24 @@ impl<'a> CodeGen<'a> {
                             Module::Windows(_) => todo!(),
                         }
                     }
-                    if let Err(e) = self.gen_instr(instr) {
-                        self.line(format!("panic!({:?});", e.to_string()));
-                        break;
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.gen_instr(instr)
+                    }));
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            self.line(format!("panic!({:?});", e.to_string()));
+                            break;
+                        }
+                        Err(_) => {
+                            // Usually a junk block from a misidentified code pointer.
+                            log::warn!("codegen panic at {} {}", instr.ip, instr.iced);
+                            self.line(format!(
+                                "todo!({:?});",
+                                format!("codegen failed: {}", instr.iced)
+                            ));
+                            break;
+                        }
                     }
                 }
 
@@ -252,8 +284,8 @@ impl<'a> CodeGen<'a> {
                 if last.iced.flow_control() == iced_x86::FlowControl::Next
                     || (last.iced.mnemonic() == iced_x86::Mnemonic::Call && last.hint.is_some())
                 {
-                    let next_block = self.blocks.get(&last.next_ip().to_addr()).unwrap();
-                    self.line(format!("Cont({})", next_block.name()));
+                    let cont = self.resolve_cont(last.next_ip().to_addr());
+                    self.line(cont);
                 }
 
                 self.line("}\n");
@@ -369,6 +401,14 @@ ctx.cpu.regs.esp = {stack_pointer:#x};
         for &addr in &addrs {
             let block = self.blocks.get(&addr).unwrap();
             self.gen_block(&block);
+        }
+
+        for addr in self.unknown.iter().copied().collect::<Vec<_>>() {
+            self.line(format!(
+                "pub fn unk_{addr:x}(_ctx: &mut Context) -> Cont {{
+    runtime::unknown_block({addr:#x})
+}}\n"
+            ));
         }
 
         self.line(format!(

@@ -19,6 +19,7 @@ members = [
   "out/sbaitso/sbtalker",
   "out/thread",
   "out/winapi",
+  "out/winpin",
   "out/zig_hello",
   "runtime",
   "tc",

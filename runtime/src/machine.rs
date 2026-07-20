@@ -50,7 +50,11 @@ impl Context {
         // TODO: this would be faster as a hash table, or even a perfect hash if we really cared.
         let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
             self.dump();
-            panic!("jmp to unknown addr {addr:#08x}");
+            crate::log_missing_addr(addr);
+            panic!(
+                "jmp to unknown addr {addr:#010x}; \
+                 re-run tc with --entry-points-file (see THESEUS_MISSING_ADDRS)"
+            );
         };
         Cont(self.blocks[index].1)
     }
