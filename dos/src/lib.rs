@@ -159,6 +159,7 @@ pub fn load(exe: &EXEData, command_line: Option<&str>) -> Context {
         thread_id: 1,
         memory,
         blocks: exe.blocks,
+        block_map: runtime::BlockMap::get_or_init(exe.blocks),
         recent: [Context::return_from_x86; 4],
     };
     ctx.cpu.real_mode = true;

@@ -21,12 +21,77 @@ impl CPU {
     }
 }
 
+/// Address -> block lookup.
+///
+/// The generated block table is sorted, so a binary search over it works, but
+/// indirect jumps are on the hot path of every call through a function pointer
+/// or COM vtable. This turns the search's chain of dependent loads into a
+/// single probe in the common case.
+pub struct BlockMap {
+    /// Power-of-two sized, holding indices into `blocks`, or EMPTY.
+    slots: Box<[u32]>,
+    mask: u32,
+    blocks: &'static [(u32, ContFn)],
+}
+
+impl BlockMap {
+    const EMPTY: u32 = u32::MAX;
+
+    /// The lookup table for the program's blocks, built once and shared by
+    /// every thread.
+    pub fn get_or_init(blocks: &'static [(u32, ContFn)]) -> &'static BlockMap {
+        static MAP: std::sync::OnceLock<BlockMap> = std::sync::OnceLock::new();
+        MAP.get_or_init(|| BlockMap::new(blocks))
+    }
+
+    fn new(blocks: &'static [(u32, ContFn)]) -> Self {
+        // A load factor of at most 1/2 keeps probe chains short.
+        let capacity = (blocks.len() * 2).next_power_of_two().max(2);
+        let mask = capacity as u32 - 1;
+        let mut slots = vec![Self::EMPTY; capacity].into_boxed_slice();
+        for (index, &(addr, _)) in blocks.iter().enumerate() {
+            let mut slot = Self::hash(addr) & mask;
+            while slots[slot as usize] != Self::EMPTY {
+                slot = (slot + 1) & mask;
+            }
+            slots[slot as usize] = index as u32;
+        }
+        BlockMap {
+            slots,
+            mask,
+            blocks,
+        }
+    }
+
+    /// Fibonacci hashing. Code addresses are dense and share their high bits,
+    /// so the multiply is what spreads them across the table.
+    fn hash(addr: u32) -> u32 {
+        addr.wrapping_mul(0x9E37_79B9)
+    }
+
+    pub fn get(&self, addr: u32) -> Option<ContFn> {
+        let mut slot = Self::hash(addr) & self.mask;
+        loop {
+            let index = self.slots[slot as usize];
+            if index == Self::EMPTY {
+                return None;
+            }
+            let (block_addr, func) = self.blocks[index as usize];
+            if block_addr == addr {
+                return Some(func);
+            }
+            slot = (slot + 1) & self.mask;
+        }
+    }
+}
+
 pub struct Context {
     pub cpu: CPU,
     pub thread_handle: u32,
     pub thread_id: u32,
     pub memory: Memory,
     pub blocks: &'static [(u32, ContFn)],
+    pub block_map: &'static BlockMap,
     pub recent: [ContFn; 4],
 }
 
@@ -47,8 +112,7 @@ impl Context {
             self.dump();
             panic!("jmp to null ptr");
         }
-        // TODO: this would be faster as a hash table, or even a perfect hash if we really cared.
-        let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
+        let Some(func) = self.block_map.get(addr) else {
             self.dump();
             crate::log_missing_addr(addr);
             panic!(
@@ -56,7 +120,7 @@ impl Context {
                  re-run tc with --entry-points-file (see THESEUS_MISSING_ADDRS)"
             );
         };
-        Cont(self.blocks[index].1)
+        Cont(func)
     }
 
     pub fn proc_addr(&mut self, func: ContFn) -> u32 {

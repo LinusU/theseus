@@ -24,8 +24,9 @@ fn is_abs_memory_ref(instr: &iced_x86::Instruction) -> Option<u32> {
 
 /// If the instruction looks like a switch dispatch
 ///   jmp/call [reg*4 + table]
-/// where table is a constant, return the address of the table.
-fn is_jump_table_ref(instr: &iced_x86::Instruction) -> Option<u32> {
+/// where table is a constant, return the address of the table and the register
+/// indexing it.
+fn is_jump_table_ref(instr: &iced_x86::Instruction) -> Option<(u32, iced_x86::Register)> {
     let iced_x86::OpKind::Memory = instr.op0_kind() else {
         return None;
     };
@@ -42,7 +43,33 @@ fn is_jump_table_ref(instr: &iced_x86::Instruction) -> Option<u32> {
     if table < 0x1000 {
         return None;
     }
-    Some(table)
+    Some((table, instr.memory_index()))
+}
+
+/// If the instruction bounds a register to a small range — `and reg, mask` or
+/// `cmp reg, limit` — return how many values it can then hold. Compilers emit
+/// one of these right before a switch dispatch, which tells us exactly how long
+/// the jump table is.
+fn is_index_bound(instr: &iced_x86::Instruction) -> Option<(iced_x86::Register, usize)> {
+    use iced_x86::Mnemonic::*;
+    if !matches!(instr.mnemonic(), And | Cmp) {
+        return None;
+    }
+    if instr.op0_kind() != iced_x86::OpKind::Register {
+        return None;
+    }
+    let imm = match instr.op1_kind() {
+        iced_x86::OpKind::Immediate8 => instr.immediate8() as u32,
+        iced_x86::OpKind::Immediate8to32 | iced_x86::OpKind::Immediate32 => instr.immediate32(),
+        _ => return None,
+    };
+    // An `and` masks to 0..=mask, a `cmp` guards indices 0..=limit; both give
+    // the same count. Anything large is not a switch bound.
+    let count = (imm as usize).checked_add(1)?;
+    if count > 1024 {
+        return None;
+    }
+    Some((instr.op0_register().full_register(), count))
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -374,30 +401,77 @@ impl<'a> Traverse<'a> {
 
     /// Read a jump table: consecutive pointers into code, stopping at the first
     /// entry that doesn't look like one. Returns the number of entries found.
-    fn scan_jump_table(&mut self, table: u32) -> usize {
+    /// Queue the targets of a switch jump table.
+    ///
+    /// `known_len` comes from a bounds check before the dispatch, when there
+    /// was one. Knowing the length matters: without it we have to stop at the
+    /// first entry that doesn't look like code, and compilers happily place a
+    /// table whose first slot is unreachable padding.
+    fn scan_jump_table(&mut self, table: u32, known_len: Option<usize>) -> usize {
         if !self.seen_tables.insert(table) {
             return 0;
         }
+        // Entries usually run forward from the displacement, but MSVC also
+        // emits tables indexed by a negative register — `sub ecx, 4; jb ...;
+        // jmp [ecx*4 + table]` reaches table[-4..-1] — so look both ways.
+        let forward = self.scan_jump_table_from(table, 1, known_len);
+        let backward = self.scan_jump_table_from(table, -1, known_len);
+        forward + backward
+    }
+
+    /// Read consecutive code pointers from `table`, stepping by `direction`
+    /// entries. Without a known length, stops at the first value that isn't
+    /// plausible code; with one, reads exactly that many and skips the rest.
+    fn scan_jump_table_from(
+        &mut self,
+        table: u32,
+        direction: i32,
+        known_len: Option<usize>,
+    ) -> usize {
         let code = self.module.code_memory();
+        let limit = known_len.unwrap_or(2048);
         let mut addr = table;
         let mut count = 0;
-        while count < 2048 {
+        let mut found = 0;
+        while count < limit {
+            if direction < 0 {
+                let Some(prev) = addr.checked_sub(4) else { break };
+                addr = prev;
+            }
             if addr as usize + 4 > self.mem.bytes.len() {
                 break;
             }
             let target = self.mem.read::<u32>(addr);
-            if !code.contains(&target) || !self.looks_like_code(target) {
+            let valid = code.contains(&target) && self.looks_like_code(target);
+            if !valid && known_len.is_none() {
                 break;
             }
-            self.queue.enqueue(self.module.local_addr(target));
-            addr += 4;
+            if valid {
+                if direction > 0 {
+                    self.queue.enqueue(self.module.local_addr(target));
+                } else {
+                    // Backwards we may be reading the code that precedes a
+                    // normal table, so treat these as candidates: they get
+                    // dropped if they'd land inside a block we already know.
+                    self.add_candidate(target);
+                }
+                found += 1;
+            }
+            if direction > 0 {
+                addr += 4;
+            }
             count += 1;
         }
-        if count > 0 {
+        if found > 0 {
             // Mark the table as data so prologue scanning doesn't look inside it.
-            self.data_ranges.push(table..addr);
+            let range = if direction > 0 {
+                table..addr
+            } else {
+                addr..table
+            };
+            self.data_ranges.push(range);
         }
-        count
+        found
     }
 
     /// A `call [addr]` through a non-IAT slot: if the slot statically holds a
@@ -425,7 +499,10 @@ impl<'a> Traverse<'a> {
 
         // Code addresses noticed along the way, processed after the decode loop
         // (decoding borrows self.mem).
-        let mut found_tables: Vec<u32> = Vec::new();
+        // (table address, entry count if a bounds check revealed it)
+        let mut found_tables: Vec<(u32, Option<usize>)> = Vec::new();
+        // Index bounds seen so far in this block, keyed by register.
+        let mut index_bounds: HashMap<iced_x86::Register, usize> = HashMap::new();
         let mut found_slots: Vec<u32> = Vec::new();
         let mut found_imms: Vec<u32> = Vec::new();
 
@@ -446,6 +523,10 @@ impl<'a> Traverse<'a> {
 
             if instr.mnemonic() == iced_x86::Mnemonic::Out && !self.module.is_dos() {
                 anyhow::bail!("'out' instruction in non-DOS code");
+            }
+
+            if let Some((reg, count)) = is_index_bound(&instr) {
+                index_bounds.insert(reg, count);
             }
 
             let new_instr = instrs.push_mut(Instr {
@@ -506,9 +587,10 @@ impl<'a> Traverse<'a> {
                                     log::warn!("{ip} {instr}  ; indirect via memory");
                                 }
                             } else if !self.module.segment_addressed()
-                                && let Some(table) = is_jump_table_ref(&instr)
+                                && let Some((table, index)) = is_jump_table_ref(&instr)
                             {
-                                found_tables.push(table);
+                                let count = index_bounds.get(&index.full_register()).copied();
+                                found_tables.push((table, count));
                             } else {
                                 log::warn!("{ip} {instr}  ; indirect via memory");
                             }
@@ -535,8 +617,8 @@ impl<'a> Traverse<'a> {
             break;
         }
 
-        for table in found_tables {
-            let n = self.scan_jump_table(table);
+        for (table, count) in found_tables {
+            let n = self.scan_jump_table(table, count);
             log::info!("jump table at {table:08x}: {n} entries");
         }
         for slot in found_slots {
