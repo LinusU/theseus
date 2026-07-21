@@ -20,6 +20,7 @@ pub use wasm::*;
 
 static HOST: LazyLock<Host> = LazyLock::new(Host::new);
 
+#[derive(Clone, Copy)]
 pub struct AudioSpec {
     pub sample_rate: u32,
     pub channels: u32,

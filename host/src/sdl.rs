@@ -438,6 +438,18 @@ impl AudioStream {
             check(sdl::audio::SDL_ResumeAudioStreamDevice(self.0));
         }
     }
+
+}
+
+/// Name of the audio backend SDL selected, for diagnostics.
+pub fn audio_driver() -> String {
+    unsafe {
+        let name = sdl::audio::SDL_GetCurrentAudioDriver();
+        if name.is_null() {
+            return "(none)".into();
+        }
+        std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+    }
 }
 
 impl Host {

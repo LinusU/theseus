@@ -6,9 +6,11 @@
 //! cursor, and [`pump`] mixes whatever is playing into the host stream.
 //!
 //! Nothing drives the mixer on its own: `pump` is called from the places the
-//! app passes through every frame (the message pump and ddraw's presentation),
-//! because a game that busy-waits on its own frame limiter never yields to us
-//! otherwise.
+//! app passes through anyway — the message pump, ddraw's presentation, and the
+//! DirectSound calls that report playback progress. That last one matters:
+//! a game that waits for a sound to finish by polling GetStatus never pumps
+//! messages meanwhile, and would wait forever on playback that only advanced
+//! when it moved on.
 
 use std::{collections::HashMap, sync::Mutex};
 
@@ -177,7 +179,9 @@ fn init() {
 impl State {
     fn heap(&mut self) -> &Heap {
         self.heap.get_or_insert_with(|| {
-            const HEAP_SIZE: u32 = 16 << 20;
+            // Games allocate a buffer per sound instance and are lax about
+            // releasing them, so leave plenty of room.
+            const HEAP_SIZE: u32 = 64 << 20;
             let addr = kernel32::lock()
                 .mappings
                 .alloc("dsound buffers".into(), HEAP_SIZE);
@@ -209,7 +213,11 @@ impl State {
             for slot in mixed.iter_mut() {
                 if buffer.cursor >= frames {
                     if !buffer.looping {
+                        // Reaching the end stops playback and rewinds, so
+                        // playing the same sound again starts it over rather
+                        // than replaying the silence past its end.
                         buffer.playing = false;
+                        buffer.cursor = 0.0;
                         break;
                     }
                     buffer.cursor %= frames;
@@ -548,6 +556,9 @@ pub mod IDirectSoundBuffer {
         pdwCurrentPlayCursor: u32,
         pdwCurrentWriteCursor: u32,
     ) -> u32 {
+        // Asking where playback is has to move it along first, or an app that
+        // polls in a tight loop would never see it advance.
+        pump(ctx);
         let state = lock();
         let Some(buffer) = state.buffers.get(&this) else {
             return DSERR_INVALIDPARAM;
@@ -642,6 +653,10 @@ pub mod IDirectSoundBuffer {
     pub fn GetStatus(ctx: &mut Context, this: u32, lpdwStatus: u32) -> u32 {
         const DSBSTATUS_PLAYING: u32 = 0x0001;
         const DSBSTATUS_LOOPING: u32 = 0x0004;
+        // Games wait for a sound to finish by polling this, without pumping
+        // messages meanwhile. Mixing here is what lets that wait end: otherwise
+        // the app waits for playback that only advances when the app moves on.
+        pump(ctx);
         let state = lock();
         let Some(buffer) = state.buffers.get(&this) else {
             return DSERR_INVALIDPARAM;
@@ -733,9 +748,14 @@ pub mod IDirectSoundBuffer {
             return DSERR_INVALIDPARAM;
         };
         // Play resumes from wherever the cursor was left, which is the start
-        // for a fresh buffer and where Stop left off otherwise.
+        // for a fresh buffer and where Stop left off otherwise. A buffer
+        // stopped exactly at its end has nothing left to resume, so start it
+        // over instead of playing nothing.
         buffer.playing = true;
         buffer.looping = dwFlags & DSBPLAY_LOOPING != 0;
+        if buffer.cursor >= buffer.frame_count() {
+            buffer.cursor = 0.0;
+        }
         DS_OK
     }
 
