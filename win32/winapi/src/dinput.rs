@@ -27,7 +27,7 @@ const DI_OK: u32 = 0;
 /// More events were buffered than the app's buffer could hold.
 const DI_BUFFEROVERFLOW: u32 = 1;
 const DIERR_DEVICENOTREG: u32 = 0x80040154;
-const DIERR_NOTACQUIRED: u32 = 0x80070015;
+const DIERR_NOTACQUIRED: u32 = 0x8007000c;
 const DIERR_INVALIDPARAM: u32 = 0x80070057;
 
 /// DIGDD_PEEK: leave the returned events in the buffer.
@@ -287,7 +287,8 @@ pub mod IDirectInputDevice {
             .input
             .borrow()
             .buffer_size(kind == DeviceKind::Keyboard);
-        ctx.memory.write::<u32>(pdiph + DIPROPDWORD_DWDATA, size as u32);
+        ctx.memory
+            .write::<u32>(pdiph + DIPROPDWORD_DWDATA, size as u32);
         DI_OK
     }
 
@@ -407,11 +408,7 @@ pub mod IDirectInputDevice {
         }
         ctx.memory.write::<u32>(pdwInOut, events.len() as u32);
 
-        if overflowed {
-            DI_BUFFEROVERFLOW
-        } else {
-            DI_OK
-        }
+        if overflowed { DI_BUFFEROVERFLOW } else { DI_OK }
     }
 
     #[win32_derive::dllexport]
@@ -430,7 +427,13 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetObjectInfo(_ctx: &mut Context, _this: u32, _pdidoi: u32, _dwObj: u32, _dwHow: u32) -> u32 {
+    pub fn GetObjectInfo(
+        _ctx: &mut Context,
+        _this: u32,
+        _pdidoi: u32,
+        _dwObj: u32,
+        _dwHow: u32,
+    ) -> u32 {
         todo!()
     }
 
@@ -445,7 +448,13 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _hinst: u32, _dwVersion: u32, _rguid: u32) -> u32 {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _hinst: u32,
+        _dwVersion: u32,
+        _rguid: u32,
+    ) -> u32 {
         DI_OK
     }
 

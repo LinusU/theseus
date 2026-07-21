@@ -176,7 +176,9 @@ pub mod IDirectDraw {
                 let callback = ctx.indirect(lpEnumCallback);
                 ctx.call32_x86(callback, vec![desc_addr, lpContext]);
                 let ret = ctx.cpu.regs.eax;
-                kernel32::lock().process_heap.free(&mut ctx.memory, desc_addr);
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
 
                 // DDENUMRET_CANCEL (0) means stop enumerating.
                 if ret == 0 {
@@ -234,7 +236,13 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _dwFlags: u32, _lpDDColorTable: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDD: u32,
+        _dwFlags: u32,
+        _lpDDColorTable: u32,
+    ) -> DD {
         // Palettes are fully constructed by CreatePalette.
         const DDERR_ALREADYINITIALIZED: DD = DD::OK;
         DDERR_ALREADYINITIALIZED
@@ -506,10 +514,10 @@ pub mod IDirectDrawSurface {
         }
 
         let color_key = if dwFlags & DDBLT_KEYSRCOVERRIDE != 0 {
-            // DDBLTFX.ddckSrcColorkey is at offset 16.
+            // DDBLTFX.ddckSrcColorkey, past the z-buffer and alpha fields.
             Some(ColorKey {
-                low: ctx.memory.read::<u32>(lpDDBLTFX + 16),
-                high: ctx.memory.read::<u32>(lpDDBLTFX + 20),
+                low: ctx.memory.read::<u32>(lpDDBLTFX + 92),
+                high: ctx.memory.read::<u32>(lpDDBLTFX + 96),
             })
         } else if dwFlags & DDBLT_KEYSRC != 0 {
             surface_src_color_key(lpDDSrcSurface)
@@ -568,7 +576,12 @@ pub mod IDirectDrawSurface {
         let (w, h) = match &src_rect {
             Some(r) => ((r.right - r.left).max(0), (r.bottom - r.top).max(0)),
             None => {
-                let src = state().surf.borrow_mut().get(&lpDDSrcSurface).unwrap().clone();
+                let src = state()
+                    .surf
+                    .borrow_mut()
+                    .get(&lpDDSrcSurface)
+                    .unwrap()
+                    .clone();
                 let src = src.borrow();
                 (src.width as i32, src.height as i32)
             }
@@ -579,7 +592,14 @@ pub mod IDirectDrawSurface {
             right: dwX as i32 + w,
             bottom: dwY as i32 + h,
         };
-        blit_copy(ctx, this, Some(dst_rect), lpDDSrcSurface, src_rect, color_key);
+        blit_copy(
+            ctx,
+            this,
+            Some(dst_rect),
+            lpDDSrcSurface,
+            src_rect,
+            color_key,
+        );
         DD::OK
     }
 
@@ -733,7 +753,13 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _dwFlags: u32, _lpDDColorTable: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDD: u32,
+        _dwFlags: u32,
+        _lpDDColorTable: u32,
+    ) -> DD {
         // Palettes are fully constructed by CreatePalette.
         const DDERR_ALREADYINITIALIZED: DD = DD::OK;
         DDERR_ALREADYINITIALIZED
@@ -926,7 +952,13 @@ pub mod IDirectDrawPalette {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _dwFlags: u32, _lpDDColorTable: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDD: u32,
+        _dwFlags: u32,
+        _lpDDColorTable: u32,
+    ) -> DD {
         // Palettes are fully constructed by CreatePalette.
         const DDERR_ALREADYINITIALIZED: DD = DD::OK;
         DDERR_ALREADYINITIALIZED
@@ -941,11 +973,13 @@ pub mod IDirectDrawPalette {
         dwCount: u32,
         lpEntries: u32,
     ) -> DD {
-        let new_entries =
-            <[PALETTEENTRY]>::ref_from_prefix_with_elems(&ctx.memory[lpEntries..], dwCount as usize)
-                .unwrap()
-                .0
-                .to_vec();
+        let new_entries = <[PALETTEENTRY]>::ref_from_prefix_with_elems(
+            &ctx.memory[lpEntries..],
+            dwCount as usize,
+        )
+        .unwrap()
+        .0
+        .to_vec();
         let palettes = state().palette.borrow_mut();
         let mut palette = palettes.get(&this).unwrap().borrow_mut();
         for (i, entry) in new_entries.into_iter().enumerate() {

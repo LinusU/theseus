@@ -171,10 +171,7 @@ impl Buffer {
             current
         };
         let blend = |a: i32, b: i32| a as f32 + (b - a) as f32 * frac;
-        (
-            blend(current.0, next.0),
-            blend(current.1, next.1),
-        )
+        (blend(current.0, next.0), blend(current.1, next.1))
     }
 }
 
@@ -553,7 +550,10 @@ pub mod IDirectSoundBuffer {
         if let Some(buffer) = state.buffers.remove(&this) {
             // Duplicates share their original's samples, so only free memory
             // that no surviving buffer still points at.
-            let shared = state.buffers.values().any(|other| other.addr == buffer.addr);
+            let shared = state
+                .buffers
+                .values()
+                .any(|other| other.addr == buffer.addr);
             if buffer.addr != 0 && !shared {
                 state.heap().free(&mut ctx.memory, buffer.addr);
             }
@@ -628,12 +628,14 @@ pub mod IDirectSoundBuffer {
             }
             let block_align = format.frame_bytes() as u16;
             ctx.memory.write::<u16>(lpwfxFormat, 1); // WAVE_FORMAT_PCM
-            ctx.memory.write::<u16>(lpwfxFormat + 2, format.channels as u16);
+            ctx.memory
+                .write::<u16>(lpwfxFormat + 2, format.channels as u16);
             ctx.memory.write::<u32>(lpwfxFormat + 4, format.rate);
             ctx.memory
                 .write::<u32>(lpwfxFormat + 8, format.rate * block_align as u32);
             ctx.memory.write::<u16>(lpwfxFormat + 12, block_align);
-            ctx.memory.write::<u16>(lpwfxFormat + 14, format.bits as u16);
+            ctx.memory
+                .write::<u16>(lpwfxFormat + 14, format.bits as u16);
             ctx.memory.write::<u16>(lpwfxFormat + 16, 0); // cbSize
         }
         if lpdwSizeWritten != 0 {
@@ -703,7 +705,12 @@ pub mod IDirectSoundBuffer {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDirectSound: u32, _lpcDSBufferDesc: u32) -> u32 {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDirectSound: u32,
+        _lpcDSBufferDesc: u32,
+    ) -> u32 {
         DS_OK
     }
 

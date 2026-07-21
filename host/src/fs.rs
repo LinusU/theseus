@@ -401,6 +401,6 @@ mod imp {
     }
 }
 
-pub use imp::{File, current_dir, exists, open, read_dir, remove_file, set_current_dir};
 #[cfg(target_family = "wasm")]
 pub use imp::mount;
+pub use imp::{File, current_dir, exists, open, read_dir, remove_file, set_current_dir};

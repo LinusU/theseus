@@ -119,7 +119,10 @@ impl EventBuffer {
         let count = max.min(self.events.len());
         let overflowed = self.overflowed;
         if peek {
-            return (self.events.iter().take(count).copied().collect(), overflowed);
+            return (
+                self.events.iter().take(count).copied().collect(),
+                overflowed,
+            );
         }
         self.overflowed = false;
         (self.events.drain(..count).collect(), overflowed)
@@ -299,7 +302,12 @@ impl Input {
         buffer.events.clear();
     }
 
-    pub fn take_events(&mut self, keyboard: bool, max: usize, peek: bool) -> (Vec<DeviceEvent>, bool) {
+    pub fn take_events(
+        &mut self,
+        keyboard: bool,
+        max: usize,
+        peek: bool,
+    ) -> (Vec<DeviceEvent>, bool) {
         let buffer = if keyboard {
             &mut self.keyboard_buffer
         } else {

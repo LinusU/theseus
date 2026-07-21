@@ -334,7 +334,8 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
         return bytes.len() as u32 + 1;
     }
     ctx.memory[lpBuffer.addr..][..bytes.len()].copy_from_slice(bytes);
-    ctx.memory.write::<u8>(lpBuffer.addr + bytes.len() as u32, 0);
+    ctx.memory
+        .write::<u8>(lpBuffer.addr + bytes.len() as u32, 0);
     bytes.len() as u32
 }
 

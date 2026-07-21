@@ -564,7 +564,9 @@ ctx.cpu.regs.esp = {stack_pointer:#x};
         if let Ok(entries) = std::fs::read_dir(format!("{outdir}/src/generated")) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                let stem = name.trim_end_matches(".rs");
+                let Some(stem) = name.strip_suffix(".rs") else {
+                    continue;
+                };
                 if stem.starts_with("part_") && !parts.iter().any(|part| part == stem) {
                     std::fs::remove_file(entry.path())?;
                 }

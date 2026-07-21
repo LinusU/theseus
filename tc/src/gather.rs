@@ -69,7 +69,19 @@ fn is_index_bound(instr: &iced_x86::Instruction) -> Option<(iced_x86::Register, 
     if count > 1024 {
         return None;
     }
-    Some((instr.op0_register().full_register(), count))
+    // A mask only bounds the index if it is contiguous: `and eax, 0x30` leaves
+    // values up to 0x30, not 0x31 of them.
+    if instr.mnemonic() == And && !count.is_power_of_two() {
+        return None;
+    }
+    // Masking a sub-register says nothing about the register the dispatch
+    // indexes with: `and al, 0xf` leaves the rest of eax untouched. Keyed by
+    // the full register, which is how the dispatch looks it up.
+    let reg = instr.op0_register();
+    if reg != reg.full_register32() {
+        return None;
+    }
+    Some((reg.full_register(), count))
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -399,9 +411,7 @@ impl<'a> Traverse<'a> {
         n >= 1
     }
 
-    /// Read a jump table: consecutive pointers into code, stopping at the first
-    /// entry that doesn't look like one. Returns the number of entries found.
-    /// Queue the targets of a switch jump table.
+    /// Queue the targets of a switch jump table, returning how many it had.
     ///
     /// `known_len` comes from a bounds check before the dispatch, when there
     /// was one. Knowing the length matters: without it we have to stop at the
@@ -435,7 +445,9 @@ impl<'a> Traverse<'a> {
         let mut found = 0;
         while count < limit {
             if direction < 0 {
-                let Some(prev) = addr.checked_sub(4) else { break };
+                let Some(prev) = addr.checked_sub(4) else {
+                    break;
+                };
                 addr = prev;
             }
             if addr as usize + 4 > self.mem.bytes.len() {
@@ -667,7 +679,8 @@ impl<'a> Traverse<'a> {
         for block in self.blocks.values() {
             if let BlockType::Instrs(instrs) = &block.ty {
                 spans.push(
-                    instrs.first().unwrap().ip.to_addr()..instrs.last().unwrap().next_ip().to_addr(),
+                    instrs.first().unwrap().ip.to_addr()
+                        ..instrs.last().unwrap().next_ip().to_addr(),
                 );
             }
         }

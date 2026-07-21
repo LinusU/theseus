@@ -290,7 +290,8 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
     // MMIO_DIRTY is for writing, which we don't support; report a plain
     // readable buffer covering the whole file.
     ctx.memory.write::<u32>(lpmmioinfo + mmioinfo::DWFLAGS, 0);
-    ctx.memory.write::<u32>(lpmmioinfo + mmioinfo::CCHBUFFER, len);
+    ctx.memory
+        .write::<u32>(lpmmioinfo + mmioinfo::CCHBUFFER, len);
     ctx.memory
         .write::<u32>(lpmmioinfo + mmioinfo::PCHBUFFER, buffer);
     ctx.memory
@@ -301,7 +302,8 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
         .write::<u32>(lpmmioinfo + mmioinfo::PCHENDWRITE, buffer + len);
     // The buffer covers the file from its start, so buffer offsets and file
     // offsets coincide.
-    ctx.memory.write::<u32>(lpmmioinfo + mmioinfo::LBUFOFFSET, 0);
+    ctx.memory
+        .write::<u32>(lpmmioinfo + mmioinfo::LBUFOFFSET, 0);
     ctx.memory
         .write::<u32>(lpmmioinfo + mmioinfo::LDISKOFFSET, len);
     ctx.memory.write::<u32>(lpmmioinfo + mmioinfo::HMMIO, hmmio);

@@ -82,9 +82,11 @@ fn module_name(handle: HMODULE) -> Option<String> {
 
 fn proc_address(module: &str, func: &str) -> Option<u32> {
     let exports = EXPORTS.lock().unwrap();
-    exports.as_ref()?.functions.iter().find_map(|(dll, name, addr)| {
-        (dll == module && name == func).then_some(*addr)
-    })
+    exports
+        .as_ref()?
+        .functions
+        .iter()
+        .find_map(|(dll, name, addr)| (dll == module && name == func).then_some(*addr))
 }
 
 #[win32_derive::dllexport]
@@ -102,8 +104,8 @@ pub fn GetModuleFileNameA(
 
 #[win32_derive::dllexport]
 pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
-    let Some(name) = (lpModuleName.addr != 0)
-        .then(|| ctx.memory.read_str(lpModuleName.addr).to_owned())
+    let Some(name) =
+        (lpModuleName.addr != 0).then(|| ctx.memory.read_str(lpModuleName.addr).to_owned())
     else {
         // A null name asks for the running executable itself.
         return lock().image_base;

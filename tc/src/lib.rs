@@ -237,7 +237,9 @@ impl State {
                 continue;
             }
             for func in funcs.iter() {
-                module.dynamic_exports.push((dll.to_string(), func.to_string()));
+                module
+                    .dynamic_exports
+                    .push((dll.to_string(), func.to_string()));
                 // A function already imported statically has an address
                 // already; only the rest need one reserved.
                 if module

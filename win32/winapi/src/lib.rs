@@ -53,8 +53,6 @@ macro_rules! stub {
 use runtime::{CPU, Context, EXEData, Memory};
 pub(crate) use stub;
 
-
-
 pub fn load(exe: &EXEData) -> Context {
     host::init();
     crate::trace::init(&host::trace_spec());
