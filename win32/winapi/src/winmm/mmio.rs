@@ -133,7 +133,7 @@ pub fn mmioOpenA(ctx: &mut Context, szFilename: u32, _lpmmioinfo: u32, _dwOpenFl
     }
     let name = ctx.memory.read_str(szFilename).to_owned();
     let path = kernel32::resolve_path(&name);
-    let data = match std::fs::read(&path) {
+    let data = match host::fs::read(&path) {
         Ok(data) => data,
         Err(err) => {
             log::warn!("mmioOpenA({name:?}): {err}");

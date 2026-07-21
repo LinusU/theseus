@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
@@ -28,7 +28,7 @@ fi
 
 
 desired="$1"
-for package in winapi-exe mine basicdd; do
+for package in winapi-exe mine basicdd winpin; do
     file=$(sed -e 's/-exe//' <<< "$package")
     if [[ "$desired" != "" && "$desired" != "$file" ]]; then
         continue

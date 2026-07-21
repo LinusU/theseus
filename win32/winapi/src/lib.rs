@@ -53,19 +53,11 @@ macro_rules! stub {
 use runtime::{CPU, Context, EXEData, Memory};
 pub(crate) use stub;
 
-#[cfg(target_family = "wasm")]
-fn thesesus_trace() -> String {
-    "+".into()
-}
 
-#[cfg(not(target_family = "wasm"))]
-fn thesesus_trace() -> String {
-    std::env::var("THESEUS_TRACE").unwrap_or_default()
-}
 
 pub fn load(exe: &EXEData) -> Context {
     host::init();
-    crate::trace::init(&thesesus_trace());
+    crate::trace::init(&host::trace_spec());
 
     // Room for the program's image, its heaps and the flat pool games of this
     // era carve out for themselves.

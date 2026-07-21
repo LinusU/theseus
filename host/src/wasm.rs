@@ -64,19 +64,32 @@ impl Window {
     }
 }
 
-/// Audio output. Not wired up to the browser yet, so it silently swallows
-/// what the mixer produces rather than stopping the program.
-pub struct AudioStream {}
+/// Audio output, played by the page through Web Audio.
+pub struct AudioStream {
+    id: i32,
+}
+
 impl AudioStream {
-    pub fn queued_bytes(&self) -> u32 {
-        // Reporting a full queue keeps the mixer from producing audio that
-        // has nowhere to go.
-        u32::MAX
+    fn new(sample_rate: u32, channels: u32) -> Self {
+        let id = host::host()
+            .chan
+            .lock()
+            .unwrap()
+            .create_audio_stream(sample_rate, channels);
+        AudioStream { id }
     }
 
-    pub fn put_data(&self, _data: &[u8]) {}
+    pub fn queued_bytes(&self) -> u32 {
+        host::host().chan.lock().unwrap().audio_queued(self.id)
+    }
 
-    pub fn resume(&self) {}
+    pub fn put_data(&self, data: &[u8]) {
+        host::host().chan.lock().unwrap().audio_write(self.id, data);
+    }
+
+    pub fn resume(&self) {
+        host::host().chan.lock().unwrap().audio_resume(self.id);
+    }
 }
 
 pub struct Host {
@@ -104,8 +117,8 @@ impl Host {
         Window::new(title, width, height)
     }
 
-    pub fn create_audio_stream(&self, _spec: host::AudioSpec) -> AudioStream {
-        AudioStream {}
+    pub fn create_audio_stream(&self, spec: host::AudioSpec) -> AudioStream {
+        AudioStream::new(spec.sample_rate, spec.channels)
     }
 
     pub fn time(&self) -> u32 {
@@ -118,6 +131,27 @@ impl Host {
 
     pub fn console_write(&self, text: &[u8]) {
         self.chan.lock().unwrap().console_write(text);
+    }
+
+    /// Hand a written file to the page, which keeps it across reloads.
+    pub fn persist_file(&self, path: &str, data: &[u8]) {
+        self.chan.lock().unwrap().write_file(path, data);
+    }
+}
+
+/// Add a file to the program's filesystem. The page calls this for each file
+/// of the program's data before starting it.
+#[wasm_bindgen]
+pub fn mount_file(path: &str, data: &[u8]) {
+    crate::fs::mount(path, data.to_vec());
+}
+
+/// Set the directory the program starts in, the equivalent of launching it
+/// from that directory natively.
+#[wasm_bindgen]
+pub fn set_current_dir(path: &str) {
+    if let Err(err) = crate::fs::set_current_dir(std::path::Path::new(path)) {
+        log::warn!("set_current_dir({path}): {err}");
     }
 }
 
@@ -141,6 +175,13 @@ export interface WasmHost {
     render(window_id: number, surface_id: number): void;
 
     set_pixels(surface_id: number, ptr: number, len: number): void;
+
+    write_file(path: string, ptr: number, len: number): number;
+
+    create_audio_stream(sample_rate: number, channels: number): number;
+    audio_queued(id: number): number;
+    audio_write(id: number, ptr: number, len: number): number;
+    audio_resume(id: number): number;
 
     poll_message(): number[];
     wait_message(): Promise<number[]>;
@@ -194,6 +235,45 @@ impl WebHostSendChannel {
         self.send_async("render", args);
     }
 
+    pub fn create_audio_stream(&mut self, sample_rate: u32, channels: u32) -> i32 {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from(sample_rate));
+        args.push(&JsValue::from(channels));
+        self.send_sync("create_audio_stream", args)
+    }
+
+    /// Bytes handed to the page but not played yet; the mixer paces itself
+    /// against this.
+    pub fn audio_queued(&mut self, id: i32) -> u32 {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from(id));
+        // The page returns one more than the real count so that zero, which
+        // the synchronization protocol reserves, never comes back.
+        (self.send_sync("audio_queued", args) - 1) as u32
+    }
+
+    pub fn audio_write(&mut self, id: i32, data: &[u8]) {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from(id));
+        args.push(&JsValue::from(data.as_ptr() as u32));
+        args.push(&JsValue::from(data.len()));
+        self.send_sync("audio_write", args);
+    }
+
+    pub fn audio_resume(&mut self, id: i32) {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from(id));
+        self.send_sync("audio_resume", args);
+    }
+
+    pub fn write_file(&mut self, path: &str, data: &[u8]) {
+        let args = js_sys::Array::new();
+        args.push(&JsValue::from(path));
+        args.push(&JsValue::from(data.as_ptr() as u32));
+        args.push(&JsValue::from(data.len()));
+        self.send_sync("write_file", args);
+    }
+
     pub fn set_pixels(&mut self, id: i32, pixels: &[u8]) {
         let args = js_sys::Array::new();
         args.push(&JsValue::from(id));
@@ -207,12 +287,16 @@ impl WebHostSendChannel {
         Some(match buf[0] {
             -1 => return None,
             2 | 3 | 4 => {
-                let buttons = host::MouseButton::from_bits(buf[3] as u16).unwrap();
+                // The button that changed is in the low half, the buttons held
+                // after the event in the high half.
+                let button = host::MouseButton::from_bits(buf[3] as u16).unwrap_or_default();
+                let buttons =
+                    host::MouseButton::from_bits((buf[3] >> 16) as u16).unwrap_or_default();
                 let mouse = host::MouseMessage {
                     x: buf[1] as u32,
                     y: buf[2] as u32,
-                    button: buttons,
-                    buttons: buttons,
+                    button,
+                    buttons,
                 };
                 match buf[0] {
                     2 => host::Message::MouseDown(mouse),

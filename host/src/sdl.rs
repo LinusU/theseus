@@ -165,6 +165,12 @@ const KEY_MAP: &[(sdl::scancode::SDL_Scancode, u8, u8, bool)] = {
     ]
 };
 
+thread_local! {
+    /// Mouse buttons currently held, maintained as events arrive.
+    static BUTTONS: std::cell::Cell<host::MouseButton> =
+        const { std::cell::Cell::new(host::MouseButton::empty()) };
+}
+
 fn key_from_sdl(event: &sdl::events::SDL_KeyboardEvent) -> Option<host::KeyMessage> {
     let &(_, scancode, vkey, extended) = KEY_MAP.iter().find(|key| key.0 == event.scancode)?;
     Some(host::KeyMessage {
@@ -183,6 +189,8 @@ fn msg_from_event(event: &sdl::events::SDL_Event) -> Option<host::Message> {
             SDL_EventType::WINDOW_EXPOSED => return Some(host::Message::Paint),
             SDL_EventType::MOUSE_MOTION => {
                 let event = &event.motion;
+                // Motion events do carry the mask, so resync from them.
+                BUTTONS.with(|held| held.set(mouse_buttons_from_sdl(event.state)));
                 return Some(host::Message::MouseMove(host::MouseMessage {
                     x: event.x as u32,
                     y: event.y as u32,
@@ -198,11 +206,26 @@ fn msg_from_event(event: &sdl::events::SDL_Event) -> Option<host::Message> {
                     sdl::mouse::SDL_BUTTON_RIGHT => host::MouseButton::Right,
                     _ => return None,
                 };
+                // `buttons` has to be the state right after this event: a
+                // release that reported its button as still held would leave
+                // it stuck down. Button events carry no mask, and the live
+                // state is the state now rather than when the event happened,
+                // so track it as events arrive.
+                let buttons = BUTTONS.with(|held| {
+                    let mut held = held.get();
+                    if typ == SDL_EventType::MOUSE_BUTTON_DOWN {
+                        held.insert(button);
+                    } else {
+                        held.remove(button);
+                    }
+                    BUTTONS.with(|cell| cell.set(held));
+                    held
+                });
                 let message = host::MouseMessage {
                     x: event.x as u32,
                     y: event.y as u32,
-                    button: button,
-                    buttons: button,
+                    button,
+                    buttons,
                 };
                 if typ == SDL_EventType::MOUSE_BUTTON_DOWN {
                     return Some(host::Message::MouseDown(message));

@@ -5,6 +5,7 @@
 
 use std::sync::LazyLock;
 
+pub mod fs;
 #[cfg(not(target_family = "wasm"))]
 mod sdl;
 mod single_thread;
@@ -25,7 +26,7 @@ pub struct AudioSpec {
 }
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
     pub struct MouseButton: u16 {
         const Left = 1 << 0;
         const Middle = 1 << 1;
@@ -68,6 +69,29 @@ pub enum Message {
     MouseMove(MouseMessage),
     KeyDown(KeyMessage),
     KeyUp(KeyMessage),
+}
+
+/// Which winapi calls to trace, in the syntax `trace::init` parses.
+#[cfg(not(target_family = "wasm"))]
+pub fn trace_spec() -> String {
+    std::env::var("THESEUS_TRACE").unwrap_or_default()
+}
+
+/// The web build has no environment to read a spec from, so the page sets one
+/// with `set_trace` before starting the program. Tracing every call is slow
+/// enough to change how a program behaves, so it is off unless asked for.
+#[cfg(target_family = "wasm")]
+static TRACE_SPEC: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+#[cfg(target_family = "wasm")]
+pub fn trace_spec() -> String {
+    TRACE_SPEC.lock().unwrap().clone()
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_trace(spec: &str) {
+    *TRACE_SPEC.lock().unwrap() = spec.to_string();
 }
 
 pub fn init() {

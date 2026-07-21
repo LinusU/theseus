@@ -2,3 +2,5 @@
 *.js
 *.wasm
 *.map
+/game
+/node_modules

@@ -25,7 +25,7 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 /// initial current directory. Captured on first use, before any chdir.
 fn initial_cwd() -> &'static std::path::Path {
     static CWD: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    CWD.get_or_init(|| std::env::current_dir().unwrap_or_else(|_| ".".into()))
+    CWD.get_or_init(|| host::fs::current_dir().unwrap_or_else(|_| ".".into()))
 }
 
 /// Resolve a Windows-style path against the host filesystem, ignoring case
@@ -42,7 +42,7 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
         initial_cwd().to_path_buf()
     } else {
         // Absolute base so that ".." components resolve properly.
-        std::env::current_dir().unwrap_or_else(|_| ".".into())
+        host::fs::current_dir().unwrap_or_else(|_| ".".into())
     };
     'component: for comp in path.split('/') {
         if comp.is_empty() || comp == "." {
@@ -53,14 +53,14 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
             continue;
         }
         let direct = result.join(comp);
-        if direct.exists() {
+        if host::fs::exists(&direct) {
             result = direct;
             continue;
         }
-        if let Ok(entries) = std::fs::read_dir(&result) {
-            for entry in entries.flatten() {
-                if entry.file_name().to_string_lossy().eq_ignore_ascii_case(comp) {
-                    result = entry.path();
+        if let Ok(entries) = host::fs::read_dir(&result) {
+            for entry in entries {
+                if entry.name.eq_ignore_ascii_case(comp) {
+                    result = result.join(&entry.name);
                     continue 'component;
                 }
             }
@@ -103,7 +103,7 @@ pub fn CreateFileA(
     let path = resolve_path(&name);
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
     let read = dwDesiredAccess & GENERIC_READ != 0;
-    let mut opts = std::fs::OpenOptions::new();
+    let mut opts = host::fs::OpenOptions::new();
     opts.read(read || !write);
     if write {
         opts.write(true);
@@ -277,7 +277,7 @@ pub fn FlushFileBuffers(_ctx: &mut Context, hFile: crate::HANDLE) -> bool {
     let Some(Object::File(file)) = kernel32.objects.get_mut(hFile) else {
         return false;
     };
-    file.sync_all().is_ok()
+    file.flush().is_ok()
 }
 
 #[win32_derive::dllexport]
@@ -290,7 +290,7 @@ pub fn CloseHandle(_ctx: &mut Context, hObject: crate::HANDLE) -> bool {
 #[win32_derive::dllexport]
 pub fn DeleteFileA(ctx: &mut Context, lpFileName: Ptr<u8>) -> bool {
     let name = ctx.memory.read_str(lpFileName.addr).to_owned();
-    std::fs::remove_file(resolve_path(&name)).is_ok()
+    host::fs::remove_file(&resolve_path(&name)).is_ok()
 }
 
 #[win32_derive::dllexport]
@@ -318,7 +318,7 @@ pub fn SetHandleCount(_ctx: &mut Context, uNumber: u32) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr<u8>) -> u32 {
-    let cur = std::env::current_dir().unwrap_or_default();
+    let cur = host::fs::current_dir().unwrap_or_default();
     let rel = cur
         .strip_prefix(initial_cwd())
         .unwrap_or(std::path::Path::new(""))
@@ -342,7 +342,7 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
 pub fn SetCurrentDirectoryA(ctx: &mut Context, lpPathName: Ptr<u8>) -> bool {
     let name = ctx.memory.read_str(lpPathName.addr).to_owned();
     let path = resolve_path(&name);
-    match std::env::set_current_dir(&path) {
+    match host::fs::set_current_dir(&path) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("SetCurrentDirectoryA({name:?} => {path:?}): {err}");
@@ -433,17 +433,15 @@ pub fn FindFirstFileA(
     };
     let dir = resolve_path(dir);
     let mut entries = Vec::new();
-    if let Ok(dir_entries) = std::fs::read_dir(&dir) {
-        for entry in dir_entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !wildcard_match(file_pattern.as_bytes(), name.as_bytes()) {
+    if let Ok(dir_entries) = host::fs::read_dir(&dir) {
+        for entry in dir_entries {
+            if !wildcard_match(file_pattern.as_bytes(), entry.name.as_bytes()) {
                 continue;
             }
-            let meta = entry.metadata().ok();
             entries.push(FindEntry {
-                name,
-                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                name: entry.name,
+                size: entry.len,
+                is_dir: entry.is_dir,
             });
         }
     }
