@@ -124,9 +124,9 @@ impl Buffer {
         (volume * left, volume * right)
     }
 
-    /// The sample pair at the current cursor, in i16 scale.
-    fn sample(&self, mem: &Memory) -> (i32, i32) {
-        let base = self.addr + self.cursor as u32 * self.format.frame_bytes();
+    /// The sample pair of one whole frame, in i16 scale.
+    fn frame_at(&self, mem: &Memory, index: u32) -> (i32, i32) {
+        let base = self.addr + index * self.format.frame_bytes();
         let stereo = self.format.channels >= 2;
         if self.format.bits >= 16 {
             let left = mem.read::<i16>(base) as i32;
@@ -146,6 +146,35 @@ impl Buffer {
             };
             (left, right)
         }
+    }
+
+    /// The sample pair at the current cursor, in i16 scale, interpolated
+    /// between the frames it falls between.
+    ///
+    /// These sounds are recorded at 11 or 22 kHz and play out at 44.1, so most
+    /// output samples land between two source frames. Repeating the nearer one
+    /// instead — the obvious thing — turns each source sample into a little
+    /// staircase, and those steps are audible as a gritty edge on every sound.
+    fn sample(&self, mem: &Memory) -> (f32, f32) {
+        let index = self.cursor.floor();
+        let frac = (self.cursor - index) as f32;
+        let current = self.frame_at(mem, index as u32);
+        let next_index = index + 1.0;
+        let next = if next_index < self.frame_count() {
+            self.frame_at(mem, next_index as u32)
+        } else if self.looping {
+            // The frame after the last is the first one again.
+            self.frame_at(mem, 0)
+        } else {
+            // A one-shot ends here; hold rather than interpolate into
+            // whatever memory follows the buffer.
+            current
+        };
+        let blend = |a: i32, b: i32| a as f32 + (b - a) as f32 * frac;
+        (
+            blend(current.0, next.0),
+            blend(current.1, next.1),
+        )
     }
 }
 
@@ -223,8 +252,8 @@ impl State {
                     buffer.cursor %= frames;
                 }
                 let (left, right) = buffer.sample(mem);
-                slot.0 += left as f32 * left_gain;
-                slot.1 += right as f32 * right_gain;
+                slot.0 += left * left_gain;
+                slot.1 += right * right_gain;
                 buffer.cursor += step;
             }
         }

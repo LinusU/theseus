@@ -158,6 +158,27 @@ class MessageQueue {
   }
 }
 
+/// Audio contexts to start once the user interacts with the page. Browsers
+/// refuse to play audio before a gesture, and a program that asks for sound
+/// while loading — as games do — asks too early, so the request has to be
+/// replayed on the first click or keypress. The listeners stay installed
+/// because a context can be suspended again later, and resuming one that is
+/// already running does nothing.
+const audioContexts: Set<AudioContext> = new Set();
+let gestureHooked = false;
+
+function resumeOnGesture(ctx: AudioContext) {
+  audioContexts.add(ctx);
+  if (gestureHooked) return;
+  gestureHooked = true;
+  const resumeAll = () => {
+    for (const ctx of audioContexts) ctx.resume().catch(() => {});
+  };
+  for (const event of ["pointerdown", "keydown", "touchend"]) {
+    document.addEventListener(event, resumeAll);
+  }
+}
+
 /// Plays the samples the program's mixer produces, scheduling them back to
 /// back so playback is continuous.
 class AudioStream {
@@ -167,6 +188,7 @@ class AudioStream {
 
   constructor(private sampleRate: number, private channels: number) {
     this.ctx = new AudioContext({ sampleRate });
+    resumeOnGesture(this.ctx);
   }
 
   /// Samples handed over but not played yet, in bytes, which is what the
@@ -252,10 +274,12 @@ class Host implements exe.WasmHost {
   }
 
   create_surface(width: number, height: number): number {
+    // Deliberately not added to the document: these are the program's
+    // offscreen buffers, which reach the screen only when it draws one into
+    // the window. Attaching them would show every back buffer below the game.
     const surface = document.createElement("canvas");
     surface.width = width;
     surface.height = height;
-    document.body.appendChild(surface);
 
     const id = this.nextSurface++;
     this.surfaces.set(id, surface);
