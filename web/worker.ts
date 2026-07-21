@@ -12,11 +12,14 @@ import type * as exe from "./exe/basicdd/basicdd.js";
 /// be resident before it starts; `manifest.json` lists the files to fetch.
 async function mountData(exe: any, dataRoot: string, saves: Record<string, string>) {
   const manifest: string[] = await (await fetch(`${dataRoot}/manifest.json`)).json();
+  let fetched = 0;
   const files = await Promise.all(
     manifest.map(async (name) => {
       const response = await fetch(`${dataRoot}/${name}`);
       if (!response.ok) throw new Error(`${name}: ${response.status}`);
-      return [name, new Uint8Array(await response.arrayBuffer())] as const;
+      const data = new Uint8Array(await response.arrayBuffer());
+      progress(`loading data ${++fetched}/${manifest.length}`);
+      return [name, data] as const;
     }),
   );
   for (const [name, data] of files) {
@@ -31,7 +34,20 @@ async function mountData(exe: any, dataRoot: string, saves: Record<string, strin
   }
 }
 
+/// Show what the page is waiting on. Fetching a program and its data takes
+/// long enough that a blank page reads as a hang.
+function progress(message: string) {
+  const msg: exe.Msg = { func: "loading", args: [message], retAddr: 0 };
+  self.postMessage(msg);
+}
+
+/// Report to the server, which is the only way to see what a page is doing
+/// when it's driven by a script rather than watched. Off otherwise: a page
+/// served from anywhere else has nothing listening.
+let reportToServer = false;
+
 function report(message: string) {
+  if (!reportToServer) return;
   fetch("/log", { method: "POST", body: message }).catch(() => {});
 }
 
@@ -48,8 +64,10 @@ function mirrorConsole() {
 }
 
 async function run(start: StartMessage) {
+  reportToServer = start.mirrorConsole ?? false;
   if (start.mirrorConsole) mirrorConsole();
   report(`worker loading ${start.module}`);
+  progress("loading program");
   const exe = await import(start.module);
   report("module imported");
   await exe.default(/* module */ undefined, start.memory);
@@ -65,6 +83,7 @@ async function run(start: StartMessage) {
     exe.set_trace(start.trace);
   }
   report("starting program");
+  progress("starting");
   exe.main();
 }
 
@@ -86,6 +105,7 @@ export interface StartMessage {
 self.onmessage = (e: MessageEvent<StartMessage>) => {
   run(e.data).catch((e) => {
     report(`worker failed: ${e}\n${e?.stack ?? ""}`);
+    progress(`failed: ${e}`);
     console.error(e);
   });
 };

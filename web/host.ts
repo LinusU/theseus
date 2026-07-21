@@ -235,9 +235,16 @@ class Host implements exe.WasmHost {
   nextAudioStream = 1;
   messageQueue = new MessageQueue();
 
+  loadingDom = document.getElementById("loading");
+
   constructor(public wasmMemory: WebAssembly.Memory) {
     this.consoleDom.id = "console";
     document.body.appendChild(this.consoleDom);
+  }
+
+  /// Progress from the worker, which does the slow part of startup.
+  loading(message: string) {
+    if (this.loadingDom) this.loadingDom.textContent = message;
   }
 
   onMessage(e: MessageEvent<exe.Msg>) {
@@ -287,6 +294,9 @@ class Host implements exe.WasmHost {
   }
 
   create_window(title: string, width: number, height: number): number {
+    // The program is up; whatever the page was waiting on is done.
+    this.loadingDom?.remove();
+    this.loadingDom = null;
     this.window_ = document.createElement("canvas");
     this.window_.className = "window";
     this.window_.width = width;
@@ -414,6 +424,9 @@ class Host implements exe.WasmHost {
 /// always reachable — a page run from a script, a remote browser — and a game
 /// that fails to start otherwise gives no clue why.
 function report(message: string) {
+  // Only when a script is watching: a page served from anywhere else has
+  // nothing listening on /log.
+  if (!REPORT_FRAMES) return;
   navigator.sendBeacon("/log", message);
 }
 
@@ -445,6 +458,18 @@ function reportFrame(canvas: HTMLCanvasElement) {
 window.addEventListener("error", (e) => report(`error: ${e.message}`));
 window.addEventListener("unhandledrejection", (e) => report(`rejected: ${e.reason}`));
 
+// Programs to run, chosen with `?exe=`. One with data files also needs the
+// directory holding them plus a manifest.json, and the directory to start in.
+const PROGRAMS: Record<string, Omit<worker.StartMessage, "memory">> = {
+  mine: { module: "./exe/mine/mine.js" },
+  basicdd: { module: "./exe/basicdd/basicdd.js" },
+  winpin: {
+    module: "./exe/winpin/winpin.js",
+    dataRoot: "./game",
+    cwd: "/Soccer98",
+  },
+};
+
 async function main() {
   if (!window.SharedArrayBuffer) {
     document.body.innerText = "SharedArrayBuffer is not supported; possibly try reloading";
@@ -475,14 +500,20 @@ async function main() {
     }
   }
 
+  const params = new URLSearchParams(location.search);
+  const name = params.get("exe") ?? "mine";
+  const program = PROGRAMS[name];
+  if (!program) {
+    document.body.innerText = `no such program ${name}`;
+    return;
+  }
+
   const message: worker.StartMessage = {
-    module: "./exe/winpin/winpin.js",
+    ...program,
     memory,
-    dataRoot: "./game",
-    cwd: "/Soccer98",
     saves,
     mirrorConsole: REPORT_FRAMES,
-    trace: new URLSearchParams(location.search).get("trace") ?? "",
+    trace: params.get("trace") ?? "",
   };
   worker.onerror = (e) => report(`worker: ${e.message}`);
   worker.postMessage(message);

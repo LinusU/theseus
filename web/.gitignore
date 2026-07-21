@@ -4,3 +4,4 @@
 *.map
 /game
 /node_modules
+/frame.png
