@@ -10,7 +10,7 @@ mod registers;
 
 pub use exe::EXEData;
 pub use flags::Flags;
-pub use machine::{BlockMap, CPU, Context};
+pub use machine::{BlockCache, CPU, Context};
 pub use mapping::{Mapping, Mappings, round_to_page};
 pub use memory::Memory;
 pub use ops::*;

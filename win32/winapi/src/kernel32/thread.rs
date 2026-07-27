@@ -70,7 +70,7 @@ impl kernel32::State {
             // See docstring on Memory about the unsafety of sharing memory in this way.
             memory: ctx.memory.unsafe_clone(),
             blocks: ctx.blocks,
-            block_map: ctx.block_map,
+            cache: Default::default(),
             recent: [Context::return_from_x86; 4],
         };
         self.next_thread_id += 1;
