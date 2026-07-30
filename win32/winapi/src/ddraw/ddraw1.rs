@@ -65,8 +65,18 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn CreateClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn CreateClipper(
+        ctx: &mut Context,
+        _this: u32,
+        flags: u32,
+        lplpClipper: u32,
+        pUnkOuter: u32,
+    ) -> DD {
+        assert_eq!(flags, 0);
+        assert_eq!(pUnkOuter, 0);
+        let ptr = IDirectDrawClipper::new(ctx, &mut kernel32::lock().process_heap);
+        ctx.memory.write::<u32>(lplpClipper, ptr);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -805,8 +815,8 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetClipper(_ctx: &mut Context, _this: u32, _lpDDClipper: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -882,6 +892,86 @@ pub mod IDirectDrawSurface {
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
         let addr = heap.alloc(&mut ctx.memory, 4);
         ctx.memory.write(addr, unsafe { VTABLE });
+        addr
+    }
+}
+
+pub mod IDirectDrawClipper {
+    use super::*;
+
+    pub const VTABLE_ENTRIES: [&str; 9] = [
+        "QueryInterface",
+        "AddRef",
+        "Release",
+        "GetClipList",
+        "GetHWnd",
+        "Initialize",
+        "IsClipListChanged",
+        "SetClipList",
+        "SetHWnd",
+    ];
+
+    #[win32_derive::dllexport]
+    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppvObject: u32) -> DD {
+        DD::E_NOINTERFACE
+    }
+
+    #[win32_derive::dllexport]
+    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
+        1
+    }
+
+    #[win32_derive::dllexport]
+    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+        0
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetClipList(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpRect: u32,
+        _lpClipList: u32,
+        _lpdwSize: u32,
+    ) -> DD {
+        DD::ERR_GENERIC
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetHWnd(ctx: &mut Context, this: u32, lphWnd: u32) -> DD {
+        let hwnd = ctx.memory.read::<u32>(this + 4);
+        ctx.memory.write::<u32>(lphWnd, hwnd);
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _flags: u32) -> DD {
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn IsClipListChanged(ctx: &mut Context, _this: u32, lpbChanged: u32) -> DD {
+        ctx.memory.write::<u32>(lpbChanged, 0);
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn SetClipList(_ctx: &mut Context, _this: u32, _lpClipList: u32, _flags: u32) -> DD {
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn SetHWnd(ctx: &mut Context, this: u32, _flags: u32, hwnd: HWND) -> DD {
+        ctx.memory.write::<u32>(this + 4, hwnd.to_raw());
+        DD::OK
+    }
+
+    pub static mut VTABLE: u32 = 0;
+
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
+        let addr = heap.alloc(&mut ctx.memory, 8);
+        ctx.memory.write(addr, unsafe { VTABLE });
+        ctx.memory.write::<u32>(addr + 4, 0);
         addr
     }
 }

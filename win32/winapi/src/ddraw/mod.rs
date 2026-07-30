@@ -14,8 +14,12 @@ pub use ddraw1::*;
 pub use ddraw7::*;
 pub use types::DD;
 
-pub const VTABLES: [(&'static str, &[&str]); 5] = [
+pub const VTABLES: [(&'static str, &[&str]); 6] = [
     ("IDirectDraw", IDirectDraw::VTABLE_ENTRIES.as_slice()),
+    (
+        "IDirectDrawClipper",
+        IDirectDrawClipper::VTABLE_ENTRIES.as_slice(),
+    ),
     (
         "IDirectDrawSurface",
         IDirectDrawSurface::VTABLE_ENTRIES.as_slice(),
