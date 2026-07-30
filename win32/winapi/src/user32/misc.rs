@@ -1,4 +1,5 @@
 use runtime::Context;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use super::*;
 use crate::{Ptr, RECT, stub};
@@ -18,7 +19,12 @@ pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX 
 
 #[win32_derive::dllexport]
 pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
-    if bShow { stub!(1) } else { stub!(0) }
+    static DISPLAY_COUNT: AtomicI32 = AtomicI32::new(0);
+    if bShow {
+        DISPLAY_COUNT.fetch_add(1, Ordering::Relaxed) + 1
+    } else {
+        DISPLAY_COUNT.fetch_sub(1, Ordering::Relaxed) - 1
+    }
 }
 
 #[win32_derive::dllexport]
