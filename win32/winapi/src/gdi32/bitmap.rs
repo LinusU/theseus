@@ -109,6 +109,29 @@ pub fn CreateCompatibleBitmap(ctx: &mut Context, _hdc: HDC, cx: i32, cy: i32) ->
 }
 
 #[win32_derive::dllexport]
+pub fn CreateDIBSection(
+    ctx: &mut Context,
+    _hdc: HDC,
+    pbmi: Ptr<u8>,
+    usage: u32,
+    ppvBits: Ptr<u32>,
+    _hSection: HANDLE,
+    _offset: u32,
+) -> HBITMAP {
+    assert_eq!(usage, 0); // DIB_RGB_COLORS
+
+    let (mut bitmap, _) = Bitmap::parse(&ctx.memory[pbmi.addr..]);
+    let pixels_len = bitmap.pixels_len() as u32;
+    let pixels = kernel32::lock()
+        .process_heap
+        .alloc(&mut ctx.memory, pixels_len);
+    ctx.memory[pixels..][..pixels_len as usize].fill(0);
+    bitmap.pixels = pixels;
+    ppvBits.write(&mut ctx.memory, pixels).unwrap();
+    gdi32::lock().new_bitmap_handle(bitmap).0
+}
+
+#[win32_derive::dllexport]
 pub fn SetDIBitsToDevice(
     ctx: &mut Context,
     hdc: HDC,
