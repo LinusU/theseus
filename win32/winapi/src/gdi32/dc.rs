@@ -3,9 +3,8 @@ use std::sync::Arc;
 use runtime::Context;
 
 use crate::{
-    HANDLE, POINT, Ptr,
-    gdi32::{self, Bitmap, COLORREF, HBITMAP, HPEN, Pen, State},
-    stub,
+    gdi32::{self, Bitmap, Pen, State, COLORREF, HBITMAP, HPEN},
+    Ptr, HANDLE, POINT,
 };
 
 pub type HDC = HANDLE;
@@ -67,8 +66,9 @@ pub fn CreateCompatibleDC(_ctx: &mut Context, hdc: HDC) -> HDC {
 }
 
 #[win32_derive::dllexport]
-pub fn DeleteDC(_ctx: &mut Context, _hdc: HDC) -> bool {
-    stub!(true)
+pub fn DeleteDC(_ctx: &mut Context, hdc: HDC) -> bool {
+    gdi32::lock().release_dc(hdc);
+    true
 }
 
 #[win32_derive::dllexport]
