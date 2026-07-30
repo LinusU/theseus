@@ -114,7 +114,7 @@ impl kernel32::State {
 
         // Games of this era load whole asset archives into the process heap,
         // so give it room; the address space is ours to spend.
-        let heap_size = 64 << 20;
+        let heap_size = 384 << 20;
         let heap_addr = self.mappings.alloc("process heap".into(), heap_size);
         let process_heap = Heap::new(heap_addr, heap_size);
         peb.ProcessHeap = process_heap.addr;

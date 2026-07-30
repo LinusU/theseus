@@ -37,6 +37,7 @@ pub mod msvcrt;
 pub mod ole32;
 mod point;
 mod ptr;
+pub mod quicktime_qts;
 mod rect;
 pub mod shell32;
 pub mod trace;
@@ -55,6 +56,16 @@ pub const DYNAMIC_EXPORTS: &[(&str, &[&str])] = &[
         "user32",
         &["MessageBoxA", "GetActiveWindow", "GetLastActivePopup"],
     ),
+    (
+        "quicktime_qts",
+        &[
+            "theQuickTimeDispatcher",
+            "_CallComponent",
+            "_CallComponentFunctionWithStorage",
+        ],
+    ),
+    ("dsound", &["DirectSoundCreate"]),
+    ("ddraw", &["DirectDrawCreate"]),
 ];
 
 pub use dllexport::{ABIReturn, FromABIParam};
@@ -78,7 +89,7 @@ pub fn load(exe: &EXEData) -> Context {
 
     // Room for the program's image, its heaps and the flat pool games of this
     // era carve out for themselves.
-    let memory_size = 256 << 20;
+    let memory_size = 512 << 20;
     let memory = Memory::leak_new(memory_size);
 
     kernel32::init_state(exe.image_base, exe.resources.clone());

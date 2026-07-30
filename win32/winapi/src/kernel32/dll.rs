@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use runtime::Context;
 
-use crate::{Ptr, kernel32::lock, stub};
+use crate::{Ptr, kernel32::lock};
 
 pub type HMODULE = u32;
 
@@ -92,15 +92,32 @@ fn proc_address(module: &str, func: &str) -> Option<u32> {
 
 #[win32_derive::dllexport]
 pub fn GetModuleFileNameA(
-    _ctx: &mut Context,
-    _hModule: HMODULE,
-    _lpFilename: Ptr<u8>,
-    _nSize: u32,
+    ctx: &mut Context,
+    hModule: HMODULE,
+    lpFilename: Ptr<u8>,
+    nSize: u32,
 ) -> u32 {
-    /*
-    get_module_file_name(sys, hModule, &mut EncoderAnsi::new(&mut filename))
-    */
-    stub!(0)
+    let filename = if hModule == 0 || hModule == lock().image_base {
+        "DeimosRising.exe"
+    } else {
+        match module_name(hModule).as_deref() {
+            Some("quicktime_qts") => "QuickTime.qts",
+            Some("user32") => "USER32.dll",
+            _ => return 0,
+        }
+    };
+    if nSize == 0 {
+        return 0;
+    }
+
+    let copied = filename.len().min(nSize.saturating_sub(1) as usize);
+    ctx.memory[lpFilename.addr..][..copied].copy_from_slice(&filename.as_bytes()[..copied]);
+    ctx.memory[lpFilename.addr + copied as u32] = 0;
+    if copied < filename.len() {
+        nSize
+    } else {
+        copied as u32
+    }
 }
 
 #[win32_derive::dllexport]

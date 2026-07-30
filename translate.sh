@@ -85,6 +85,19 @@ elif [[ $1 == "winpin" ]]; then
     fi
     cargo run -p tc -- "${args[@]}"
     cargo build --profile fast -p winpin
+elif [[ $1 == "deimos-rising" ]]; then
+    game_dir="$HOME/coding/rust-deimos-rising/retail"
+    args=(
+        --exe "$game_dir/DeimosRising.exe"
+        --out out/deimos-rising
+        --scan-memory --scan-immediates --scan-prologues
+    )
+    # feedback loop: addresses discovered at runtime (see THESEUS_MISSING_ADDRS)
+    if [[ -f out/deimos-rising/missing.txt ]]; then
+        args+=(--entry-points-file out/deimos-rising/missing.txt)
+    fi
+    cargo run -p tc -- "${args[@]}"
+    cargo build --profile fast -p deimos-rising
 elif [[ $1 == "sbaitso-sbtalker" ]]; then
     args=(
         --trace

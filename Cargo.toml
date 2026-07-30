@@ -8,6 +8,7 @@ members = [
   "out/basicdd",
   "out/chillin",
   "out/chillin-unpack",
+  "out/deimos-rising",
   "out/dos/animate",
   "out/dos/animate-unpack",
   "out/dos/animate-unpack-2",
@@ -35,8 +36,10 @@ bitflags-derive = "0.0.4"
 console_error_panic_hook = "0.1.7"
 dos = { path = "dos" }
 exe = { path = "exe" }
+gif = "0.14"
 host = { path = "host" }
 iced-x86 = "1.21.0"
+image = { version = "0.25", default-features = false, features = ["gif", "tga"] }
 js-sys = "0.3.98"
 log = "0.4.29"
 logger = { path = "logger" }
