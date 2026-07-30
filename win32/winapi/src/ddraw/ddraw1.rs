@@ -4,11 +4,12 @@ use runtime::Context;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    RECT,
-    ddraw::{ColorKey, DD, GUID, Palette, get_pixel_format, state, types::*},
+    ddraw::{get_pixel_format, state, types::*, ColorKey, Palette, DD, GUID},
+    gdi32,
     heap::Heap,
     kernel32, stub,
     user32::HWND,
+    RECT,
 };
 
 pub mod IDirectDraw {
@@ -702,8 +703,29 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
+        let (width, height, bit_count, pixels) = {
+            let surfaces = state().surf.borrow_mut();
+            let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+            let pixels = surface.lock(&mut ctx.memory);
+            (
+                surface.width,
+                surface.height,
+                (surface.bytes_per_pixel * 8) as u8,
+                pixels,
+            )
+        };
+        let bitmap = gdi32::Bitmap {
+            width,
+            height,
+            is_bottom_up: false,
+            bit_count,
+            palette: Box::new([]),
+            pixels,
+        };
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        ctx.memory.write(lphDC, hdc);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -805,8 +827,12 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn ReleaseDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn ReleaseDC(ctx: &mut Context, this: u32, hdc: gdi32::HDC) -> DD {
+        gdi32::lock().release_dc(hdc);
+        let surfaces = state().surf.borrow_mut();
+        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        surface.unlock(&mut ctx.memory);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
