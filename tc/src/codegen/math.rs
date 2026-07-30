@@ -168,6 +168,19 @@ impl<'a> CodeGen<'a> {
                 0,
                 format!("inc({}, &mut ctx.cpu.flags)", self.get_op(instr, 0)),
             )),
+            Bsr => {
+                let size = op_size(instr, 1);
+                self.line(format!("let value = {};", self.get_op(instr, 1)));
+                self.line("ctx.cpu.flags.set(Flags::ZF, value == 0);");
+                self.line(format!(
+                    "if value != 0 {{ {} }}",
+                    self.set_op(
+                        instr,
+                        0,
+                        format!("({} - value.leading_zeros()) as u{size}", size - 1),
+                    )
+                ));
+            }
 
             _ => return false,
         }
