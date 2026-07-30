@@ -73,6 +73,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(instr, 0, self.get_op(instr, 1)));
                 self.line(self.set_op(instr, 1, "t".into()));
             }
+            Bswap => {
+                self.line(self.set_op(instr, 0, format!("{}.swap_bytes()", self.get_op(instr, 0))))
+            }
             Nop => {}
             // x87 exception sync; our FPU never raises.
             Wait => {}
