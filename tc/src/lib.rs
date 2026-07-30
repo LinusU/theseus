@@ -210,7 +210,10 @@ impl State {
             ("dsound", winapi::dsound::VTABLES.as_slice()),
             ("dinput", winapi::dinput::VTABLES.as_slice()),
         ] {
-            if !module.imports.iter().any(|imp| imp.dll == dll) {
+            let loaded_dynamically = winapi::DYNAMIC_EXPORTS
+                .iter()
+                .any(|(dynamic_dll, _)| *dynamic_dll == dll);
+            if !loaded_dynamically && !module.imports.iter().any(|imp| imp.dll == dll) {
                 continue;
             }
             if addr == 0 {
@@ -233,9 +236,6 @@ impl State {
         }
 
         for (dll, funcs) in winapi::DYNAMIC_EXPORTS {
-            if !module.imports.iter().any(|imp| imp.dll == *dll) {
-                continue;
-            }
             for func in funcs.iter() {
                 module
                     .dynamic_exports
