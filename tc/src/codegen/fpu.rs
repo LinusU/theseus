@@ -73,14 +73,27 @@ impl<'a> CodeGen<'a> {
         use iced_x86::Mnemonic::*;
         match instr.mnemonic() {
             Fld => {
-                let expr = self.fpu_get_op(instr, 0);
-                self.line(format!("ctx.cpu.fpu.push({expr});"));
+                if instr.op_kind(0) == iced_x86::OpKind::Memory && mem_size(instr) == 80 {
+                    let addr = self.gen_addr(instr);
+                    self.line(format!(
+                        "ctx.cpu.fpu.push_f80(ctx.memory.read::<[u8; 10]>({addr}));"
+                    ));
+                } else {
+                    let expr = self.fpu_get_op(instr, 0);
+                    self.line(format!("ctx.cpu.fpu.push({expr});"));
+                }
             }
             Fild => {
                 self.line(format!(
                     "ctx.cpu.fpu.push({} as i{size} as f64);",
                     self.get_op(instr, 0),
                     size = op_size(instr, 0)
+                ));
+            }
+            Fbld => {
+                let addr = self.gen_addr(instr);
+                self.line(format!(
+                    "ctx.cpu.fpu.push_bcd(ctx.memory.read::<[u8; 10]>({addr}));"
                 ));
             }
             Fldz => self.line("ctx.cpu.fpu.push(0.0);"),
@@ -106,6 +119,11 @@ impl<'a> CodeGen<'a> {
                 if instr.mnemonic() == Fistp {
                     self.line("ctx.cpu.fpu.pop();");
                 }
+            }
+            Fbstp => {
+                let addr = self.gen_addr(instr);
+                self.line("let packed_bcd = ctx.cpu.fpu.pop_bcd();");
+                self.line(format!("ctx.memory.write::<[u8; 10]>({addr}, packed_bcd);"));
             }
 
             // Binary ops
@@ -187,8 +205,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_op(instr, 1, "t".into()));
             }
 
-            Fcom | Fcomp => {
+            Fcom | Fcomp | Fcompp => {
                 let (arg0, arg1) = match instr.op_count() {
+                    0 => (self.fpu_get_reg(0), self.fpu_get_reg(1)),
                     1 => (self.fpu_get_reg(0), self.fpu_get_op(instr, 0)),
                     2 => (self.fpu_get_op(instr, 0), self.fpu_get_op(instr, 1)),
                     _ => unreachable!(),
@@ -199,7 +218,16 @@ impl<'a> CodeGen<'a> {
                 ));
                 if instr.mnemonic() == Fcomp {
                     self.line("ctx.cpu.fpu.pop();");
+                } else if instr.mnemonic() == Fcompp {
+                    self.line("ctx.cpu.fpu.pop();");
+                    self.line("ctx.cpu.fpu.pop();");
                 }
+            }
+            Ftst => {
+                self.line(format!(
+                    "ctx.cpu.fpu.cmp = {}.total_cmp(&0.0);",
+                    self.fpu_get_reg(0)
+                ));
             }
 
             Fnstsw => {
@@ -231,6 +259,34 @@ impl<'a> CodeGen<'a> {
                 self.line("let t = ctx.cpu.fpu.get(0);");
                 self.line("ctx.cpu.fpu.pop();");
                 self.line("ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0).atan2(t));");
+            }
+            Fabs => {
+                self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
+            }
+            Frndint => {
+                self.line(
+                    self.fpu_set_reg(0, format!("ctx.cpu.fpu.round({})", self.fpu_get_reg(0))),
+                );
+            }
+            Fscale => {
+                self.line(self.fpu_set_reg(
+                    0,
+                    format!(
+                        "{} * 2.0f64.powf({}.trunc())",
+                        self.fpu_get_reg(0),
+                        self.fpu_get_reg(1)
+                    ),
+                ));
+            }
+            Fldpi => self.line("ctx.cpu.fpu.push(std::f64::consts::PI);"),
+            F2xm1 => {
+                self.line(self.fpu_set_reg(0, format!("{}.exp2() - 1.0", self.fpu_get_reg(0))));
+            }
+            Fxtract => self.line("ctx.cpu.fpu.extract();"),
+            Fyl2x => {
+                self.line("let t = ctx.cpu.fpu.get(1) * ctx.cpu.fpu.get(0).log2();");
+                self.line("ctx.cpu.fpu.pop();");
+                self.line("ctx.cpu.fpu.set(0, t);");
             }
             _ => return false,
         }
