@@ -621,7 +621,11 @@ pub mod IDirectSoundBuffer {
         let format = buffer.format;
         drop(state);
 
-        let size = std::mem::size_of::<WAVEFORMATEX>() as u32;
+        // WAVEFORMATEX is an 18-byte Win32 wire structure. Rust rounds our
+        // repr(C) type up to 20 bytes because its largest field is a u32, but
+        // callers pass and expect the unpadded Windows size.
+        const WAVEFORMATEX_SIZE: u32 = 18;
+        let size = WAVEFORMATEX_SIZE;
         if lpwfxFormat != 0 {
             if dwSizeAllocated < size {
                 return DSERR_INVALIDPARAM;
