@@ -50,6 +50,7 @@ fn normalize_module_name(name: &str) -> String {
     let name = name.rsplit(['\\', '/']).next().unwrap_or(name);
     name.trim_end_matches(".dll")
         .trim_end_matches(".DLL")
+        .replace('.', "_")
         .to_ascii_lowercase()
 }
 
