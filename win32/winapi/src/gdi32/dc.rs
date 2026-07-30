@@ -157,6 +157,60 @@ pub fn SetLayout(_ctx: &mut Context, _hdc: HDC, _l: u32 /* DC_LAYOUT */) -> u32 
 }
 
 #[win32_derive::dllexport]
-pub fn SetPixel(_ctx: &mut Context, _hdc: HDC, _x: i32, _y: i32, _color: COLORREF) -> COLORREF {
-    todo!()
+pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) -> COLORREF {
+    let bitmap = {
+        let state = gdi32::lock();
+        state.dcs.get(hdc).unwrap().bitmap().clone()
+    };
+    if x < 0 || y < 0 || x as u32 >= bitmap.width || y as u32 >= bitmap.height {
+        return color;
+    }
+
+    let [r, g, b] = color.to_rgb();
+    let offset =
+        bitmap.pixels + y as u32 * bitmap.stride() + x as u32 * (bitmap.bit_count as u32 / 8);
+    match bitmap.bit_count {
+        16 => {
+            let pixel = ((r as u16 >> 3) << 10) | ((g as u16 >> 3) << 5) | (b as u16 >> 3);
+            ctx.memory.write::<u16>(offset, pixel);
+        }
+        24 => ctx.memory[offset..][..3].copy_from_slice(&[r, g, b]),
+        32 => ctx.memory[offset..][..4].copy_from_slice(&color.to_pixel()),
+        _ => log::warn!("SetPixel: unsupported {}-bit bitmap", bitmap.bit_count),
+    }
+    color
+}
+
+#[win32_derive::dllexport]
+pub fn GetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> COLORREF {
+    let bitmap = {
+        let state = gdi32::lock();
+        state.dcs.get(hdc).unwrap().bitmap().clone()
+    };
+    if x < 0 || y < 0 || x as u32 >= bitmap.width || y as u32 >= bitmap.height {
+        return COLORREF::default();
+    }
+
+    let offset =
+        bitmap.pixels + y as u32 * bitmap.stride() + x as u32 * (bitmap.bit_count as u32 / 8);
+    let [r, g, b] = match bitmap.bit_count {
+        16 => {
+            let pixel = ctx.memory.read::<u16>(offset);
+            [
+                (((pixel >> 10) & 0x1f) * 255 / 31) as u8,
+                (((pixel >> 5) & 0x1f) * 255 / 31) as u8,
+                ((pixel & 0x1f) * 255 / 31) as u8,
+            ]
+        }
+        24 | 32 => [
+            ctx.memory[offset],
+            ctx.memory[offset + 1],
+            ctx.memory[offset + 2],
+        ],
+        _ => {
+            log::warn!("GetPixel: unsupported {}-bit bitmap", bitmap.bit_count);
+            [0, 0, 0]
+        }
+    };
+    COLORREF::from_rgb(r, g, b)
 }
