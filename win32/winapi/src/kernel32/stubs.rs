@@ -1,9 +1,5 @@
-stdcall_stub!(EnterCriticalSection_stdcall, 1, 0);
-stdcall_stub!(LeaveCriticalSection_stdcall, 1, 0);
-stdcall_stub!(InitializeCriticalSection_stdcall, 1, 0);
 stdcall_stub!(SetConsoleCtrlHandler_stdcall, 2, 1);
 stdcall_stub!(TlsFree_stdcall, 1, 1);
-stdcall_stub!(DeleteCriticalSection_stdcall, 1, 0);
 stdcall_stub!(GetConsoleTitleA_stdcall, 2, 0);
 stdcall_stub!(SetConsoleTitleA_stdcall, 1, 1);
 stdcall_stub!(SuspendThread_stdcall, 1, u32::MAX);

@@ -1,11 +1,15 @@
-use std::{cell::Cell, collections::HashMap, sync::Mutex};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use runtime::Mappings;
 
 use crate::{
     Handles,
     heap::Heap,
-    kernel32::{self, CommandLine, Object},
+    kernel32::{self, CommandLine, CriticalSection, Object},
     locked_state::LockedState,
 };
 
@@ -19,6 +23,7 @@ pub struct State {
     pub environ: Cell<u32>,
     pub next_thread_id: u32,
     pub next_tls_index: u32,
+    pub(crate) critical_sections: HashMap<u32, Arc<CriticalSection>>,
     pub dll_loader: Box<dyn kernel32::DLLLoader>,
     pub objects: Handles<Object>,
 }
@@ -37,6 +42,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         environ: Default::default(),
         next_thread_id: 2,
         next_tls_index: 0,
+        critical_sections: HashMap::new(),
         dll_loader: Box::new(()),
         objects: Handles::new(0x1000),
     });

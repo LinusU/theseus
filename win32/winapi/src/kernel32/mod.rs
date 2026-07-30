@@ -1,3 +1,4 @@
+mod critical_section;
 mod dll;
 mod env;
 mod event;
@@ -13,6 +14,7 @@ mod stubs;
 mod thread;
 mod time;
 
+pub use critical_section::*;
 pub use dll::*;
 pub use env::*;
 pub use event::*;
