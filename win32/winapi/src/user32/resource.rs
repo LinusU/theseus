@@ -5,7 +5,9 @@ use crate::{Ptr, dllexport::win32flags, gdi32, handle::HANDLE, kernel32, stub};
 
 #[win32_derive::dllexport]
 pub fn LoadCursorA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpCursorName: Ptr<u8>) -> HCURSOR {
-    stub!(0)
+    // System cursors are shared resources. Their precise shape is owned by the
+    // host windowing system, so a stable non-null token is sufficient here.
+    1
 }
 
 #[win32_derive::dllexport]
@@ -132,6 +134,33 @@ fn find_string(ctx: &Context, uID: u32) -> Option<&[u8]> {
         block = next;
     }
     unreachable!()
+}
+
+#[win32_derive::dllexport]
+pub fn LoadStringA(
+    ctx: &mut Context,
+    hInstance: HINSTANCE,
+    uID: u32,
+    lpBuffer: Ptr<u8>,
+    cchBufferMax: i32,
+) -> i32 {
+    assert!(hInstance == 0 || hInstance == kernel32::lock().image_base);
+    if cchBufferMax <= 0 {
+        return 0;
+    }
+    let Some(bytes) = find_string(ctx, uID) else {
+        return 0;
+    };
+    let utf16: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    let string = String::from_utf16_lossy(&utf16);
+    let bytes = string.as_bytes();
+    let copied = bytes.len().min(cchBufferMax as usize - 1);
+    ctx.memory[lpBuffer.addr..][..copied].copy_from_slice(&bytes[..copied]);
+    ctx.memory[lpBuffer.addr + copied as u32] = 0;
+    copied as i32
 }
 
 #[win32_derive::dllexport]
