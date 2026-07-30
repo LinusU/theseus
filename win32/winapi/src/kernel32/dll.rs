@@ -15,12 +15,12 @@ pub trait DLLLoader: Send {
 
 impl DLLLoader for () {
     fn load_library(&mut self, filename: &str) -> HMODULE {
-        log::warn!("LoadLibrary({filename}): not supported, returning null");
+        log::trace!("LoadLibrary({filename}): not supported, returning null");
         0
     }
 
     fn get_proc_address(&mut self, hmodule: HMODULE, proc_name: &str) -> u32 {
-        log::warn!("GetProcAddress({hmodule:#x}, {proc_name}): not supported, returning null");
+        log::trace!("GetProcAddress({hmodule:#x}, {proc_name}): not supported, returning null");
         0
     }
 }
@@ -114,7 +114,7 @@ pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
     match module_handle(&name) {
         Some(handle) => handle,
         None => {
-            log::warn!("GetModuleHandleA({name}): not loaded");
+            log::trace!("GetModuleHandleA({name}): not loaded");
             0
         }
     }
@@ -149,7 +149,7 @@ pub fn GetProcAddress(ctx: &mut Context, hModule: HMODULE, lpProcName: Ptr<u8>) 
         if let Some(addr) = proc_address(&module, &name) {
             return addr;
         }
-        log::warn!("GetProcAddress({module}, {name}): not implemented, returning null");
+        log::trace!("GetProcAddress({module}, {name}): not implemented, returning null");
         return 0;
     }
     lock().dll_loader.get_proc_address(hModule, &name)
