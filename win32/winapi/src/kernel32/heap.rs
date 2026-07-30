@@ -19,8 +19,17 @@ win32flags! {
 #[win32_derive::dllexport]
 pub fn HeapAlloc(ctx: &mut Context, hHeap: HANDLE, dwFlags: HEAP_FLAGS, dwBytes: u32) -> u32 {
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
-    let addr = heap.alloc(&mut ctx.memory, dwBytes);
+    let heap = if hHeap == state.process_heap.addr {
+        &state.process_heap
+    } else {
+        let Some(heap) = state.heaps.get(&hHeap) else {
+            return 0;
+        };
+        heap
+    };
+    let Some(addr) = heap.try_alloc(&mut ctx.memory, dwBytes) else {
+        return 0;
+    };
     drop(state);
     if addr != 0 && dwFlags.contains(HEAP_FLAGS::ZERO_MEMORY) {
         ctx.memory[addr..][..dwBytes as usize].fill(0);
@@ -61,7 +70,14 @@ pub fn HeapSize(
         log::warn!("HeapFree flags {dwFlags:x}");
     }
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
+    let heap = if hHeap == state.process_heap.addr {
+        &state.process_heap
+    } else {
+        let Some(heap) = state.heaps.get(&hHeap) else {
+            return u32::MAX;
+        };
+        heap
+    };
     heap.size(&mut ctx.memory, lpMem.addr)
 }
 
@@ -76,7 +92,14 @@ pub fn HeapFree(
         log::warn!("HeapFree flags {dwFlags:x}");
     }
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
+    let heap = if hHeap == state.process_heap.addr {
+        &state.process_heap
+    } else {
+        let Some(heap) = state.heaps.get(&hHeap) else {
+            return false;
+        };
+        heap
+    };
     heap.free(&mut ctx.memory, lpMem.addr);
     true
 }
@@ -132,7 +155,9 @@ win32flags! {
 #[win32_derive::dllexport]
 pub fn GlobalAlloc(ctx: &mut Context, uFlags: GMEM, dwBytes: u32) -> u32 {
     assert!(!uFlags.contains(GMEM::MOVEABLE));
-    let ptr = lock().process_heap.alloc(&mut ctx.memory, dwBytes);
+    let Some(ptr) = lock().process_heap.try_alloc(&mut ctx.memory, dwBytes) else {
+        return 0;
+    };
     if uFlags.contains(GMEM::ZEROINIT) {
         ctx.memory[ptr..][..dwBytes as usize].fill(0);
     }
