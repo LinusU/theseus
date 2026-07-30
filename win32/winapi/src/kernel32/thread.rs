@@ -136,18 +136,28 @@ pub fn GetCurrentThreadId(ctx: &mut Context) -> u32 {
 pub fn TlsAlloc(_ctx: &mut Context) -> u32 {
     let mut state = kernel32::lock();
     let index = state.next_tls_index;
+    if index >= 64 {
+        return u32::MAX;
+    }
     state.next_tls_index += 1;
     index
 }
 
 #[win32_derive::dllexport]
 pub fn TlsGetValue(ctx: &mut Context, dwTlsIndex: u32) -> u32 {
-    teb(ctx).TlsSlots[dwTlsIndex as usize]
+    teb(ctx)
+        .TlsSlots
+        .get(dwTlsIndex as usize)
+        .copied()
+        .unwrap_or(0)
 }
 
 #[win32_derive::dllexport]
 pub fn TlsSetValue(ctx: &mut Context, dwTlsIndex: u32, lpTlsValue: u32) -> bool {
-    teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = lpTlsValue;
+    let Some(slot) = teb_mut(ctx).TlsSlots.get_mut(dwTlsIndex as usize) else {
+        return false;
+    };
+    *slot = lpTlsValue;
     true
 }
 
