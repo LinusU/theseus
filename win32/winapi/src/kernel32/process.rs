@@ -133,6 +133,22 @@ pub fn GetCurrentProcess(_ctx: &mut Context) -> HANDLE {
     CURRENT_PROCESS_HANDLE
 }
 
+#[win32_derive::dllexport]
+pub fn DuplicateHandle(
+    ctx: &mut Context,
+    _hSourceProcessHandle: HANDLE,
+    hSourceHandle: HANDLE,
+    _hTargetProcessHandle: HANDLE,
+    lpTargetHandle: crate::Ptr<HANDLE>,
+    _dwDesiredAccess: u32,
+    _bInheritHandle: bool,
+    _dwOptions: u32,
+) -> bool {
+    lpTargetHandle
+        .write(&mut ctx.memory, hSourceHandle)
+        .is_some()
+}
+
 #[allow(unused)]
 fn peb_mut<'a>(ctx: &'a mut Context) -> &'a mut PEB {
     let peb_addr = teb(ctx).Peb;
