@@ -51,6 +51,36 @@ const DSERR_INVALIDPARAM: u32 = 0x80070057;
 /// full volume and -10000 as silence.
 const DSBVOLUME_MIN: i32 = -10000;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LockRegions {
+    offset1: u32,
+    bytes1: u32,
+    offset2: u32,
+    bytes2: u32,
+}
+
+/// Split a circular-buffer lock at the end of the allocation.
+fn lock_regions(size: u32, offset: u32, bytes: u32) -> LockRegions {
+    if size == 0 || bytes == 0 {
+        return LockRegions {
+            offset1: 0,
+            bytes1: 0,
+            offset2: 0,
+            bytes2: 0,
+        };
+    }
+
+    let offset1 = offset % size;
+    let bytes = bytes.min(size);
+    let bytes1 = bytes.min(size - offset1);
+    LockRegions {
+        offset1,
+        bytes1,
+        offset2: 0,
+        bytes2: bytes - bytes1,
+    }
+}
+
 /// Convert an attenuation in hundredths of a decibel to an amplitude factor.
 fn gain(hundredths_db: i32) -> f32 {
     if hundredths_db <= DSBVOLUME_MIN {
@@ -738,24 +768,37 @@ pub mod IDirectSoundBuffer {
             return DSERR_INVALIDPARAM;
         };
 
-        let (offset, len) = if dwFlags.contains(DSBLOCK::ENTIREBUFFER) {
-            (0, buffer.size)
+        let offset = if dwFlags.contains(DSBLOCK::FROMWRITECURSOR) {
+            let write_cursor = buffer.cursor as u32 * buffer.format.frame_bytes();
+            write_cursor.wrapping_add(dwOffset)
         } else {
-            let offset = dwOffset.min(buffer.size);
-            (offset, dwBytes.min(buffer.size - offset))
+            dwOffset
         };
-        // Some callers rely on getting null back for an empty region.
-        let addr = if len == 0 { 0 } else { buffer.addr + offset };
+        let bytes = if dwFlags.contains(DSBLOCK::ENTIREBUFFER) {
+            buffer.size
+        } else {
+            dwBytes
+        };
+        let regions = lock_regions(buffer.size, offset, bytes);
+        let addr1 = if regions.bytes1 == 0 {
+            0
+        } else {
+            buffer.addr + regions.offset1
+        };
+        let addr2 = if regions.bytes2 == 0 {
+            0
+        } else {
+            buffer.addr + regions.offset2
+        };
         drop(state);
 
-        ctx.memory.write(ppvAudioPtr1, addr);
-        ctx.memory.write(pdwAudioBytes1, len);
-        // We never split a locked region, so the second one is always empty.
+        ctx.memory.write(ppvAudioPtr1, addr1);
+        ctx.memory.write(pdwAudioBytes1, regions.bytes1);
         if ppvAudioPtr2 != 0 {
-            ctx.memory.write(ppvAudioPtr2, 0u32);
+            ctx.memory.write(ppvAudioPtr2, addr2);
         }
         if pdwAudioBytes2 != 0 {
-            ctx.memory.write(pdwAudioBytes2, 0u32);
+            ctx.memory.write(pdwAudioBytes2, regions.bytes2);
         }
         DS_OK
     }
@@ -1025,5 +1068,49 @@ impl WavWrite {
     fn write(&mut self, data: &[u8]) {
         use std::io::Write;
         self.f.write_all(data).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_region_before_end_is_contiguous() {
+        assert_eq!(
+            lock_regions(0x4000, 0x1000, 0x2000),
+            LockRegions {
+                offset1: 0x1000,
+                bytes1: 0x2000,
+                offset2: 0,
+                bytes2: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn lock_region_wraps_to_start() {
+        assert_eq!(
+            lock_regions(0x4000, 0x3000, 0x3000),
+            LockRegions {
+                offset1: 0x3000,
+                bytes1: 0x1000,
+                offset2: 0,
+                bytes2: 0x2000,
+            }
+        );
+    }
+
+    #[test]
+    fn lock_region_is_limited_to_one_buffer() {
+        assert_eq!(
+            lock_regions(0x4000, 0x3000, 0x8000),
+            LockRegions {
+                offset1: 0x3000,
+                bytes1: 0x1000,
+                offset2: 0,
+                bytes2: 0x3000,
+            }
+        );
     }
 }
