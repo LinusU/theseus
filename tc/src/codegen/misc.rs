@@ -96,7 +96,10 @@ impl<'a> CodeGen<'a> {
                     self.todo(format!("int {:#x}", instr.immediate8()));
                 }
             }
-            Int3 | Cmpxchg | Pushfd | Cpuid | Xgetbv | Bt | Div => self.todo(instr_name(instr)),
+            Pushfd => self.line("ctx.push32(ctx.cpu.flags.bits() | 2);"),
+            Popfd => self.line("ctx.cpu.flags = Flags::from_bits_retain(ctx.pop32());"),
+            Cpuid => self.line("ctx.cpuid();"),
+            Int3 | Cmpxchg | Xgetbv | Bt | Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),

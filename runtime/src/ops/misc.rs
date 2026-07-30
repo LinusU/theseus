@@ -1,6 +1,31 @@
 use crate::{Context, Flags, segofs};
 
 impl Context {
+    pub fn cpuid(&mut self) {
+        match self.cpu.regs.eax {
+            0 => {
+                self.cpu.regs.eax = 1;
+                self.cpu.regs.ebx = u32::from_le_bytes(*b"Genu");
+                self.cpu.regs.edx = u32::from_le_bytes(*b"ineI");
+                self.cpu.regs.ecx = u32::from_le_bytes(*b"ntel");
+            }
+            1 => {
+                // Report a baseline Pentium-class CPU without optional SIMD
+                // extensions. This keeps old software on its portable paths.
+                self.cpu.regs.eax = 0x0000_0520;
+                self.cpu.regs.ebx = 0;
+                self.cpu.regs.ecx = 0;
+                self.cpu.regs.edx = 0;
+            }
+            _ => {
+                self.cpu.regs.eax = 0;
+                self.cpu.regs.ebx = 0;
+                self.cpu.regs.ecx = 0;
+                self.cpu.regs.edx = 0;
+            }
+        }
+    }
+
     pub fn push32(&mut self, x: u32) {
         self.cpu.regs.esp -= 4;
         self.memory.write::<u32>(self.cpu.regs.esp, x);
