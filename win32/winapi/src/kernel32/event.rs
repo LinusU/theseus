@@ -24,10 +24,15 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
 {
     let event = {
         let kernel32 = lock();
-        let Object::Event(event) = kernel32.objects.get(hHandle).unwrap() else {
-            panic!()
-        };
-        event.clone()
+        match kernel32.objects.get(hHandle).unwrap() {
+            Object::Event(event) => Some(event.clone()),
+            // File handles are always ready, mutex ownership is not modeled,
+            // and translated threads are not currently joinable.
+            Object::Thread | Object::Mutex | Object::File(_) | Object::FindHandle(_) => None,
+        }
+    };
+    let Some(event) = event else {
+        return 0;
     };
 
     let mut signaled = event.signaled.lock().unwrap();
