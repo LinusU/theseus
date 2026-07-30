@@ -4,7 +4,7 @@ use runtime::*;
 
 use super::types::*;
 use crate::{
-    ddraw::{GUID, ddraw1, ddraw7, state},
+    ddraw::{ddraw1, ddraw7, state, GUID},
     kernel32,
     user32::{self, HWND},
 };
@@ -234,15 +234,18 @@ impl Surface {
                 buf.into()
             }
             2 => {
-                // RGB565, the standard 16-bit display format.
+                // This legacy DirectDraw backend exposes RGB555. Several
+                // contemporary games (including Deimos Rising) probe the
+                // primary surface and select assembly blend routines whose
+                // masks depend on the exact 16-bit layout.
                 let mut buf = Vec::with_capacity(pixels.len() * 2);
                 for pixel in pixels.chunks_exact(2) {
                     let pixel = u16::from_le_bytes([pixel[0], pixel[1]]);
-                    let (r, g, b) = (pixel >> 11, (pixel >> 5) & 0x3f, pixel & 0x1f);
+                    let (r, g, b) = ((pixel >> 10) & 0x1f, (pixel >> 5) & 0x1f, pixel & 0x1f);
                     // Replicate the high bits into the low ones so full-scale
                     // values stay full-scale.
                     buf.push((r << 3 | r >> 2) as u8);
-                    buf.push((g << 2 | g >> 4) as u8);
+                    buf.push((g << 3 | g >> 2) as u8);
                     buf.push((b << 3 | b >> 2) as u8);
                     buf.push(0);
                 }
@@ -316,16 +319,38 @@ pub struct Palette {
     pub entries: Vec<PALETTEENTRY>,
 }
 
-pub fn get_pixel_format() -> DDPIXELFORMAT {
+pub fn get_pixel_format(bytes_per_pixel: u32) -> DDPIXELFORMAT {
+    let (flags, bits, red, green, blue, alpha) = match bytes_per_pixel {
+        1 => (0x40 | 0x20, 8, 0, 0, 0, 0),
+        2 => (0x40, 16, 0x0000_7C00, 0x0000_03E0, 0x0000_001F, 0),
+        3 => (0x40, 24, 0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0),
+        4 => (0x40, 32, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
+        _ => panic!("unsupported DirectDraw pixel size {bytes_per_pixel}"),
+    };
     DDPIXELFORMAT {
         dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-        dwFlags: 0x00000040,
+        dwFlags: flags,
         dwFourCC: 0,
-        dwRGBBitCount: 32,
-        dwRBitMask: 0x0000_00FF,
-        dwGBitMask: 0x0000_FF00,
-        dwBBitMask: 0x00FF_0000,
-        dwRGBAlphaBitMask: 0xFF00_0000,
+        dwRGBBitCount: bits,
+        dwRBitMask: red,
+        dwGBitMask: green,
+        dwBBitMask: blue,
+        dwRGBAlphaBitMask: alpha,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_pixel_format;
+
+    #[test]
+    fn legacy_16_bit_surfaces_are_reported_as_rgb555() {
+        let format = get_pixel_format(2);
+
+        assert_eq!(format.dwRGBBitCount, 16);
+        assert_eq!(format.dwRBitMask, 0x7c00);
+        assert_eq!(format.dwGBitMask, 0x03e0);
+        assert_eq!(format.dwBBitMask, 0x001f);
     }
 }
 
