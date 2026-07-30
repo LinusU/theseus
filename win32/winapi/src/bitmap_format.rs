@@ -2,7 +2,7 @@
 
 use zerocopy::FromBytes;
 
-use crate::{FromABIParam, gdi32::COLORREF};
+use crate::{gdi32::COLORREF, FromABIParam};
 
 #[derive(Debug, Eq, PartialEq, win32_derive::ABIEnum)]
 pub enum BI {
@@ -192,7 +192,7 @@ impl Bitmap {
         } else if header.biBitCount <= 8 {
             2usize.pow(header.biBitCount as u32)
         } else {
-            todo!()
+            0
         };
 
         let (palette, buf) = <[[u8; 4]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBQUAD
@@ -220,6 +220,18 @@ impl Bitmap {
                 let len = ((x2 - x1) * 4) as usize;
                 dst[..len].copy_from_slice(&pixels[(y * self.stride() + x1 * 4) as usize..][..len]);
             }
+            16 => {
+                let src = &pixels[(y * self.stride()) as usize..];
+                for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
+                    let offset = srci as usize * 2;
+                    let pixel = u16::from_le_bytes([src[offset], src[offset + 1]]);
+                    let r = (((pixel >> 10) & 0x1f) * 255 / 31) as u8;
+                    let g = (((pixel >> 5) & 0x1f) * 255 / 31) as u8;
+                    let b = ((pixel & 0x1f) * 255 / 31) as u8;
+                    let color = COLORREF::from_rgb(r, g, b);
+                    dst[dsti..][..4].copy_from_slice(&color.to_pixel());
+                }
+            }
             8 => {
                 let src = &pixels[(y * self.stride()) as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
@@ -235,6 +247,14 @@ impl Bitmap {
                     } else {
                         src[(srci / 2) as usize] & 0xf
                     } as usize];
+                    dst[dsti..][..4].copy_from_slice(&color.to_pixel());
+                }
+            }
+            1 => {
+                let src = &pixels[(y * self.stride()) as usize..];
+                for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
+                    let palette_index = (src[(srci / 8) as usize] >> (7 - srci % 8)) & 1;
+                    let color = self.palette[palette_index as usize];
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
