@@ -81,6 +81,11 @@ fn lock_regions(size: u32, offset: u32, bytes: u32) -> LockRegions {
     }
 }
 
+fn consumed_output_frames(output_frames: u64, queued_bytes: u32) -> u64 {
+    let queued_frames = queued_bytes / HOST_FRAME_BYTES;
+    output_frames.saturating_sub(u64::from(queued_frames))
+}
+
 /// Convert an attenuation in hundredths of a decibel to an amplitude factor.
 fn gain(hundredths_db: i32) -> f32 {
     if hundredths_db <= DSBVOLUME_MIN {
@@ -136,13 +141,56 @@ struct Buffer {
     looping: bool,
     /// Playback position in source frames; fractional so resampling works.
     cursor: f64,
+    /// Output timeline position where the current Play began. The mixer runs
+    /// ahead of the device, so this is needed to distinguish samples merely
+    /// queued to the host from samples that have actually played.
+    playback_start: Option<PlaybackStart>,
     volume: i32,
     pan: i32,
+}
+
+#[derive(Clone, Copy)]
+struct PlaybackStart {
+    output_frame: u64,
+    source_frame: f64,
 }
 
 impl Buffer {
     fn frame_count(&self) -> f64 {
         (self.size / self.format.frame_bytes()) as f64
+    }
+
+    fn cursor_bytes(&self, cursor: f64) -> u32 {
+        if self.size == 0 {
+            return 0;
+        }
+        ((cursor.floor() as u64 * u64::from(self.format.frame_bytes())) % u64::from(self.size))
+            as u32
+    }
+
+    fn play_cursor(&self, output_frame: u64) -> f64 {
+        let Some(start) = self.playback_start else {
+            return self.cursor;
+        };
+        let elapsed_output_frames = output_frame.saturating_sub(start.output_frame);
+        let elapsed_source_frames =
+            elapsed_output_frames as f64 * self.format.rate as f64 / HOST_RATE as f64;
+        let cursor = start.source_frame + elapsed_source_frames;
+        let frames = self.frame_count();
+        if frames == 0.0 {
+            0.0
+        } else if self.looping {
+            cursor % frames
+        } else {
+            cursor.min(frames)
+        }
+    }
+
+    fn reported_cursors(&self, output_frame: u64) -> (u32, u32) {
+        (
+            self.cursor_bytes(self.play_cursor(output_frame)),
+            self.cursor_bytes(self.cursor),
+        )
     }
 
     /// Per-channel amplitude, combining volume and pan.
@@ -208,6 +256,9 @@ impl Buffer {
 struct State {
     buffers: HashMap<u32, Buffer>,
     stream: Option<host::AudioStream>,
+    /// Total stereo frames submitted to the host stream. Subtracting the
+    /// stream's queued frames yields the device's actual playback timeline.
+    output_frames: u64,
     /// Heap holding the buffers' PCM data.
     heap: Option<Heap>,
     write: Option<WavWrite>,
@@ -226,6 +277,7 @@ fn init() {
         *state = Some(State {
             buffers: HashMap::default(),
             stream: None,
+            output_frames: 0,
             heap: None,
             write: wav_debug_path().map(|path| WavWrite::new(&path)),
         });
@@ -259,10 +311,15 @@ impl State {
     /// Mix one chunk of every playing buffer and hand it to the host.
     fn mix_chunk(&mut self, mem: &Memory) {
         let mut mixed = [(0f32, 0f32); CHUNK_FRAMES];
+        let output_frame = self.output_frames;
         for buffer in self.buffers.values_mut() {
             if !buffer.playing || buffer.primary || buffer.size == 0 {
                 continue;
             }
+            buffer.playback_start.get_or_insert(PlaybackStart {
+                output_frame,
+                source_frame: buffer.cursor,
+            });
             let frames = buffer.frame_count();
             let step = buffer.format.rate as f64 / HOST_RATE as f64;
             let (left_gain, right_gain) = buffer.gains();
@@ -296,6 +353,11 @@ impl State {
             write.write(&bytes);
         }
         self.stream().put_data(&bytes);
+        self.output_frames += CHUNK_FRAMES as u64;
+    }
+
+    fn played_output_frame(&mut self) -> u64 {
+        consumed_output_frames(self.output_frames, self.stream().queued_bytes())
     }
 }
 
@@ -432,6 +494,7 @@ pub mod IDirectSound {
                 playing: false,
                 looping: false,
                 cursor: 0.0,
+                playback_start: None,
                 volume: 0,
                 pan: 0,
             },
@@ -488,6 +551,7 @@ pub mod IDirectSound {
             playing: false,
             looping: false,
             cursor: 0.0,
+            playback_start: None,
             volume: original.volume,
             pan: original.pan,
         };
@@ -618,20 +682,19 @@ pub mod IDirectSoundBuffer {
         // Asking where playback is has to move it along first, or an app that
         // polls in a tight loop would never see it advance.
         pump(ctx);
-        let state = lock();
+        let mut state = lock();
+        let played_output_frame = state.played_output_frame();
         let Some(buffer) = state.buffers.get(&this) else {
             return DSERR_INVALIDPARAM;
         };
-        let frame_bytes = buffer.format.frame_bytes();
-        let play = buffer.cursor as u32 * frame_bytes;
+        let (play, write) = buffer.reported_cursors(played_output_frame);
         drop(state);
 
         if pdwCurrentPlayCursor != 0 {
             ctx.memory.write(pdwCurrentPlayCursor, play);
         }
         if pdwCurrentWriteCursor != 0 {
-            // Real hardware keeps the write cursor a little ahead of playback.
-            ctx.memory.write(pdwCurrentWriteCursor, play + frame_bytes);
+            ctx.memory.write(pdwCurrentWriteCursor, write);
         }
         DS_OK
     }
@@ -769,8 +832,8 @@ pub mod IDirectSoundBuffer {
         };
 
         let offset = if dwFlags.contains(DSBLOCK::FROMWRITECURSOR) {
-            let write_cursor = buffer.cursor as u32 * buffer.format.frame_bytes();
-            write_cursor.wrapping_add(dwOffset)
+            // DSBLOCK_FROMWRITECURSOR ignores dwOffset.
+            buffer.cursor_bytes(buffer.cursor)
         } else {
             dwOffset
         };
@@ -839,17 +902,22 @@ pub mod IDirectSoundBuffer {
         if buffer.cursor >= buffer.frame_count() {
             buffer.cursor = 0.0;
         }
+        buffer.playback_start = None;
         DS_OK
     }
 
     #[win32_derive::dllexport]
     pub fn Stop(_ctx: &mut Context, this: u32) -> u32 {
         let mut state = lock();
+        let played_output_frame = state.played_output_frame();
         let Some(buffer) = state.buffers.get_mut(&this) else {
             return DSERR_INVALIDPARAM;
         };
-        // Stop leaves the cursor alone; a later Play resumes from here.
+        // Stop leaves the cursor at the next sample the device would play,
+        // rather than at the mixer's farther-ahead queue position.
+        buffer.cursor = buffer.play_cursor(played_output_frame);
         buffer.playing = false;
+        buffer.playback_start = None;
         DS_OK
     }
 
@@ -860,6 +928,7 @@ pub mod IDirectSoundBuffer {
             return DSERR_INVALIDPARAM;
         };
         buffer.cursor = (dwNewPosition / buffer.format.frame_bytes()) as f64;
+        buffer.playback_start = None;
         DS_OK
     }
 
@@ -1074,6 +1143,56 @@ impl WavWrite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn streaming_buffer() -> Buffer {
+        Buffer {
+            addr: 0,
+            size: 0x4000,
+            format: WaveFormat {
+                channels: 2,
+                bits: 16,
+                rate: 22050,
+            },
+            primary: false,
+            caps_flags: DSBCAPS::empty(),
+            playing: true,
+            looping: true,
+            cursor: 3072.0,
+            playback_start: Some(PlaybackStart {
+                output_frame: 0,
+                source_frame: 0.0,
+            }),
+            volume: 0,
+            pan: 0,
+        }
+    }
+
+    #[test]
+    fn queued_output_does_not_advance_the_play_cursor() {
+        let buffer = streaming_buffer();
+
+        assert_eq!(consumed_output_frames(6144, 6144 * 4), 0);
+        assert_eq!(buffer.reported_cursors(0), (0, 0x3000));
+    }
+
+    #[test]
+    fn play_cursor_advances_only_as_output_is_consumed() {
+        let mut buffer = streaming_buffer();
+        buffer.cursor = 3584.0;
+
+        assert_eq!(buffer.reported_cursors(1024), (0x0800, 0x3800));
+    }
+
+    #[test]
+    fn playback_waits_for_preexisting_queued_output() {
+        let mut buffer = streaming_buffer();
+        buffer.playback_start = Some(PlaybackStart {
+            output_frame: 10_000,
+            source_frame: 0.0,
+        });
+
+        assert_eq!(buffer.reported_cursors(9_000).0, 0);
+    }
 
     #[test]
     fn lock_region_before_end_is_contiguous() {
