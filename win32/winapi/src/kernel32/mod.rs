@@ -9,6 +9,7 @@ mod process;
 mod resource;
 mod state;
 mod strings;
+mod stubs;
 mod thread;
 mod time;
 
@@ -23,5 +24,6 @@ pub use process::*;
 pub use resource::*;
 pub use state::{Lock, State, init_state, lock};
 pub use strings::*;
+pub use stubs::*;
 pub use thread::*;
 pub use time::*;

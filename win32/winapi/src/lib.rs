@@ -2,8 +2,27 @@
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
 
+macro_rules! stdcall_stub {
+    ($name:ident, $args:expr, $return_value:expr) => {
+        #[allow(non_snake_case)]
+        pub fn $name(ctx: &mut runtime::Context) -> runtime::Cont {
+            static LOGGED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+
+            let return_addr = ctx.memory.read::<u32>(ctx.cpu.regs.esp);
+            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                log::warn!("stub: {}", stringify!($name));
+            }
+            ctx.cpu.regs.eax = $return_value;
+            ctx.cpu.regs.esp += (($args as u32) + 1) * 4;
+            ctx.indirect(return_addr)
+        }
+    };
+}
+
 pub mod advapi32;
 pub mod bitmap_format;
+pub mod comctl32;
 pub mod ddraw;
 pub mod dinput;
 mod dllexport;

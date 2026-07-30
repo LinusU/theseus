@@ -10,6 +10,8 @@ mod misc;
 pub use misc::*;
 mod mmio;
 pub use mmio::*;
+mod stubs;
+pub use stubs::*;
 
 #[derive(Default)]
 pub struct State {

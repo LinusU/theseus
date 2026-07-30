@@ -10,6 +10,8 @@ mod misc;
 pub use misc::*;
 mod object;
 pub use object::*;
+mod stubs;
+pub use stubs::*;
 
 pub type HGDIOBJ = HANDLE;
 pub type HBRUSH = HGDIOBJ;

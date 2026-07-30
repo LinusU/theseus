@@ -4,6 +4,7 @@ mod message;
 mod misc;
 mod rect;
 mod resource;
+mod stubs;
 mod window;
 
 use std::{
@@ -17,6 +18,7 @@ pub use message::*;
 pub use misc::*;
 pub use rect::*;
 pub use resource::*;
+pub use stubs::*;
 pub use window::*;
 
 use crate::HANDLE;
