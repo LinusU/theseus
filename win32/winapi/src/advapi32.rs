@@ -94,3 +94,41 @@ pub fn RegSetValueExW(
 ) -> u32 /* WIN32_ERROR */ {
     stub!(0)
 }
+
+#[win32_derive::dllexport]
+pub fn RegCreateKeyExA(
+    ctx: &mut Context,
+    _hKey: HKEY,
+    _lpSubKey: u32, /* STR */
+    _Reserved: u32,
+    _lpClass: u32,              /* STR */
+    _dwOptions: u32,            /* REG_OPEN_CREATE_OPTIONS */
+    _samDesired: u32,           /* REG_SAM_FLAGS */
+    _lpSecurityAttributes: u32, /* SECURITY_ATTRIBUTES */
+    phkResult: crate::Ptr<u32>,
+    lpdwDisposition: crate::Ptr<u32>,
+) -> u32 /* WIN32_ERROR */ {
+    phkResult.write(&mut ctx.memory, 1);
+    if lpdwDisposition.addr != 0 {
+        lpdwDisposition.write(&mut ctx.memory, 1);
+    }
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn RegSetValueExA(
+    _ctx: &mut Context,
+    _hKey: HKEY,
+    _lpValueName: u32, /* STR */
+    _Reserved: u32,
+    _dwType: u32, /* REG_VALUE_TYPE */
+    _lpData: u32,
+    _cbData: u32,
+) -> u32 /* WIN32_ERROR */ {
+    stub!(0)
+}
+
+#[win32_derive::dllexport]
+pub fn RegFlushKey(_ctx: &mut Context, _hKey: HKEY) -> u32 /* WIN32_ERROR */ {
+    stub!(0)
+}
