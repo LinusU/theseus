@@ -321,6 +321,12 @@ pub struct Window {
 }
 
 impl Window {
+    pub fn show(&mut self) {
+        unsafe {
+            check(sdl::video::SDL_ShowWindow(self.window));
+        }
+    }
+
     pub fn create_surface(&mut self, width: u32, height: u32) -> Surface {
         unsafe {
             let texture = check_ptr(sdl::render::SDL_CreateTexture(

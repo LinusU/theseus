@@ -47,6 +47,10 @@ impl Window {
         Surface::new(width, height)
     }
 
+    pub fn show(&mut self) {
+        // Browser-backed windows are visible as soon as they are created.
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         host::host()
             .chan

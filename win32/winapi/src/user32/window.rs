@@ -189,6 +189,12 @@ pub fn ShowWindow(
     hWnd: HWND,
     _nCmdShow: u32, /* SHOW_WINDOW_CMD */
 ) -> bool {
+    let state = state();
+    let window = state.window.borrow();
+    let window = window.as_ref().unwrap();
+    assert_eq!(window.borrow().hwnd, hWnd);
+    window.borrow_mut().host.show();
+
     // The window comes up focused; games often wait for activation before
     // running their main loop.
     use super::message::{WM, post_message};
