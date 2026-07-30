@@ -154,6 +154,12 @@ pub fn ReadFile(
         match file.read(&mut buf[total..]) {
             Ok(0) => break,
             Ok(n) => total += n,
+            Err(err) if err.kind() == std::io::ErrorKind::IsADirectory => {
+                // Some legacy games probe an empty preferences path. The host
+                // opens that as the current directory; treating it as an empty
+                // file lets the game's normal "no preferences yet" path run.
+                break;
+            }
             Err(err) => {
                 log::warn!("ReadFile({hFile:?}): {err}");
                 return false;
