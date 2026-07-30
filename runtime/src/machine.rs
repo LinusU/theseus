@@ -86,6 +86,16 @@ impl Context {
     pub fn indirect(&self, addr: u32) -> Cont {
         if addr == 0 {
             self.dump();
+            println!("recent blocks:");
+            for func in self.recent {
+                if let Some((addr, _)) = self
+                    .blocks
+                    .iter()
+                    .find(|(_, candidate)| std::ptr::fn_addr_eq(*candidate, func))
+                {
+                    println!("{addr:08x}");
+                }
+            }
             panic!("jmp to null ptr");
         }
         if let Some(func) = self.cache.get(addr) {
