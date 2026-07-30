@@ -12,3 +12,16 @@ pub fn ShellAboutW(
 ) -> i32 {
     todo!()
 }
+
+#[win32_derive::dllexport]
+pub fn ShellExecuteA(
+    _ctx: &mut Context,
+    _hwnd: HWND,
+    _lpOperation: u32,
+    _lpFile: u32,
+    _lpParameters: u32,
+    _lpDirectory: u32,
+    _nShowCmd: i32,
+) -> u32 {
+    33 // any value greater than 32 indicates success
+}
