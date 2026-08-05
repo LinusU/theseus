@@ -220,7 +220,9 @@ impl State {
         Ok(())
     }
 
-    /// For any dll used by the module, write its vtables to the executable memory.
+    /// For any dll used by the module, reserve executable-memory addresses for
+    /// the things it can't import statically: COM vtable entries, and the
+    /// functions it may look up through GetProcAddress.
     fn add_vtables(&mut self) -> u32 {
         let Module::Windows(module) = &mut self.module else {
             unreachable!()
@@ -284,6 +286,7 @@ impl State {
                 addr += 4;
             }
         }
+
         addr
     }
 
