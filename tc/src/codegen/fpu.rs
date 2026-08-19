@@ -310,7 +310,10 @@ impl<'a> CodeGen<'a> {
             Fnclex => {}
 
             Fninit => {
+                // Also empties the stack, which is how a program recovers from
+                // leaving values on it.
                 self.line("ctx.cpu.fpu.control = 0x037f;");
+                self.line("ctx.cpu.fpu.st_top = 8;");
             }
 
             Fnstcw => {
