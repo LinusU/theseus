@@ -1,5 +1,6 @@
 mod dialog;
 mod hook;
+mod input;
 mod menu;
 mod message;
 mod misc;
@@ -15,6 +16,7 @@ use std::{
 
 pub use dialog::*;
 pub use hook::*;
+pub use input::*;
 pub use menu::*;
 pub use message::*;
 pub use misc::*;
@@ -39,6 +41,7 @@ pub struct State {
     /// several windows (frame, view, hidden helpers); model them all.
     pub window: RefCell<Option<Rc<RefCell<Window>>>>,
     message_queue: RefCell<MessageQueue>,
+    pub input: RefCell<Input>,
     pub hooks: RefCell<Vec<Hook>>,
 }
 
@@ -54,6 +57,7 @@ pub fn state() -> &'static State {
         window: Default::default(),
         wndclasses: Default::default(),
         message_queue: Default::default(),
+        input: Default::default(),
         hooks: Default::default(),
     })
 }
