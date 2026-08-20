@@ -4,6 +4,7 @@ use runtime::*;
 
 use super::types::*;
 use crate::{
+    RECT,
     ddraw::{GUID, ddraw1, ddraw7, state},
     kernel32,
     user32::{self, HWND},
