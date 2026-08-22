@@ -44,7 +44,7 @@ class MessageQueue {
 class Host implements exe.WasmHost {
   consoleDom = document.createElement("pre");
   consoleOutputDecoder = new TextDecoder();
-  consoleOutput = '';
+  consoleOutput = "";
   window_: HTMLCanvasElement | undefined;
 
   surfaces: Map<number, HTMLCanvasElement> = new Map();
@@ -164,7 +164,7 @@ class Host implements exe.WasmHost {
   }
 
   write_file(_path: string, _ptr: number, _len: number): number {
-    throw new Error('unimplemented');
+    throw new Error("unimplemented");
   }
 }
 
