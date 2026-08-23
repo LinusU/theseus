@@ -448,12 +448,14 @@ impl<'a> Traverse<'a> {
                 Call | Jmp | Jcxz | Je | Jne | Jb | Js | Jns | Ja | Jae | Jl | Jge | Jecxz | Jg
                 | Jle | Jo | Jno | Jp | Jnp | Jbe | Loop | Loope | Loopne => {
                     match instr.op0_kind() {
-                        iced_x86::OpKind::NearBranch16 => self
-                            .queue
-                            .enqueue(block_ip.with_local(instr.near_branch16() as u32)),
-                        iced_x86::OpKind::NearBranch32 => self
-                            .queue
-                            .enqueue(block_ip.with_local(instr.near_branch32())),
+                        iced_x86::OpKind::NearBranch16 => {
+                            let ip = block_ip.with_local(instr.near_branch16() as u32);
+                            self.queue.enqueue(ip)
+                        }
+                        iced_x86::OpKind::NearBranch32 => {
+                            let ip = block_ip.with_local(instr.near_branch32());
+                            self.queue.enqueue(ip)
+                        }
                         iced_x86::OpKind::FarBranch16 => {
                             let ip =
                                 IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
