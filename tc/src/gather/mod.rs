@@ -451,7 +451,6 @@ struct BlockDecoder<'a, 'b> {
     // Index bounds seen so far in this block, keyed by register.
     index_bounds: HashMap<iced_x86::Register, usize>,
     found_slots: Vec<u32>,
-    found_imms: Vec<u32>,
 }
 
 impl<'a, 'b> BlockDecoder<'a, 'b> {
@@ -462,7 +461,6 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             found_tables: Default::default(),
             index_bounds: Default::default(),
             found_slots: Default::default(),
-            found_imms: Default::default(),
         }
     }
 
@@ -525,7 +523,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                         if self.traverse.module.code_memory().contains(&imm) {
                             log::info!("{imm:x} looks like a code pointer");
                             assert!(!self.traverse.module.segment_addressed());
-                            self.found_imms.push(imm);
+                            self.traverse.add_candidate(imm);
                         }
                     }
                 }
@@ -571,9 +569,6 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         }
         for &slot in self.found_slots.iter() {
             self.traverse.scan_pointer_slot(slot);
-        }
-        for &imm in self.found_imms.iter() {
-            self.traverse.add_candidate(imm);
         }
 
         let info = self.traverse.addr_info.get(&block_ip.to_addr());
