@@ -463,6 +463,7 @@ impl<'a> Traverse<'a> {
                         }
                         iced_x86::OpKind::Memory => {
                             if let Some(addr) = is_abs_memory_ref(&instr) {
+                                // jmp [addr]  for some constant addr
                                 if let Some(imp) = self.iat_refs.get(&addr) {
                                     new_instr.hint =
                                         Some(format!("{}::{}_stdcall", imp.dll, imp.func));
@@ -470,7 +471,6 @@ impl<'a> Traverse<'a> {
                                         continue; // don't end block here
                                     }
                                 } else {
-                                    // A call/jmp through a function pointer variable.
                                     if !self.module.segment_addressed() {
                                         found_slots.push(addr);
                                     }
@@ -486,6 +486,7 @@ impl<'a> Traverse<'a> {
                             }
                         }
                         iced_x86::OpKind::Register => {
+                            // jmp [reg]  for some register
                             log::warn!("{ip} {instr}  ; indirect via register");
                         }
                         d => anyhow::bail!("unhandled jmp {d:?}"),
