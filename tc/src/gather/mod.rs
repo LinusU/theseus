@@ -473,6 +473,24 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         Ok(())
     }
 
+    /// Scan the immediate parameters to an instruction for values that look like code pointers.
+    /// E.g.
+    ///   mov eax, somevalue
+    /// where somevalue is an address within the code segment.
+    /// Very low confidence.
+    fn scan_immediates(&mut self, instr: &iced_x86::Instruction) {
+        for i in 0..instr.op_count() {
+            if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
+                let imm = instr.immediate32();
+                if self.traverse.module.code_memory().contains(&imm) {
+                    log::info!("{imm:x} looks like a code pointer");
+                    assert!(!self.traverse.module.segment_addressed());
+                    self.traverse.add_candidate(imm);
+                }
+            }
+        }
+    }
+
     fn go(&mut self) -> anyhow::Result<Block> {
         let block_ip = self.block_ip;
 
@@ -517,16 +535,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             let new_instr = instrs.last_mut().unwrap();
 
             if self.traverse.gather.scan_immediates {
-                for i in 0..instr.op_count() {
-                    if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
-                        let imm = instr.immediate32();
-                        if self.traverse.module.code_memory().contains(&imm) {
-                            log::info!("{imm:x} looks like a code pointer");
-                            assert!(!self.traverse.module.segment_addressed());
-                            self.traverse.add_candidate(imm);
-                        }
-                    }
-                }
+                self.scan_immediates(&instr);
             }
 
             if instr.flow_control() == iced_x86::FlowControl::Next {
