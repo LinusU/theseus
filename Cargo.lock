@@ -205,6 +205,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello6"
+version = "0.1.0"
+dependencies = [
+ "runtime",
+ "winapi 0.1.0",
+]
+
+[[package]]
 name = "host"
 version = "0.1.0"
 dependencies = [
