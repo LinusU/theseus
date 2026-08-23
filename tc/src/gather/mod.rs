@@ -466,6 +466,15 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         }
     }
 
+    /// Check the instruction stream for a block of 0 bytes, and bail if so.
+    /// A common occurrence when we accidentally start decoding data memory.
+    fn check_empty(data: &[u8]) -> anyhow::Result<()> {
+        if data.len() > 0x10 && data[..0x10].iter().all(|&b| b == 0) {
+            anyhow::bail!("suspicious block of 0");
+        }
+        Ok(())
+    }
+
     fn go(&mut self) -> anyhow::Result<Block> {
         let block_ip = self.block_ip;
 
@@ -475,18 +484,18 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             anyhow::bail!("ip out of bounds");
         }
         let data = self.traverse.mem.slice_all(block_addr);
-        if data.len() > 0x10 && data[..0x10].iter().all(|&b| b == 0) {
-            anyhow::bail!("block appears zero-filled");
-        }
 
         let mut instrs = Vec::new();
-        let decoder = iced_x86::Decoder::with_ip(
+        let mut decoder = iced_x86::Decoder::with_ip(
             self.traverse.module.bitness(),
             data,
             block_ip.local() as u64,
             iced_x86::DecoderOptions::NONE,
         );
-        for instr in decoder {
+        while decoder.can_decode() {
+            Self::check_empty(&data[decoder.position()..])?;
+
+            let instr = decoder.decode();
             let ip = block_ip.with_local(instr.ip32());
             // log::info!("{ip:08x} {instr}", ip = instr.ip32());
             if self.traverse.blocks.contains_key(&ip.to_addr()) {
@@ -523,13 +532,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             }
 
             if instr.flow_control() == iced_x86::FlowControl::Next {
-                let next_ip = block_ip.with_local(instr.next_ip32());
-                let next_bytes = &data[(next_ip.to_addr() - block_addr) as usize..];
-                if next_bytes.len() > 0x10 && next_bytes[..0x10].iter().all(|&b| b == 0) {
-                    anyhow::bail!("suspicious block of 0");
-                }
                 continue;
             }
+
             let ip = block_ip.with_local(instr.ip32());
             use iced_x86::Mnemonic::*;
             match instr.mnemonic() {
