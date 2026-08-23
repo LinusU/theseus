@@ -509,16 +509,15 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             iced_x86::DecoderOptions::NONE,
         );
         while decoder.can_decode() {
-            Self::check_empty(&data[decoder.position()..])?;
-
-            let instr = decoder.decode();
-            let ip = block_ip.with_local(instr.ip32());
-            // log::info!("{ip:08x} {instr}", ip = instr.ip32());
+            let ip = block_ip.with_local(decoder.ip() as u32);
             if self.traverse.blocks.contains_key(&ip.to_addr()) {
                 // Hit a point covered by another block, e.g. a jump target
                 break;
             }
+            Self::check_empty(&data[decoder.position()..])?;
 
+            let instr = decoder.decode();
+            // log::info!("{ip:08x} {instr}", ip = instr.ip32());
             if instr.mnemonic() == iced_x86::Mnemonic::Out && !self.traverse.module.is_dos() {
                 anyhow::bail!("'out' instruction in non-DOS code");
             }
