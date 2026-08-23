@@ -373,7 +373,7 @@ impl<'a> Traverse<'a> {
     }
 
     fn decode_one(&mut self, block_ip: IP) -> anyhow::Result<Block> {
-        BlockDecoder {}.go(self, block_ip)
+        BlockDecoder::new(self, block_ip).go()
     }
 
     fn scan_for_pointers(&mut self) {
@@ -440,32 +440,48 @@ impl<'a> Traverse<'a> {
 }
 
 /// Data gathered while decoding one block.
-struct BlockDecoder {}
+struct BlockDecoder<'a, 'b> {
+    traverse: &'a mut Traverse<'b>,
+    block_ip: IP,
 
-impl BlockDecoder {
-    fn go(&mut self, traverse: &mut Traverse, block_ip: IP) -> anyhow::Result<Block> {
+    // Code addresses noticed along the way, processed after the decode loop
+    // (decoding borrows self.mem).
+    // (table address, entry count if a bounds check revealed it)
+    found_tables: Vec<(u32, Option<usize>)>,
+    // Index bounds seen so far in this block, keyed by register.
+    index_bounds: HashMap<iced_x86::Register, usize>,
+    found_slots: Vec<u32>,
+    found_imms: Vec<u32>,
+}
+
+impl<'a, 'b> BlockDecoder<'a, 'b> {
+    fn new(traverse: &'a mut Traverse<'b>, block_ip: IP) -> Self {
+        BlockDecoder {
+            traverse,
+            block_ip,
+            found_tables: Default::default(),
+            index_bounds: Default::default(),
+            found_slots: Default::default(),
+            found_imms: Default::default(),
+        }
+    }
+
+    fn go(&mut self) -> anyhow::Result<Block> {
+        let block_ip = self.block_ip;
+
         // log::info!("decode block {block_ip}");
         let block_addr = block_ip.to_addr();
-        if block_addr > traverse.mem.bytes.len() as u32 {
+        if block_addr > self.traverse.mem.bytes.len() as u32 {
             anyhow::bail!("ip out of bounds");
         }
-        let data = traverse.mem.slice_all(block_addr);
+        let data = self.traverse.mem.slice_all(block_addr);
         if data.len() > 0x10 && data[..0x10].iter().all(|&b| b == 0) {
             anyhow::bail!("block appears zero-filled");
         }
 
-        // Code addresses noticed along the way, processed after the decode loop
-        // (decoding borrows self.mem).
-        // (table address, entry count if a bounds check revealed it)
-        let mut found_tables: Vec<(u32, Option<usize>)> = Vec::new();
-        // Index bounds seen so far in this block, keyed by register.
-        let mut index_bounds: HashMap<iced_x86::Register, usize> = HashMap::new();
-        let mut found_slots: Vec<u32> = Vec::new();
-        let mut found_imms: Vec<u32> = Vec::new();
-
         let mut instrs = Vec::new();
         let decoder = iced_x86::Decoder::with_ip(
-            traverse.module.bitness(),
+            self.traverse.module.bitness(),
             data,
             block_ip.local() as u64,
             iced_x86::DecoderOptions::NONE,
@@ -473,17 +489,17 @@ impl BlockDecoder {
         for instr in decoder {
             let ip = block_ip.with_local(instr.ip32());
             // log::info!("{ip:08x} {instr}", ip = instr.ip32());
-            if traverse.blocks.contains_key(&ip.to_addr()) {
+            if self.traverse.blocks.contains_key(&ip.to_addr()) {
                 // Hit a point covered by another block, e.g. a jump target
                 break;
             }
 
-            if instr.mnemonic() == iced_x86::Mnemonic::Out && !traverse.module.is_dos() {
+            if instr.mnemonic() == iced_x86::Mnemonic::Out && !self.traverse.module.is_dos() {
                 anyhow::bail!("'out' instruction in non-DOS code");
             }
 
             if let Some((reg, count)) = is_index_bound(&instr) {
-                index_bounds.insert(reg, count);
+                self.index_bounds.insert(reg, count);
             }
 
             instrs.push(Instr {
@@ -493,14 +509,14 @@ impl BlockDecoder {
             });
             let new_instr = instrs.last_mut().unwrap();
 
-            if traverse.gather.scan_immediates {
+            if self.traverse.gather.scan_immediates {
                 for i in 0..instr.op_count() {
                     if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
                         let imm = instr.immediate32();
-                        if traverse.module.code_memory().contains(&imm) {
+                        if self.traverse.module.code_memory().contains(&imm) {
                             log::info!("{imm:x} looks like a code pointer");
-                            assert!(!traverse.module.segment_addressed());
-                            found_imms.push(imm);
+                            assert!(!self.traverse.module.segment_addressed());
+                            self.found_imms.push(imm);
                         }
                     }
                 }
@@ -519,63 +535,23 @@ impl BlockDecoder {
             match instr.mnemonic() {
                 Call | Jmp | Jcxz | Je | Jne | Jb | Js | Jns | Ja | Jae | Jl | Jge | Jecxz | Jg
                 | Jle | Jo | Jno | Jp | Jnp | Jbe | Loop | Loope | Loopne => {
-                    match instr.op0_kind() {
-                        iced_x86::OpKind::NearBranch16 => {
-                            let ip = block_ip.with_local(instr.near_branch16() as u32);
-                            traverse.queue.enqueue(ip)
-                        }
-                        iced_x86::OpKind::NearBranch32 => {
-                            let ip = block_ip.with_local(instr.near_branch32());
-                            traverse.queue.enqueue(ip)
-                        }
-                        iced_x86::OpKind::FarBranch16 => {
-                            let ip =
-                                IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
-                            traverse.queue.enqueue(ip);
-                        }
-                        iced_x86::OpKind::Memory => {
-                            if let Some(addr) = is_abs_memory_ref(&instr) {
-                                // jmp [addr]  for some constant addr
-                                if let Some(imp) = traverse.iat_refs.get(&addr) {
-                                    new_instr.hint =
-                                        Some(format!("{}::{}_stdcall", imp.dll, imp.func));
-                                    if instr.mnemonic() == iced_x86::Mnemonic::Call {
-                                        continue; // don't end block here
-                                    }
-                                } else {
-                                    if !traverse.module.segment_addressed() {
-                                        found_slots.push(addr);
-                                    }
-                                    log::warn!("{ip} {instr}  ; indirect via memory");
-                                }
-                            } else if !traverse.module.segment_addressed()
-                                && let Some((table, index)) = is_jump_table_ref(&instr)
-                            {
-                                let count = index_bounds.get(&index.full_register()).copied();
-                                found_tables.push((table, count));
-                            } else {
-                                log::warn!("{ip} {instr}  ; indirect via memory");
-                            }
-                        }
-                        iced_x86::OpKind::Register => {
-                            // jmp [reg]  for some register
-                            log::warn!("{ip} {instr}  ; indirect via register");
-                        }
-                        d => anyhow::bail!("unhandled jmp {d:?}"),
+                    self.control_flow(ip, new_instr)?;
+                    if instr.mnemonic() == iced_x86::Mnemonic::Call && new_instr.hint.is_some() {
+                        // call was resolved to a builtin function call, don't end block here
+                        continue;
                     }
                     if instr.mnemonic() != Jmp {
-                        traverse
-                            .queue
-                            .enqueue(block_ip.with_local(instr.next_ip32()));
+                        // enqueue next instruction as a new block
+                        let ip = self.block_ip.with_local(instr.next_ip32());
+                        self.traverse.queue.enqueue(ip);
                     }
                 }
                 Ret | Retf | Iret => {}
                 Into => {}        // terminates
                 Int1 | Int3 => {} // breakpoint
                 Int => {
-                    traverse
-                        .queue
-                        .enqueue(block_ip.with_local(instr.next_ip32()));
+                    let ip = block_ip.with_local(instr.next_ip32());
+                    self.traverse.queue.enqueue(ip);
                 }
                 Syscall | Sysexit | Sysret => anyhow::bail!("syscall not implemented"),
                 INVALID => anyhow::bail!("invalid code found"),
@@ -584,21 +560,66 @@ impl BlockDecoder {
             break;
         }
 
-        for (table, count) in found_tables {
-            let n = traverse.scan_jump_table(table, count);
+        for (table, count) in self.found_tables.iter().copied() {
+            let n = self.traverse.scan_jump_table(table, count);
             log::info!("jump table at {table:08x}: {n} entries");
         }
-        for slot in found_slots {
-            traverse.scan_pointer_slot(slot);
+        for &slot in self.found_slots.iter() {
+            self.traverse.scan_pointer_slot(slot);
         }
-        for imm in found_imms {
-            traverse.add_candidate(imm);
+        for &imm in self.found_imms.iter() {
+            self.traverse.add_candidate(imm);
         }
 
-        let info = traverse.addr_info.get(&block_ip.to_addr());
+        let info = self.traverse.addr_info.get(&block_ip.to_addr());
         Ok(Block {
             name: info.map(|info| info.name.clone()),
             ty: BlockType::Instrs(instrs),
         })
+    }
+
+    fn control_flow(&mut self, ip: IP, new_instr: &mut Instr) -> anyhow::Result<()> {
+        let instr = &new_instr.iced;
+        match instr.op0_kind() {
+            iced_x86::OpKind::NearBranch16 => {
+                let ip = self.block_ip.with_local(instr.near_branch16() as u32);
+                self.traverse.queue.enqueue(ip)
+            }
+            iced_x86::OpKind::NearBranch32 => {
+                let ip = self.block_ip.with_local(instr.near_branch32());
+                self.traverse.queue.enqueue(ip)
+            }
+            iced_x86::OpKind::FarBranch16 => {
+                let ip = IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
+                self.traverse.queue.enqueue(ip);
+            }
+            iced_x86::OpKind::Memory => {
+                if let Some(addr) = is_abs_memory_ref(&instr) {
+                    // jmp [addr]  for some constant addr
+                    if let Some(imp) = self.traverse.iat_refs.get(&addr) {
+                        new_instr.hint = Some(format!("{}::{}_stdcall", imp.dll, imp.func));
+                    } else {
+                        if !self.traverse.module.segment_addressed() {
+                            self.found_slots.push(addr);
+                        }
+                        log::warn!("{ip} {instr}  ; indirect via memory");
+                    }
+                } else if !self.traverse.module.segment_addressed()
+                    && let Some((table, index)) = is_jump_table_ref(&instr)
+                {
+                    let count = self.index_bounds.get(&index.full_register()).copied();
+                    self.found_tables.push((table, count));
+                } else {
+                    log::warn!("{ip} {instr}  ; indirect via memory");
+                }
+            }
+            iced_x86::OpKind::Register => {
+                // jmp [reg]  for some register
+                log::warn!("{ip} {instr}  ; indirect via register");
+            }
+            d => anyhow::bail!("unhandled jmp {d:?}"),
+        }
+
+        Ok(())
     }
 }
