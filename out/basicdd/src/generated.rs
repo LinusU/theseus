@@ -6,6 +6,7 @@
 #![allow(non_snake_case)]
 
 use runtime::*;
+
 use winapi::*;
 fn init(regs: &mut runtime::Regs, memory: &mut runtime::Memory, mappings: &mut runtime::Mappings) {
     mappings.reserve(runtime::Mapping {
@@ -85,12 +86,13 @@ pub use part_00::*;
 mod part_01;
 pub use part_01::*;
 
-const BLOCKS: [(u32, ContFn); 1786] = [
+const BLOCKS: [(u32, ContFn); 1819] = [
     (0x401000, x401000),
     (0x401005, x401005),
     (0x401010, x401010),
     (0x401020, x401020),
     (0x40102a, x40102a),
+    (0x401030, x401030),
     (0x401040, x401040),
     (0x401056, x401056),
     (0x401062, x401062),
@@ -714,6 +716,37 @@ const BLOCKS: [(u32, ContFn); 1786] = [
     (0x40289a, x40289a),
     (0x4028a6, x4028a6),
     (0x4028a9, x4028a9),
+    (0x4028b0, x4028b0),
+    (0x4028c8, x4028c8),
+    (0x4028d0, x4028d0),
+    (0x4028e2, x4028e2),
+    (0x4028f1, x4028f1),
+    (0x4028f2, x4028f2),
+    (0x40290f, x40290f),
+    (0x40291e, x40291e),
+    (0x402924, x402924),
+    (0x402938, x402938),
+    (0x402946, x402946),
+    (0x40294a, x40294a),
+    (0x40294c, x40294c),
+    (0x402986, x402986),
+    (0x4029a8, x4029a8),
+    (0x4029c6, x4029c6),
+    (0x4029db, x4029db),
+    (0x4029e0, x4029e0),
+    (0x4029ea, x4029ea),
+    (0x4029f3, x4029f3),
+    (0x4029fc, x4029fc),
+    (0x4029fe, x4029fe),
+    (0x402a07, x402a07),
+    (0x402a14, x402a14),
+    (0x402a25, x402a25),
+    (0x402a2f, x402a2f),
+    (0x402a3a, x402a3a),
+    (0x402a41, x402a41),
+    (0x402a48, x402a48),
+    (0x402a54, x402a54),
+    (0x402a5d, x402a5d),
     (0x402a80, x402a80),
     (0x402a8a, x402a8a),
     (0x402a8e, x402a8e),
@@ -1661,6 +1694,7 @@ const BLOCKS: [(u32, ContFn); 1786] = [
     (0x4054e6, x4054e6),
     (0x4054e8, x4054e8),
     (0x4054ec, x4054ec),
+    (0x4054f2, x4054f2),
     (0xfafbfc00, kernel32::OutputDebugStringA_stdcall),
     (0xfafbfc01, kernel32::HeapAlloc_stdcall),
     (0xfafbfc02, kernel32::GetModuleFileNameA_stdcall),
