@@ -473,6 +473,21 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         Ok(())
     }
 
+    /// Check an instruction for validity, bailing if it is not.
+    /// This can happen when decoding randomly invalid data.
+    fn check_instr(&self, instr: &iced_x86::Instruction) -> anyhow::Result<()> {
+        match instr.mnemonic() {
+            iced_x86::Mnemonic::Out => {
+                if !self.traverse.module.is_dos() {
+                    anyhow::bail!("'out' instruction in non-DOS code");
+                }
+            }
+            iced_x86::Mnemonic::INVALID => anyhow::bail!("invalid instruction"),
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Scan the immediate parameters to an instruction for values that look like code pointers.
     /// E.g.
     ///   mov eax, somevalue
@@ -518,9 +533,8 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
 
             let instr = decoder.decode();
             // log::info!("{ip:08x} {instr}", ip = instr.ip32());
-            if instr.mnemonic() == iced_x86::Mnemonic::Out && !self.traverse.module.is_dos() {
-                anyhow::bail!("'out' instruction in non-DOS code");
-            }
+
+            self.check_instr(&instr)?;
 
             if let Some((reg, count)) = is_index_bound(&instr) {
                 self.index_bounds.insert(reg, count);
@@ -565,7 +579,6 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                     self.traverse.queue.enqueue(ip);
                 }
                 Syscall | Sysexit | Sysret => anyhow::bail!("syscall not implemented"),
-                INVALID => anyhow::bail!("invalid code found"),
                 _ => todo!("{ip} control flow {}", instr),
             }
             break;
