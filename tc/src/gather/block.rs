@@ -141,6 +141,11 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
     /// where somevalue is an address within the code segment.
     /// Very low confidence.
     fn scan_immediates(&mut self, instr: &iced_x86::Instruction) {
+        if self.traverse.module.segment_addressed() {
+            log::error!("--scan-immediates not supported for segmented (DOS) modules");
+            return;
+        }
+
         for i in 0..instr.op_count() {
             if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
                 let imm = instr.immediate32();

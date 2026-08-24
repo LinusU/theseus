@@ -313,7 +313,7 @@ impl<'a> Traverse<'a> {
 
     fn scan_for_pointers(&mut self) {
         if self.module.segment_addressed() {
-            log::warn!("--scan-memory not supported for segmented (DOS) modules");
+            log::error!("--scan-memory not supported for segmented (DOS) modules");
             return;
         }
         let code = self.module.code_memory();
