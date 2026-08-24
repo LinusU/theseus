@@ -1,6 +1,8 @@
-//! Basic block decoding.
+//! Decoding of basic blocks -- sequences of instructions that have no
+//! internal control flow.
 //!
-//! Parses instruction stream as long as there is no control flow.
+//! The larger gathering process repeatedly invokes this to actually parse the
+//! instruction stream.
 
 use std::collections::HashMap;
 
@@ -265,7 +267,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
     }
 
     /// Given a control flow instruction to an indirect memory address like
-    ///    jne [someaddr]
+    ///   jne [some expression]
     /// attempt to enqueue the target of the jump.
     fn control_flow_indirect(&mut self, ip: IP, new_instr: &mut Instr) -> anyhow::Result<()> {
         let instr = &new_instr.iced;
@@ -275,8 +277,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         }
 
         if let Some(addr) = is_abs_memory_ref(&instr) {
-            // jmp [addr]  for some constant addr
+            // `jmp [addr]` for some constant addr
             if let Some(imp) = self.traverse.iat_refs.get(&addr) {
+                // `call [foo@IAT]` means `call foo`, the IAT is the pointer to the real function.
                 new_instr.hint = Some(format!("{}::{}_stdcall", imp.dll, imp.func));
             } else {
                 if addr as usize + 4 > self.traverse.mem.bytes.len() {

@@ -1,7 +1,8 @@
 //! A representation for the instruction pointer, abstracted over 16/32-bit.
 //!
-//! In particular, we preserve the seg:ofs of 16-bit IPs, because we want the
-//! generated code to generate seg:ofs function names like x0823_1234.
+//! In particular, we preserve 16-bit IPs as separate seg:ofs.  For local jmps
+//! we need to compute the new address relative to the current segment, and
+//! we want the generated code to generate seg:ofs function names like x0823_1234.
 
 use runtime::SegOfs;
 
