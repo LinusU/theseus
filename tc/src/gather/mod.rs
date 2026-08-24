@@ -599,6 +599,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         })
     }
 
+    /// Given a control flow instruction (e.g. jne or call), enqueue the target of the jump.
     fn control_flow(&mut self, ip: IP, new_instr: &mut Instr) -> anyhow::Result<()> {
         let instr = &new_instr.iced;
         match instr.op0_kind() {
