@@ -265,6 +265,18 @@ impl<'a> Traverse<'a> {
         None
     }
 
+    fn looks_like_ascii(&self, data: &[u8]) -> bool {
+        for (i, c) in data.iter().copied().enumerate() {
+            if c == 0 {
+                return i > 8; // minimum string length
+            }
+            if !(c == 0xa || (0x20..0x7f).contains(&c)) {
+                return false;
+            }
+        }
+        false
+    }
+
     /// Check if the data at the given address looks like it might be utf16 text.
     fn looks_like_utf16(&self, data: &[u8]) -> bool {
         for (i, [lo, hi]) in data.as_chunks::<2>().0.iter().copied().enumerate() {
@@ -292,8 +304,10 @@ impl<'a> Traverse<'a> {
             return false;
         }
         let len = data.len().min(64);
-        // TODO: looks_like_ascii as well?
         if self.looks_like_utf16(&data[..len]) {
+            return false;
+        }
+        if self.looks_like_ascii(&data[..len]) {
             return false;
         }
         let mut decoder = iced_x86::Decoder::with_ip(
