@@ -147,7 +147,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 if self.traverse.module.code_memory().contains(&imm) {
                     log::info!("{imm:x} looks like a code pointer");
                     assert!(!self.traverse.module.segment_addressed());
-                    self.traverse.add_candidate(imm);
+                    self.traverse.queue.add_candidate(imm);
                 }
             }
         }
@@ -287,7 +287,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 }
                 let target = self.traverse.mem.read::<u32>(addr);
                 if self.traverse.module.code_memory().contains(&target) {
-                    self.traverse.add_candidate(target);
+                    self.traverse.queue.add_candidate(target);
                 }
                 log::warn!("{ip} {instr}  ; indirect via memory");
             }

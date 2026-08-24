@@ -38,9 +38,22 @@ impl Gather {
     }
 }
 
-/// Wrap a VecDeque<IP> just so we add some logic every time it's called.
+/// Queue of IPs that we will visit to read more basic blocks.
+/// Internally tracks whether we've visited an IP before.
 #[derive(Default)]
-struct IPQueue(VecDeque<IP>);
+struct IPQueue {
+    /// Queue of IPs we intend to gather code from.
+    queue: VecDeque<IP>,
+
+    /// Lower-confidence code addresses (from scans); validated before decoding.
+    /// TODO: switch from u32 to IP, share more code.
+    candidates: VecDeque<u32>,
+
+    /// Addresses we've visited already and decided don't contain code.
+    /// (Addresses that did contain code are inserted in Traverse.blocks.)
+    invalid: HashSet<u32>,
+}
+
 impl IPQueue {
     pub fn enqueue(&mut self, ip: IP) {
         // log::info!("enqueue {ip}");
@@ -48,10 +61,37 @@ impl IPQueue {
         // if ofs > 0x8000 {
         //     panic!();
         // }
-        self.0.push_back(ip);
+        self.queue.push_back(ip);
     }
-    pub fn pop(&mut self) -> Option<IP> {
-        self.0.pop_front()
+
+    pub fn pop(&mut self, blocks: &BTreeMap<u32, Block>) -> Option<IP> {
+        while let Some(ip) = self.queue.pop_front() {
+            let addr = ip.to_addr();
+            if blocks.contains_key(&addr) || self.invalid.contains(&addr) {
+                continue;
+            }
+            return Some(ip);
+        }
+        None
+    }
+
+    fn add_candidate(&mut self, addr: u32) {
+        self.candidates.push_back(addr);
+    }
+
+    /// TODO: switch from u32 to IP, share more code.
+    pub fn pop_candidate(&mut self, blocks: &BTreeMap<u32, Block>) -> Option<u32> {
+        while let Some(addr) = self.candidates.pop_front() {
+            if blocks.contains_key(&addr) || self.invalid.contains(&addr) {
+                continue;
+            }
+            return Some(addr);
+        }
+        None
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty() && self.candidates.is_empty()
     }
 }
 
@@ -65,15 +105,10 @@ struct Traverse<'a> {
     /// Address of IAT entry => function it refers to.
     iat_refs: HashMap<u32, &'a Import>,
     queue: IPQueue,
-    /// Lower-confidence code addresses (from scans); validated before decoding.
-    candidates: VecDeque<u32>,
-    /// All addresses ever considered as candidates, to avoid rescanning.
-    candidate_seen: HashSet<u32>,
     /// Jump table addresses already scanned.
     seen_tables: HashSet<u32>,
     /// Ranges within code sections that are known to be data (e.g. jump tables).
     data_ranges: Vec<std::ops::Range<u32>>,
-    invalid: HashSet<u32>,
     blocks: BTreeMap<u32, Block>,
 }
 
@@ -87,11 +122,8 @@ impl<'a> Traverse<'a> {
 
             iat_refs: Default::default(),
             queue: IPQueue::default(),
-            candidates: VecDeque::new(),
-            candidate_seen: HashSet::new(),
             seen_tables: HashSet::new(),
             data_ranges: Vec::new(),
-            invalid: HashSet::new(),
             blocks: Default::default(),
         }
     }
@@ -157,11 +189,11 @@ impl<'a> Traverse<'a> {
                 log::warn!("--scan-prologues not supported for segmented (DOS) modules");
             } else {
                 loop {
-                    let added = self.scan_gaps_for_prologues();
-                    if added == 0 {
+                    self.scan_gaps_for_prologues();
+                    if self.queue.is_empty() {
                         break;
                     }
-                    log::info!("prologue scan: {added} new candidates");
+                    log::info!("prologue scan added new candidates");
                     self.drain();
                 }
             }
@@ -176,15 +208,13 @@ impl<'a> Traverse<'a> {
     /// scanned (lower-confidence) candidates one at a time.
     fn drain(&mut self) {
         loop {
-            while let Some(ip) = self.queue.pop() {
+            while let Some(ip) = self.queue.pop(&self.blocks) {
                 self.process(ip);
             }
-            let Some(addr) = self.candidates.pop_front() else {
+
+            let Some(addr) = self.queue.pop_candidate(&self.blocks) else {
                 break;
             };
-            if self.blocks.contains_key(&addr) || self.invalid.contains(&addr) {
-                continue;
-            }
             // Never split an existing block based on a mere scan hit; direct
             // control flow that reaches the address will do that instead.
             if self.find_containing_block(addr).is_some() {
@@ -199,9 +229,6 @@ impl<'a> Traverse<'a> {
 
     fn process(&mut self, ip: IP) {
         let addr = ip.to_addr();
-        if self.blocks.contains_key(&addr) || self.invalid.contains(&addr) {
-            return;
-        }
 
         // If this ip is contained within an existing block, it means it is a
         // jmp within some other code.
@@ -220,7 +247,7 @@ impl<'a> Traverse<'a> {
             }
             Err(e) => {
                 log::warn!("omitting {ip}: {e}");
-                self.invalid.insert(addr);
+                self.queue.invalid.insert(addr);
             }
         }
     }
@@ -236,14 +263,6 @@ impl<'a> Traverse<'a> {
             }
         }
         None
-    }
-
-    fn add_candidate(&mut self, addr: u32) -> bool {
-        if !self.candidate_seen.insert(addr) {
-            return false;
-        }
-        self.candidates.push_back(addr);
-        true
     }
 
     /// Cheap validation for scanned code address candidates: the bytes must
@@ -314,14 +333,13 @@ impl<'a> Traverse<'a> {
             }
         }
         for value in found {
-            self.add_candidate(value);
+            self.queue.add_candidate(value);
         }
     }
 
     /// Search uncovered code ranges for `push ebp; mov ebp, esp` function
-    /// prologues, adding them as candidates. Returns how many new ones we found.
-    fn scan_gaps_for_prologues(&mut self) -> usize {
-        let mut found = Vec::new();
+    /// prologues, adding them as candidates.
+    fn scan_gaps_for_prologues(&mut self) {
         for gap in self.gaps() {
             let data = self.mem.slice(gap.start, gap.end - gap.start);
             if data.len() < 3 {
@@ -329,17 +347,11 @@ impl<'a> Traverse<'a> {
             }
             for i in 0..data.len() - 2 {
                 if data[i] == 0x55 && data[i + 1] == 0x8b && data[i + 2] == 0xec {
-                    found.push(gap.start + i as u32);
+                    let addr = gap.start + i as u32;
+                    self.queue.add_candidate(addr);
                 }
             }
         }
-        let mut added = 0;
-        for addr in found {
-            if self.add_candidate(addr) {
-                added += 1;
-            }
-        }
-        added
     }
 
     pub fn generate_report(&self) -> Report {
