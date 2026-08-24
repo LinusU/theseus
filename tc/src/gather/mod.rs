@@ -265,6 +265,22 @@ impl<'a> Traverse<'a> {
         None
     }
 
+    /// Check if the data at the given address looks like it might be utf16 text.
+    fn looks_like_utf16(&self, data: &[u8]) -> bool {
+        for (i, [lo, hi]) in data.as_chunks::<2>().0.iter().copied().enumerate() {
+            if hi != 0 {
+                return false;
+            }
+            if lo == 0 {
+                return i > 4; // minimum string length
+            }
+            if lo > 0x7f {
+                return false;
+            }
+        }
+        false
+    }
+
     /// Cheap validation for scanned code address candidates: the bytes must
     /// decode as plausible instructions.
     fn looks_like_code(&self, addr: u32) -> bool {
@@ -276,6 +292,10 @@ impl<'a> Traverse<'a> {
             return false;
         }
         let len = data.len().min(64);
+        // TODO: looks_like_ascii as well?
+        if self.looks_like_utf16(&data[..len]) {
+            return false;
+        }
         let mut decoder = iced_x86::Decoder::with_ip(
             self.module.bitness(),
             &data[..len],

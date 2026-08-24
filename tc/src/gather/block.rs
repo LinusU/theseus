@@ -140,7 +140,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
     ///   mov eax, somevalue
     /// where somevalue is an address within the code segment.
     /// Very low confidence.
-    fn scan_immediates(&mut self, instr: &iced_x86::Instruction) {
+    fn scan_immediates(&mut self, ip: IP, instr: &iced_x86::Instruction) {
         if self.traverse.module.segment_addressed() {
             log::error!("--scan-immediates not supported for segmented (DOS) modules");
             return;
@@ -150,7 +150,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
                 let imm = instr.immediate32();
                 if self.traverse.module.code_memory().contains(&imm) {
-                    log::info!("{imm:x} looks like a code pointer");
+                    log::info!("{ip} {instr}  ; {imm:x} looks like a code pointer");
                     assert!(!self.traverse.module.segment_addressed());
                     self.traverse.queue.add_candidate(imm);
                 }
@@ -200,7 +200,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             let new_instr = instrs.last_mut().unwrap();
 
             if self.traverse.gather.scan_immediates {
-                self.scan_immediates(&instr);
+                self.scan_immediates(ip, &instr);
             }
 
             if instr.flow_control() == iced_x86::FlowControl::Next {
@@ -263,7 +263,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             iced_x86::OpKind::Memory => self.control_flow_indirect(ip, new_instr)?,
             iced_x86::OpKind::Register => {
                 // jmp [reg]  for some register
-                log::warn!("{ip} {instr}  ; indirect via register");
+                // log::warn!("{ip} {instr}  ; indirect via register");
             }
             d => anyhow::bail!("unhandled jmp {d:?}"),
         }

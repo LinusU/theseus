@@ -7,7 +7,8 @@ args=(
     --out out/mine
     # wndproc
     --entry-point 100180a
-    # wndproc jmptable
-    --jump-table 1001e0a..1001e2e
+
+    # todo: gets confused by ascii text
+    #--scan-immediates
 )
 cargo run -p tc -- "${args[@]}"
