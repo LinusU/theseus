@@ -360,18 +360,6 @@ impl<'a> Traverse<'a> {
         n >= 1
     }
 
-    /// A `call [addr]` through a non-IAT slot: if the slot statically holds a
-    /// code pointer (e.g. a function pointer variable), queue it.
-    fn scan_pointer_slot(&mut self, slot: u32) {
-        if slot as usize + 4 > self.mem.bytes.len() {
-            return;
-        }
-        let target = self.mem.read::<u32>(slot);
-        if self.module.code_memory().contains(&target) {
-            self.add_candidate(target);
-        }
-    }
-
     fn decode_one(&mut self, block_ip: IP) -> anyhow::Result<Block> {
         BlockDecoder::new(self, block_ip).go()
     }
@@ -450,7 +438,6 @@ struct BlockDecoder<'a, 'b> {
     found_tables: Vec<(u32, Option<usize>)>,
     // Index bounds seen so far in this block, keyed by register.
     index_bounds: HashMap<iced_x86::Register, usize>,
-    found_slots: Vec<u32>,
 }
 
 impl<'a, 'b> BlockDecoder<'a, 'b> {
@@ -460,7 +447,6 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             block_ip,
             found_tables: Default::default(),
             index_bounds: Default::default(),
-            found_slots: Default::default(),
         }
     }
 
@@ -588,9 +574,6 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             let n = self.traverse.scan_jump_table(table, count);
             log::info!("jump table at {table:08x}: {n} entries");
         }
-        for &slot in self.found_slots.iter() {
-            self.traverse.scan_pointer_slot(slot);
-        }
 
         let info = self.traverse.addr_info.get(&block_ip.to_addr());
         Ok(Block {
@@ -615,26 +598,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 let ip = IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
                 self.traverse.queue.enqueue(ip);
             }
-            iced_x86::OpKind::Memory => {
-                if let Some(addr) = is_abs_memory_ref(&instr) {
-                    // jmp [addr]  for some constant addr
-                    if let Some(imp) = self.traverse.iat_refs.get(&addr) {
-                        new_instr.hint = Some(format!("{}::{}_stdcall", imp.dll, imp.func));
-                    } else {
-                        if !self.traverse.module.segment_addressed() {
-                            self.found_slots.push(addr);
-                        }
-                        log::warn!("{ip} {instr}  ; indirect via memory");
-                    }
-                } else if !self.traverse.module.segment_addressed()
-                    && let Some((table, index)) = is_jump_table_ref(&instr)
-                {
-                    let count = self.index_bounds.get(&index.full_register()).copied();
-                    self.found_tables.push((table, count));
-                } else {
-                    log::warn!("{ip} {instr}  ; indirect via memory");
-                }
-            }
+            iced_x86::OpKind::Memory => self.control_flow_indirect(ip, new_instr)?,
             iced_x86::OpKind::Register => {
                 // jmp [reg]  for some register
                 log::warn!("{ip} {instr}  ; indirect via register");
@@ -642,6 +606,39 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             d => anyhow::bail!("unhandled jmp {d:?}"),
         }
 
+        Ok(())
+    }
+
+    /// Given a control flow instruction to an indirect memory address like
+    ///    jne [someaddr]
+    /// attempt to enqueue the target of the jump.
+    fn control_flow_indirect(&mut self, ip: IP, new_instr: &mut Instr) -> anyhow::Result<()> {
+        let instr = &new_instr.iced;
+        if self.traverse.module.segment_addressed() {
+            log::warn!("{ip} {instr}  ; indirect unimplemented");
+            return Ok(());
+        }
+
+        if let Some(addr) = is_abs_memory_ref(&instr) {
+            // jmp [addr]  for some constant addr
+            if let Some(imp) = self.traverse.iat_refs.get(&addr) {
+                new_instr.hint = Some(format!("{}::{}_stdcall", imp.dll, imp.func));
+            } else {
+                if addr as usize + 4 > self.traverse.mem.bytes.len() {
+                    anyhow::bail!("jmp to invalid address");
+                }
+                let target = self.traverse.mem.read::<u32>(addr);
+                if self.traverse.module.code_memory().contains(&target) {
+                    self.traverse.add_candidate(target);
+                }
+                log::warn!("{ip} {instr}  ; indirect via memory");
+            }
+        } else if let Some((table, index)) = is_jump_table_ref(&instr) {
+            let count = self.index_bounds.get(&index.full_register()).copied();
+            self.found_tables.push((table, count));
+        } else {
+            log::warn!("{ip} {instr}  ; indirect via memory");
+        }
         Ok(())
     }
 }
