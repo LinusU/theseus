@@ -30,7 +30,7 @@ pub enum Parse {
 pub fn parse(buf: &[u8]) -> anyhow::Result<Parse> {
     let dos = DOS::parse(buf).map_err(|err| anyhow!("reading DOS header: {}", err))?;
 
-    let pe_offset = dos.header.e_lfanew as usize;
+    let pe_offset = dos.header.new_header_ofs as usize;
     if pe_offset < buf.len() && pe::has_pe_signature(&buf[pe_offset..]) {
         let pe = PE::parse(&buf[pe_offset..])?;
         Ok(Parse::PE(pe))

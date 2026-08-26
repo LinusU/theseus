@@ -28,10 +28,10 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
     DOSModule {
         is_com: false,
         psp_segment,
-        load_segment: psp_segment + 0x10 + dos.header.e_cs,
-        stack_segment: load_segment + dos.header.e_ss,
-        stack_pointer: dos.header.e_sp,
-        entry_point: dos.header.e_ip,
+        load_segment: psp_segment + 0x10 + dos.header.initial_cs,
+        stack_segment: load_segment + dos.header.initial_ss,
+        stack_pointer: dos.header.initial_sp,
+        entry_point: dos.header.entry_point,
         code_memory: (load_addr..load_addr + data.len() as u32),
     }
 }

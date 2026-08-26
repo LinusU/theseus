@@ -19,16 +19,14 @@ pub struct DOS {
 impl DOS {
     pub fn parse(buf: &[u8]) -> anyhow::Result<DOS> {
         let header = <IMAGE_DOS_HEADER>::read_from_prefix(buf).unwrap().0;
-        if header.e_magic != *b"MZ" {
-            bail!(
-                "invalid DOS signature; wanted 'MZ', got {:?}",
-                header.e_magic
-            );
+        if header.magic != *b"MZ" {
+            bail!("invalid DOS signature; wanted 'MZ', got {:?}", header.magic);
         }
 
-        let reloc_len = header.e_crlc;
+        let reloc_len = header.relocation_count;
         let relocs = if reloc_len > 0 {
-            iter_pod_n::<Reloc>(buf, header.e_lfarlc as u32, reloc_len as u32).collect::<Vec<_>>()
+            iter_pod_n::<Reloc>(buf, header.relocation_ofs as u32, reloc_len as u32)
+                .collect::<Vec<_>>()
         } else {
             vec![]
         }
@@ -39,7 +37,7 @@ impl DOS {
 
     pub fn image_offset(&self) -> usize {
         let paragraph = 16;
-        self.header.e_cparhdr as usize * paragraph
+        self.header.header_size_paras as usize * paragraph
     }
 
     pub fn apply_relocations(&self, seg: u16, mem: &mut [u8]) {

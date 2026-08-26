@@ -7,28 +7,39 @@ use bitflags::bitflags;
 // https://docs.microsoft.com/en-us/previous-versions/ms809762(v=msdn.10)
 // https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
 
+// I renamed the fields on this header from their names in Windows
+// because they are impossible to understand otherwise.
 #[derive(Debug, zerocopy::FromBytes)]
 #[repr(C)]
 pub struct IMAGE_DOS_HEADER {
-    pub e_magic: [u8; 2],
+    /// e_magic
+    pub magic: [u8; 2],
     pub e_cblp: u16,
     pub e_cp: u16,
-    pub e_crlc: u16,
-    pub e_cparhdr: u16,
+    /// e_crlc
+    pub relocation_count: u16,
+    /// e_cparhdr
+    pub header_size_paras: u16,
     pub e_minalloc: u16,
     pub e_maxalloc: u16,
-    pub e_ss: u16,
-    pub e_sp: u16,
+    /// e_ss
+    pub initial_ss: u16,
+    /// e_sp
+    pub initial_sp: u16,
     pub e_csum: u16,
-    pub e_ip: u16,
-    pub e_cs: u16,
-    pub e_lfarlc: u16,
+    /// e_ip
+    pub entry_point: u16,
+    /// e_cs
+    pub initial_cs: u16,
+    /// e_lfarlc, file offset of relocations
+    pub relocation_ofs: u16,
     pub e_ovno: u16,
     pub e_res: [u16; 4],
     pub e_oemid: u16,
     pub e_oeminfo: u16,
     pub e_res2: [u16; 10],
-    pub e_lfanew: u32,
+    /// e_lfanew
+    pub new_header_ofs: u32,
 }
 
 #[derive(Debug, zerocopy::FromBytes)]
