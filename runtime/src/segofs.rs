@@ -19,6 +19,15 @@ impl SegOfs {
     pub const fn with_ofs(&self, ofs: u16) -> SegOfs {
         SegOfs { seg: self.seg, ofs }
     }
+
+    pub fn parse(val: &str) -> Result<SegOfs, String> {
+        let Some((seg, ofs)) = val.split_once(':') else {
+            return Err("invalid segofs".into());
+        };
+        let seg = u16::from_str_radix(seg, 16).map_err(|err| err.to_string())?;
+        let ofs = u16::from_str_radix(ofs, 16).map_err(|err| err.to_string())?;
+        Ok((seg, ofs).into())
+    }
 }
 
 impl From<(u16, u16)> for SegOfs {
