@@ -7,6 +7,7 @@ mod memory;
 mod mmx;
 mod ops;
 mod registers;
+mod segofs;
 
 pub use exe::EXEData;
 pub use flags::Flags;
@@ -15,37 +16,7 @@ pub use mapping::{Mapping, Mappings, round_to_page};
 pub use memory::Memory;
 pub use ops::*;
 pub use registers::Regs;
-
-#[repr(C)]
-#[derive(
-    zerocopy::FromBytes, zerocopy::IntoBytes, Debug, Clone, Copy, PartialEq, PartialOrd, Eq,
-)]
-pub struct SegOfs {
-    pub ofs: u16,
-    pub seg: u16,
-}
-
-impl SegOfs {
-    pub const fn new(seg: u16, ofs: u16) -> SegOfs {
-        SegOfs { seg, ofs }
-    }
-
-    pub const fn abs(&self) -> u32 {
-        segofs(self.seg, self.ofs)
-    }
-}
-
-impl From<(u16, u16)> for SegOfs {
-    fn from((seg, ofs): (u16, u16)) -> Self {
-        SegOfs::new(seg, ofs)
-    }
-}
-
-impl std::fmt::Display for SegOfs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{seg:04x}:{ofs:04x}", seg = self.seg, ofs = self.ofs)
-    }
-}
+pub use segofs::{SegOfs, segofs};
 
 pub type ContFn = fn(&mut Context) -> Cont;
 
@@ -111,9 +82,4 @@ impl Context {
     pub fn return_from_x86(&mut self) -> Cont {
         panic!();
     }
-}
-
-/// Combine a seg:ofs address into a single flat u32 address.
-pub const fn segofs(seg: u16, off: u16) -> u32 {
-    ((seg as u32) << 4) + (off as u32)
 }
