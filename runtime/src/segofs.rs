@@ -1,6 +1,15 @@
 #[repr(C)]
 #[derive(
-    zerocopy::FromBytes, zerocopy::IntoBytes, Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    PartialOrd,
+    Eq,
+    Ord,
+    Default,
 )]
 pub struct SegOfs {
     pub seg: u16,
