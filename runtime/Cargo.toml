@@ -10,6 +10,8 @@ num-traits = { version = "0.2.19", default-features = false }
 wee_alloc = { version = "0.4.5", optional = true }
 widestring = { workspace = true }
 zerocopy = { workspace = true }
+serde = { optional = true, version = "1.0" }
 
 [features]
 wasm = ["dep:wee_alloc"]
+serde = ["dep:serde"]

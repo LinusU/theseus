@@ -37,3 +37,13 @@ impl std::fmt::Display for SegOfs {
 pub const fn segofs(seg: u16, off: u16) -> u32 {
     ((seg as u32) << 4) + (off as u32)
 }
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for SegOfs {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        ser.serialize_str(format!("{}", self).as_str())
+    }
+}
