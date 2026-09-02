@@ -10,6 +10,7 @@
     Eq,
     Ord,
     Default,
+    Hash,
 )]
 pub struct SegOfs {
     pub seg: u16,
@@ -37,6 +38,10 @@ impl SegOfs {
         let ofs = u16::from_str_radix(ofs, 16).map_err(|err| err.to_string())?;
         Ok((seg, ofs).into())
     }
+
+    pub fn is_null(&self) -> bool {
+        self.seg == 0 && self.ofs == 0
+    }
 }
 
 impl From<(u16, u16)> for SegOfs {
@@ -63,5 +68,32 @@ impl serde::Serialize for SegOfs {
         S: serde::Serializer,
     {
         ser.serialize_str(format!("{}", self).as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SegOfs {
+    fn deserialize<D>(deserializer: D) -> Result<SegOfs, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SegOfsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SegOfsVisitor {
+            type Value = SegOfs;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("seg:ofs pair")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                SegOfs::parse(value).map_err(|err| E::custom(err))
+            }
+        }
+
+        deserializer.deserialize_str(SegOfsVisitor)
     }
 }
