@@ -1,3 +1,8 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Condvar, LazyLock, Mutex},
+};
+
 use runtime::Context;
 
 use crate::{
@@ -5,6 +10,33 @@ use crate::{
     kernel32::{self, Object},
     stub,
 };
+
+struct CriticalSection {
+    state: Mutex<CriticalSectionState>,
+    available: Condvar,
+}
+
+#[derive(Default)]
+struct CriticalSectionState {
+    owner: Option<std::thread::ThreadId>,
+    depth: u32,
+}
+
+static CRITICAL_SECTIONS: LazyLock<Mutex<HashMap<u32, Arc<CriticalSection>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn critical_section(addr: u32) -> Arc<CriticalSection> {
+    let mut sections = CRITICAL_SECTIONS.lock().unwrap();
+    sections
+        .entry(addr)
+        .or_insert_with(|| {
+            Arc::new(CriticalSection {
+                state: Mutex::new(CriticalSectionState::default()),
+                available: Condvar::new(),
+            })
+        })
+        .clone()
+}
 
 #[repr(C)]
 #[derive(zerocopy::FromBytes, zerocopy::Immutable, zerocopy::IntoBytes)]
@@ -149,6 +181,76 @@ pub fn TlsGetValue(ctx: &mut Context, dwTlsIndex: u32) -> u32 {
 pub fn TlsSetValue(ctx: &mut Context, dwTlsIndex: u32, lpTlsValue: u32) -> bool {
     teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = lpTlsValue;
     true
+}
+
+#[win32_derive::dllexport]
+pub fn InitializeCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
+    let _ = critical_section(lpCriticalSection.addr);
+}
+
+#[win32_derive::dllexport]
+pub fn DeleteCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
+    CRITICAL_SECTIONS
+        .lock()
+        .unwrap()
+        .remove(&lpCriticalSection.addr);
+}
+
+#[win32_derive::dllexport]
+pub fn EnterCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
+    let section = critical_section(lpCriticalSection.addr);
+    let current = std::thread::current().id();
+    let mut state = section.state.lock().unwrap();
+    loop {
+        match state.owner {
+            None => {
+                state.owner = Some(current);
+                state.depth = 1;
+                return;
+            }
+            Some(owner) if owner == current => {
+                state.depth += 1;
+                return;
+            }
+            Some(_) => state = section.available.wait(state).unwrap(),
+        }
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn LeaveCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
+    let Some(section) = CRITICAL_SECTIONS
+        .lock()
+        .unwrap()
+        .get(&lpCriticalSection.addr)
+        .cloned()
+    else {
+        return;
+    };
+    let current = std::thread::current().id();
+    let mut state = section.state.lock().unwrap();
+    if state.owner != Some(current) {
+        return;
+    }
+    state.depth -= 1;
+    if state.depth == 0 {
+        state.owner = None;
+        section.available.notify_one();
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn InterlockedIncrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
+    let value = Addend.read(&ctx.memory).unwrap_or_default().wrapping_add(1);
+    let _ = Addend.write(&mut ctx.memory, value);
+    value
+}
+
+#[win32_derive::dllexport]
+pub fn InterlockedDecrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
+    let value = Addend.read(&ctx.memory).unwrap_or_default().wrapping_sub(1);
+    let _ = Addend.write(&mut ctx.memory, value);
+    value
 }
 
 #[win32_derive::dllexport]
