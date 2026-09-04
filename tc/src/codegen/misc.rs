@@ -135,8 +135,8 @@ impl<'a> CodeGen<'a> {
                 }
             }
             Rdtsc => self.line("ctx.cpu.regs.set_edx_eax(rdtsc());"),
-            Int1 => {}
-            Int3 | Cmpxchg | Pushfd | Cpuid | Xgetbv | Div => self.todo(instr_name(instr)),
+            Int1 | Int3 => {}
+            Cmpxchg | Pushfd | Cpuid | Xgetbv | Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),
