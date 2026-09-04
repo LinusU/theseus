@@ -48,6 +48,15 @@ impl std::fmt::Display for SegOfs {
     }
 }
 
+static RDTSC_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+pub fn rdtsc() -> u64 {
+    RDTSC_START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+}
+
 pub type ContFn = fn(&mut Context) -> Cont;
 
 #[derive(Clone, Copy)]
