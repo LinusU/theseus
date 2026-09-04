@@ -15,8 +15,8 @@
 
 The two halves of Theseus are:
 
-1. The `tc` compiler uses the PE loader to load a `.exe` file and generate
-   source code under `out/`.
+1. The `tc` compiler uses the PE loader to load a DOS `.com` or Windows PE
+   image such as `.exe` or `.icd` and generate source code under `out/`.
 2. Building an exe relies on `runtime` for support for x86 operations and
    `win32` for Windows API or `dos` for DOS support.
 

@@ -67,7 +67,7 @@ struct Args {
     #[argh(option)]
     symbols_csv: Option<String>,
 
-    /// path to input executable
+    /// path to input executable or image (.com, .exe, or .icd)
     #[argh(option)]
     exe: String,
 
@@ -107,11 +107,13 @@ fn run() -> anyhow::Result<()> {
     let buf = std::fs::read(&args.exe).unwrap();
     if args.exe.to_ascii_lowercase().ends_with(".com") {
         state.module = Module::DOS(tc::com::load_com(&mut state.mem, buf));
-    } else if args.exe.to_ascii_lowercase().ends_with(".exe") {
+    } else if args.exe.to_ascii_lowercase().ends_with(".exe")
+        || args.exe.to_ascii_lowercase().ends_with(".icd")
+    {
         state.module = tc::exe::load_exe(&mut state.mem, buf);
         state.init_imports();
     } else {
-        anyhow::bail!("unexpected file extension");
+        anyhow::bail!("unexpected file extension; expected .com, .exe, or .icd");
     }
     state.init_system_hooks();
 

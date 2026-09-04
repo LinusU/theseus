@@ -13,3 +13,5 @@ doesn't depend on x86 or DOS/Windows.
 Theseus is very experimental and probably won't work on a program you try.
 
 See [doc/development.md](doc/development.md) for more details on the code.
+
+The Midtown Madness 2 target and agent workflow are documented in [doc/mm2.md](doc/mm2.md).

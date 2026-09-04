@@ -1,5 +1,5 @@
-This crate implements the Theseus Compiler "tc", which consumes a `.exe` file
-and generates Rust source code.
+This crate implements the Theseus Compiler "tc", which consumes a DOS `.com`
+or Windows PE image such as `.exe` or `.icd` and generates Rust source code.
 
 CPU operations are generally parsed here, and the generated code calls a
 corresponding implementation from the `runtime` crate. For example, given

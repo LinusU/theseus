@@ -312,6 +312,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mm2"
+version = "0.1.0"
+dependencies = [
+ "runtime",
+ "wasm-bindgen",
+ "winapi 0.1.0",
+]
+
+[[package]]
 name = "mofo"
 version = "0.1.0"
 dependencies = [
