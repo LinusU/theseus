@@ -175,6 +175,9 @@ impl<'a> CodeGen<'a> {
             Fchs => {
                 self.line(self.fpu_set_reg(0, format!("-{}", self.fpu_get_reg(0))));
             }
+            Fabs => {
+                self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
+            }
 
             Fsin => {
                 self.line(self.fpu_set_reg(0, format!("{}.sin()", self.fpu_get_reg(0))));
