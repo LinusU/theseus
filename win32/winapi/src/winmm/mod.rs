@@ -6,6 +6,8 @@ mod time;
 pub use time::*;
 mod wave;
 pub use wave::*;
+mod mixer;
+pub use mixer::*;
 mod misc;
 pub use misc::*;
 mod mmio;
