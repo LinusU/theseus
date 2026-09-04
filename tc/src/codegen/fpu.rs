@@ -210,6 +210,11 @@ impl<'a> CodeGen<'a> {
                     self.line("ctx.cpu.fpu.pop();");
                 }
             }
+            Fcompp => {
+                self.line("ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(&ctx.cpu.fpu.get(1));");
+                self.line("ctx.cpu.fpu.pop();");
+                self.line("ctx.cpu.fpu.pop();");
+            }
 
             Fnstsw => {
                 assert_eq!(instr.op_count(), 1);
