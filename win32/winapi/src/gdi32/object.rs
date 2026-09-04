@@ -4,7 +4,7 @@ use runtime::Context;
 
 use crate::{
     Ptr,
-    gdi32::{self, Bitmap, COLORREF, HDC, HGDIOBJ, HPEN},
+    gdi32::{self, Bitmap, COLORREF, HBRUSH, HDC, HGDIOBJ, HPEN},
 };
 
 #[derive(Debug, Clone)]
@@ -24,6 +24,11 @@ pub fn CreatePen(
     assert_eq!(cWidth, 1);
     let pen = Pen(color);
     gdi32::lock().objects.add(Object::Pen(pen))
+}
+
+#[win32_derive::dllexport]
+pub fn CreateSolidBrush(_ctx: &mut Context, color: COLORREF) -> HBRUSH {
+    gdi32::lock().objects.add(Object::Brush(Brush(color)))
 }
 
 pub enum Object {
