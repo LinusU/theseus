@@ -107,6 +107,38 @@ pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
     lpBuffer.write(&mut ctx.memory, status).unwrap();
 }
 
+#[win32_derive::dllexport]
+pub fn GetDiskFreeSpaceA(
+    ctx: &mut Context,
+    _lpRootPathName: Ptr<u8>,
+    lpSectorsPerCluster: Ptr<u32>,
+    lpBytesPerSector: Ptr<u32>,
+    lpNumberOfFreeClusters: Ptr<u32>,
+    lpTotalNumberOfClusters: Ptr<u32>,
+) -> bool {
+    if [
+        lpSectorsPerCluster.addr,
+        lpBytesPerSector.addr,
+        lpNumberOfFreeClusters.addr,
+        lpTotalNumberOfClusters.addr,
+    ]
+    .into_iter()
+    .any(|addr| addr < 0x1000)
+    {
+        return false;
+    }
+
+    lpSectorsPerCluster.write(&mut ctx.memory, 1).unwrap();
+    lpBytesPerSector.write(&mut ctx.memory, 512).unwrap();
+    lpNumberOfFreeClusters
+        .write(&mut ctx.memory, 0x1_0000)
+        .unwrap();
+    lpTotalNumberOfClusters
+        .write(&mut ctx.memory, 0x2_0000)
+        .unwrap();
+    true
+}
+
 #[repr(C)]
 #[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct OSVERSIONINFO {
