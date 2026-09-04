@@ -81,7 +81,7 @@ struct MIXERLINEA {
 pub fn mixerGetLineInfoA(ctx: &mut Context, hmxobj: u32, pmxl: u32, fdwInfo: u32) -> u32 {
     let hmxobj = crate::HANDLE::from_raw(hmxobj);
     let state = kernel32::lock();
-    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer)) {
+    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer(_))) {
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
@@ -145,7 +145,7 @@ struct MIXERCONTROL {
 pub fn mixerGetLineControlsA(ctx: &mut Context, hmxobj: u32, pmxlc: u32, fdwControls: u32) -> u32 {
     let hmxobj = crate::HANDLE::from_raw(hmxobj);
     let state = kernel32::lock();
-    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer)) {
+    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer(_))) {
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
@@ -193,7 +193,45 @@ pub fn mixerGetLineControlsA(ctx: &mut Context, hmxobj: u32, pmxlc: u32, fdwCont
 pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDetails: u32) -> u32 {
     let hmxobj = crate::HANDLE::from_raw(hmxobj);
     let state = kernel32::lock();
-    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer)) {
+    let volume = match state.objects.get(hmxobj) {
+        Some(kernel32::Object::Mixer(volume)) => *volume,
+        _ => return MMSYSERR_INVALHANDLE,
+    };
+    drop(state);
+    if pmxcd < 0x1000 || ctx.memory.read::<u32>(pmxcd) < 24 {
+        return MMSYSERR_INVALPARAM;
+    }
+    let dwControlID = ctx.memory.read::<u32>(pmxcd + 4);
+    let cChannels = ctx.memory.read::<u32>(pmxcd + 8);
+    let cbDetails = ctx.memory.read::<u32>(pmxcd + 16);
+    let paDetails = ctx.memory.read::<u32>(pmxcd + 20);
+    let Some(total) = (cChannels as usize).checked_mul(cbDetails as usize) else {
+        return MMSYSERR_INVALPARAM;
+    };
+    let Some(end) = (paDetails as usize).checked_add(total) else {
+        return MMSYSERR_INVALPARAM;
+    };
+    if dwControlID != 1
+        || cChannels != volume.len() as u32
+        || cbDetails < 4
+        || fdwDetails != 0
+        || paDetails < 0x1000
+        || end > ctx.memory.bytes.len()
+    {
+        return MMSYSERR_INVALPARAM;
+    }
+    for channel in 0..cChannels {
+        ctx.memory
+            .write(paDetails + channel * cbDetails, volume[channel as usize]);
+    }
+    MMSYSERR_NOERROR
+}
+
+#[win32_derive::dllexport]
+pub fn mixerSetControlDetails(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDetails: u32) -> u32 {
+    let hmxobj = crate::HANDLE::from_raw(hmxobj);
+    let state = kernel32::lock();
+    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer(_))) {
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
@@ -211,7 +249,7 @@ pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDe
         return MMSYSERR_INVALPARAM;
     };
     if dwControlID != 1
-        || cChannels == 0
+        || cChannels != 2
         || cbDetails < 4
         || fdwDetails != 0
         || paDetails < 0x1000
@@ -219,9 +257,15 @@ pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDe
     {
         return MMSYSERR_INVALPARAM;
     }
-    for channel in 0..cChannels {
-        ctx.memory.write(paDetails + channel * cbDetails, u32::MAX);
-    }
+    let volume = [
+        ctx.memory.read::<u32>(paDetails),
+        ctx.memory.read::<u32>(paDetails + cbDetails),
+    ];
+    let mut state = kernel32::lock();
+    let Some(kernel32::Object::Mixer(current)) = state.objects.get_mut(hmxobj) else {
+        return MMSYSERR_INVALHANDLE;
+    };
+    *current = volume;
     MMSYSERR_NOERROR
 }
 
@@ -240,7 +284,9 @@ pub fn mixerOpen(
     if phmx < 0x1000 {
         return MMSYSERR_INVALPARAM;
     }
-    let hmx = kernel32::lock().objects.add(kernel32::Object::Mixer);
+    let hmx = kernel32::lock()
+        .objects
+        .add(kernel32::Object::Mixer([u32::MAX; 2]));
     ctx.memory.write(phmx, hmx.to_raw());
     MMSYSERR_NOERROR
 }
@@ -249,7 +295,7 @@ pub fn mixerOpen(
 pub fn mixerClose(_ctx: &mut Context, hmx: u32) -> u32 {
     let hmx = crate::HANDLE::from_raw(hmx);
     let mut state = kernel32::lock();
-    if matches!(state.objects.get(hmx), Some(kernel32::Object::Mixer)) {
+    if matches!(state.objects.get(hmx), Some(kernel32::Object::Mixer(_))) {
         state.objects.remove(hmx);
         MMSYSERR_NOERROR
     } else {

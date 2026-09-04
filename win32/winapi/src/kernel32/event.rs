@@ -8,7 +8,7 @@ pub enum Object {
     Thread,
     Event(Arc<Event>),
     Mutex,
-    Mixer,
+    Mixer([u32; 2]),
     File(host::fs::File),
     FindHandle(crate::kernel32::FindHandle),
 }
