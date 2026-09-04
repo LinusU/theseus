@@ -168,7 +168,12 @@ impl<'a> CodeGen<'a> {
                 self.line("}");
                 self.line("}");
             }
-            Xgetbv | Div => self.todo(instr_name(instr)),
+            Xgetbv => {
+                self.line("let (xgetbv_eax, xgetbv_edx) = xgetbv(ctx.cpu.regs.ecx);");
+                self.line("ctx.cpu.regs.eax = xgetbv_eax;");
+                self.line("ctx.cpu.regs.edx = xgetbv_edx;");
+            }
+            Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),

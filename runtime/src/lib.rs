@@ -70,6 +70,13 @@ pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     }
 }
 
+pub fn xgetbv(index: u32) -> (u32, u32) {
+    match index {
+        0 => (1, 0),
+        _ => (0, 0),
+    }
+}
+
 pub type ContFn = fn(&mut Context) -> Cont;
 
 #[derive(Clone, Copy)]
@@ -143,7 +150,7 @@ pub const fn segofs(seg: u16, off: u16) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::cpuid;
+    use super::{cpuid, xgetbv};
 
     #[test]
     fn cpuid_reports_the_supported_basic_leaves() {
@@ -159,5 +166,11 @@ mod tests {
         );
         assert_eq!(cpuid(1, 1), (0, 0, 0, 0));
         assert_eq!(cpuid(0x8000_0000, 0), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn xgetbv_reports_only_x87_xcr0() {
+        assert_eq!(xgetbv(0), (1, 0));
+        assert_eq!(xgetbv(1), (0, 0));
     }
 }
