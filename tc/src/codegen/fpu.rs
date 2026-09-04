@@ -220,6 +220,10 @@ impl<'a> CodeGen<'a> {
             F2xm1 => {
                 self.line(self.fpu_set_reg(0, format!("{}.exp2() - 1.0", self.fpu_get_reg(0))));
             }
+            Fptan => {
+                self.line(self.fpu_set_reg(0, format!("{}.tan()", self.fpu_get_reg(0))));
+                self.line("ctx.cpu.fpu.push(1.0);");
+            }
             Fsin => {
                 self.line(self.fpu_set_reg(0, format!("{}.sin()", self.fpu_get_reg(0))));
             }

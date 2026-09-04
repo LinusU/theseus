@@ -677,6 +677,28 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fptan() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0xd9, 0xf2];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0).tan());")
+        );
+        assert!(codegen.buf.contains("ctx.cpu.fpu.push(1.0);"));
+    }
+
+    #[test]
     fn codegen_handles_fscale() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
