@@ -8,7 +8,6 @@ use runtime::Context;
 use crate::{
     HANDLE, Ptr,
     kernel32::{self, Object},
-    stub,
 };
 
 struct CriticalSection {
@@ -254,10 +253,27 @@ pub fn InterlockedDecrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
 }
 
 #[win32_derive::dllexport]
+pub fn GetThreadPriority(_ctx: &mut Context, hThread: HANDLE) -> i32 {
+    let state = kernel32::lock();
+    if !matches!(state.objects.get(hThread), Some(Object::Thread)) {
+        return -1;
+    }
+    state.thread_priorities.get(&hThread).copied().unwrap_or(0)
+}
+
+#[win32_derive::dllexport]
 pub fn SetThreadPriority(
     _ctx: &mut Context,
-    _hThread: HANDLE,
-    _nPriority: u32, /* THREAD_PRIORITY */
+    hThread: HANDLE,
+    nPriority: i32, /* THREAD_PRIORITY */
 ) -> bool {
-    stub!(true)
+    if !(-15..=15).contains(&nPriority) {
+        return false;
+    }
+    let mut state = kernel32::lock();
+    if !matches!(state.objects.get(hThread), Some(Object::Thread)) {
+        return false;
+    }
+    state.thread_priorities.insert(hThread, nPriority);
+    true
 }
