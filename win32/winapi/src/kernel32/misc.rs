@@ -244,6 +244,17 @@ pub fn UnhandledExceptionFilter(_ctx: &mut Context, _ExceptionInfo: Ptr<()>) -> 
 pub fn DebugBreak(_ctx: &mut Context) {}
 
 #[win32_derive::dllexport]
+pub fn RaiseException(
+    _ctx: &mut Context,
+    code: u32,
+    flags: u32,
+    argument_count: u32,
+    _arguments: Ptr<u32>,
+) {
+    log::debug!("RaiseException({code:#x}, {flags:#x}, {argument_count})");
+}
+
+#[win32_derive::dllexport]
 pub fn IsBadReadPtr(ctx: &mut Context, lp: Ptr<()>, ucb: u32) -> bool {
     let start = lp.addr as usize;
     start < 0x1000
