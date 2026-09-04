@@ -203,7 +203,7 @@ impl FPU {
             let value = self.st[physical];
             let tag = if value == 0.0 {
                 1
-            } else if value.is_nan() || value.is_infinite() {
+            } else if value.is_nan() || value.is_infinite() || value.is_subnormal() {
                 2
             } else {
                 0
@@ -397,5 +397,15 @@ mod tests {
         fpu.restore(&memory, 0x1000);
 
         assert_eq!(fpu.st_top, 8);
+    }
+
+    #[test]
+    fn fsave_marks_subnormal_values_as_special() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.push(f64::MIN_POSITIVE / 2.0);
+        fpu.store_env(&mut memory, 0x1000);
+
+        assert_eq!(memory.read::<u16>(0x1008), 0xbfff);
     }
 }
