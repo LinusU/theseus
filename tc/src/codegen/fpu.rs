@@ -217,6 +217,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
             }
 
+            F2xm1 => {
+                self.line(self.fpu_set_reg(0, format!("{}.exp2() - 1.0", self.fpu_get_reg(0))));
+            }
             Fsin => {
                 self.line(self.fpu_set_reg(0, format!("{}.sin()", self.fpu_get_reg(0))));
             }
