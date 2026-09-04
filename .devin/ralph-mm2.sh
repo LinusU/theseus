@@ -19,6 +19,9 @@ permission_mode="${DEVIN_PERMISSION_MODE:-smart}"
 for ((iteration = 1; iteration <= iterations; iteration++)); do
     printf 'MM2 Ralph iteration %d/%d\n' "$iteration" "$iterations"
     before_commit="$(git rev-parse HEAD)"
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=commit.gpgSign \
+    GIT_CONFIG_VALUE_0=false \
     devin --print --permission-mode "$permission_mode" \
         --prompt-file "$root/.devin/ralph-mm2-prompt.md"
     after_commit="$(git rev-parse HEAD)"
@@ -35,6 +38,11 @@ for ((iteration = 1; iteration <= iterations; iteration++)); do
     commit_count="$(git rev-list --count "$before_commit..$after_commit")"
     if [[ "$commit_count" -ne 1 ]]; then
         printf 'expected one commit from the agent, found %s; stopping for review\n' "$commit_count" >&2
+        exit 1
+    fi
+    signature_status="$(git log -1 --format='%G?' "$after_commit")"
+    if [[ "$signature_status" != "N" ]]; then
+        printf 'the agent commit is signed (%s); stopping for review\n' "$signature_status" >&2
         exit 1
     fi
     if ! git diff --check "$before_commit" "$after_commit"; then

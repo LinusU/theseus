@@ -62,7 +62,7 @@ The project skill `/mm2-ralph` advances one focused blocker and records the resu
 .devin/ralph-mm2.sh 5
 ```
 
-The loop commits one successful iteration at a time, but never pushes. It stops after at most 20 iterations, when an agent makes no changes, or when an iteration reports a failure. A failed or blocked iteration is left uncommitted for review. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
+The loop commits one successful iteration at a time with Git cryptographic signing disabled, but never pushes. It stops after at most 20 iterations, when an agent makes no changes, or when an iteration reports a failure. A failed or blocked iteration is left uncommitted for review. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
 
 ## Function overrides
 
