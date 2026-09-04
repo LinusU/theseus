@@ -12,6 +12,8 @@ use crate::{
 pub struct Window {
     /// There is a single unique HWND for each window, it's not a refcounted handle.
     pub hwnd: HWND,
+    pub style: u32,
+    pub ex_style: u32,
     pub dirty: bool, // triggers WM_PAINT
     pub x: i32,
     pub y: i32,
@@ -70,6 +72,8 @@ impl Window {
 #[derive(Default)]
 struct CreateWindowArgs {
     name: String,
+    style: u32,
+    ex_style: u32,
     x: i32,
     y: i32,
     width: Option<u32>,
@@ -111,6 +115,8 @@ impl State {
         let hwnd = HWND::from_raw(1);
         let window = Rc::new(RefCell::new(Window {
             hwnd,
+            style: args.style,
+            ex_style: args.ex_style,
             dirty: true,
             x: args.x,
             y: args.y,
@@ -129,10 +135,10 @@ impl State {
 #[win32_derive::dllexport]
 pub fn CreateWindowExA(
     ctx: &mut Context,
-    _dwExStyle: u32, /* WINDOW_EX_STYLE */
+    dwExStyle: u32, /* WINDOW_EX_STYLE */
     _lpClassName: Ptr<u8>,
     lpWindowName: Ptr<u8>,
-    _dwStyle: u32, /* WINDOW_STYLE */
+    dwStyle: u32, /* WINDOW_STYLE */
     X: i32,
     Y: i32,
     nWidth: CW,
@@ -145,6 +151,8 @@ pub fn CreateWindowExA(
     let name = ctx.memory.read_str(lpWindowName.addr);
     state().create_window(CreateWindowArgs {
         name: name.into(),
+        style: dwStyle,
+        ex_style: dwExStyle,
         x: X,
         y: Y,
         width: nWidth.value(),
@@ -155,10 +163,10 @@ pub fn CreateWindowExA(
 #[win32_derive::dllexport]
 pub fn CreateWindowExW(
     ctx: &mut Context,
-    _dwExStyle: u32,        /* WINDOW_EX_STYLE */
+    dwExStyle: u32,         /* WINDOW_EX_STYLE */
     _lpClassName: Ptr<u16>, /* WSTR */
     lpWindowName: Ptr<u16>, /* WSTR */
-    _dwStyle: u32,          /* WINDOW_STYLE */
+    dwStyle: u32,           /* WINDOW_STYLE */
     X: i32,
     Y: i32,
     nWidth: CW,
@@ -171,11 +179,37 @@ pub fn CreateWindowExW(
     let name = ctx.memory.read_wstr(lpWindowName.addr);
     state().create_window(CreateWindowArgs {
         name: name.to_string_lossy(),
+        style: dwStyle,
+        ex_style: dwExStyle,
         x: X,
         y: Y,
         width: nWidth.value(),
         height: nHeight.value(),
     })
+}
+
+#[win32_derive::dllexport]
+pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return 0;
+    };
+    let window = window.borrow();
+    if hWnd != window.hwnd {
+        return 0;
+    }
+
+    match nIndex {
+        GWL_STYLE => window.style as i32,
+        GWL_EXSTYLE => window.ex_style as i32,
+        _ => {
+            log::warn!("GetWindowLongA: unsupported index {nIndex}");
+            0
+        }
+    }
 }
 
 #[win32_derive::dllexport]
