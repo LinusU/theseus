@@ -199,6 +199,20 @@ pub fn GetActiveWindow(_ctx: &mut Context) -> HWND {
 }
 
 #[win32_derive::dllexport]
+pub fn SetActiveWindow(_ctx: &mut Context, hWnd: HWND) -> HWND {
+    let previous = GetActiveWindow(_ctx);
+    if previous.is_null() || previous != hWnd {
+        return HWND::null();
+    }
+
+    use super::message::{WM, post_message};
+    post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
+    post_message(hWnd, WM::ACTIVATE as u32, 1, 0);
+    post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
+    previous
+}
+
+#[win32_derive::dllexport]
 pub fn GetLastActivePopup(_ctx: &mut Context, hWnd: HWND) -> HWND {
     // No popups, so a window is its own last active popup.
     hWnd
