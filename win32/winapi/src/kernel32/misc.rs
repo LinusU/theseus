@@ -175,6 +175,9 @@ pub fn UnhandledExceptionFilter(_ctx: &mut Context, _ExceptionInfo: Ptr<()>) -> 
 }
 
 #[win32_derive::dllexport]
+pub fn DebugBreak(_ctx: &mut Context) {}
+
+#[win32_derive::dllexport]
 pub fn VirtualAlloc(
     _ctx: &mut Context,
     lpAddress: Ptr<()>,
