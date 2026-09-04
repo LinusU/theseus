@@ -219,6 +219,15 @@ pub fn GetLastActivePopup(_ctx: &mut Context, hWnd: HWND) -> HWND {
 }
 
 #[win32_derive::dllexport]
+pub fn CharPrevA(_ctx: &mut Context, lpszStart: Ptr<u8>, lpszCurrent: Ptr<u8>) -> u32 {
+    if lpszCurrent.addr > lpszStart.addr {
+        lpszCurrent.addr - 1
+    } else {
+        lpszStart.addr
+    }
+}
+
+#[win32_derive::dllexport]
 pub fn MessageBoxW(
     _ctx: &mut Context,
     _hWnd: HWND,
