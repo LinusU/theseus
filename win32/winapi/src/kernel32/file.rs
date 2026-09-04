@@ -106,6 +106,23 @@ pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
     file_attributes(&resolve_path(&name))
 }
 
+#[win32_derive::dllexport]
+pub fn CreateDirectoryA(
+    ctx: &mut Context,
+    lpPathName: Ptr<u8>,
+    _lpSecurityAttributes: Ptr<()>,
+) -> bool {
+    let name = ctx.memory.read_str(lpPathName.addr).to_owned();
+    let path = resolve_path(&name);
+    match host::fs::create_dir(&path) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("CreateDirectoryA({name:?} => {path:?}): {err}");
+            false
+        }
+    }
+}
+
 fn drive_type(path: Option<&str>) -> u32 {
     let Some(path) = path else {
         return DRIVE_FIXED;

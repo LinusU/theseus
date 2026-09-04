@@ -129,6 +129,10 @@ mod imp {
         std::fs::remove_file(path)
     }
 
+    pub fn create_dir(path: &Path) -> Result<()> {
+        std::fs::create_dir(path)
+    }
+
     pub fn exists(path: &Path) -> bool {
         path.exists()
     }
@@ -145,7 +149,7 @@ mod imp {
 #[cfg(target_family = "wasm")]
 mod imp {
     use std::{
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         sync::{Mutex, MutexGuard},
     };
 
@@ -156,6 +160,7 @@ mod imp {
     #[derive(Default)]
     struct MemFs {
         files: BTreeMap<String, Vec<u8>>,
+        directories: BTreeSet<String>,
         cwd: String,
     }
 
@@ -166,6 +171,7 @@ mod imp {
         if fs.is_none() {
             *fs = Some(MemFs {
                 files: Default::default(),
+                directories: BTreeSet::from(["/".into()]),
                 cwd: "/".into(),
             });
         }
@@ -317,8 +323,23 @@ mod imp {
     pub fn read_dir(path: &Path) -> Result<Vec<DirEntry>> {
         let dir = normalize(path);
         let prefix = dir_prefix(&dir);
+        let fs = fs();
+        let fs = fs.as_ref().unwrap();
         let mut entries: BTreeMap<String, DirEntry> = BTreeMap::new();
-        for (path, data) in &fs().as_ref().unwrap().files {
+        for path in &fs.directories {
+            let Some(rest) = path.strip_prefix(&prefix) else {
+                continue;
+            };
+            let name = rest.split_once('/').map_or(rest, |(name, _)| name);
+            if !name.is_empty() {
+                entries.entry(name.to_string()).or_insert_with(|| DirEntry {
+                    name: name.to_string(),
+                    is_dir: true,
+                    len: 0,
+                });
+            }
+        }
+        for (path, data) in &fs.files {
             let Some(rest) = path.strip_prefix(&prefix) else {
                 continue;
             };
@@ -358,6 +379,36 @@ mod imp {
         }
     }
 
+    pub fn create_dir(path: &Path) -> Result<()> {
+        let path = normalize(path);
+        let mut fs = fs();
+        let fs = fs.as_mut().unwrap();
+        if fs.directories.contains(&path) || fs.files.contains_key(&path) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "path exists",
+            ));
+        }
+        let parent =
+            path.rsplit_once('/').map_or(
+                "/",
+                |(parent, _)| {
+                    if parent.is_empty() { "/" } else { parent }
+                },
+            );
+        let parent_exists = fs.directories.contains(parent)
+            || fs.files.contains_key(parent)
+            || fs
+                .files
+                .keys()
+                .any(|file| file.starts_with(&dir_prefix(parent)));
+        if !parent_exists {
+            return Err(not_found());
+        }
+        fs.directories.insert(path);
+        Ok(())
+    }
+
     /// The prefix every path inside `dir` starts with, without doubling the
     /// slash at the root.
     fn dir_prefix(dir: &str) -> String {
@@ -375,10 +426,12 @@ mod imp {
             return true;
         }
         let fs = fs();
-        let files = &fs.as_ref().unwrap().files;
+        let fs = fs.as_ref().unwrap();
         // Either a file, or a directory that has something in it.
         let prefix = dir_prefix(&path);
-        files.contains_key(&path) || files.keys().any(|key| key.starts_with(&prefix))
+        fs.directories.contains(&path)
+            || fs.files.contains_key(&path)
+            || fs.files.keys().any(|key| key.starts_with(&prefix))
     }
 
     pub fn current_dir() -> Result<PathBuf> {
@@ -397,4 +450,6 @@ mod imp {
 
 #[cfg(target_family = "wasm")]
 pub use imp::mount;
-pub use imp::{File, current_dir, exists, open, read_dir, remove_file, set_current_dir};
+pub use imp::{
+    File, create_dir, current_dir, exists, open, read_dir, remove_file, set_current_dir,
+};
