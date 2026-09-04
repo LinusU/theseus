@@ -80,6 +80,35 @@ pub fn GetVersion(_ctx: &mut Context) -> u32 {
 
 #[repr(C)]
 #[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
+pub struct MEMORYSTATUS {
+    dwLength: u32,
+    dwMemoryLoad: u32,
+    dwTotalPhys: u32,
+    dwAvailPhys: u32,
+    dwTotalPageFile: u32,
+    dwAvailPageFile: u32,
+    dwTotalVirtual: u32,
+    dwAvailVirtual: u32,
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
+    let capacity = ctx.memory.bytes.len() as u32;
+    let status = MEMORYSTATUS {
+        dwLength: std::mem::size_of::<MEMORYSTATUS>() as u32,
+        dwTotalPhys: capacity,
+        dwAvailPhys: capacity,
+        dwTotalPageFile: capacity,
+        dwAvailPageFile: capacity,
+        dwTotalVirtual: capacity,
+        dwAvailVirtual: capacity,
+        ..Default::default()
+    };
+    lpBuffer.write(&mut ctx.memory, status).unwrap();
+}
+
+#[repr(C)]
+#[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct OSVERSIONINFO {
     dwOSVersionInfoSize: u32,
     dwMajorVersion: u32,
