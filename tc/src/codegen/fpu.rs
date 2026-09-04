@@ -195,6 +195,16 @@ impl<'a> CodeGen<'a> {
             Fchs => {
                 self.line(self.fpu_set_reg(0, format!("-{}", self.fpu_get_reg(0))));
             }
+            Fscale => {
+                self.line(self.fpu_set_reg(
+                    0,
+                    format!(
+                        "{} * 2f64.powi({}.trunc() as i32)",
+                        self.fpu_get_reg(0),
+                        self.fpu_get_reg(1)
+                    ),
+                ));
+            }
             Fabs => {
                 self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
             }
