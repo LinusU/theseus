@@ -75,8 +75,17 @@ pub fn shr<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
         return x; // Don't affect flags.
     }
 
-    let val = x >> y as usize;
-    flags.set(Flags::CF, ((x >> (y - 1) as usize) & I::one()).is_one());
+    let val = if y < I::bits() as u8 {
+        x >> y as usize
+    } else {
+        I::zero()
+    };
+    let cf = if y <= I::bits() as u8 {
+        ((x >> (y - 1) as usize) & I::one()).is_one()
+    } else {
+        false
+    };
+    flags.set(Flags::CF, cf);
     flags.set(Flags::SF, false); // ?
     flags.set(Flags::ZF, val.is_zero());
 
@@ -93,11 +102,22 @@ pub fn sar<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
         return x;
     }
 
-    flags.set(Flags::CF, x.shr(y as usize - 1).bitand(I::one()).is_one());
+    let cf = if y <= I::bits() as u8 {
+        x.shr(y as usize - 1).bitand(I::one()).is_one()
+    } else {
+        false
+    };
+    flags.set(Flags::CF, cf);
     // Note: OF only defined for 1-bit rotates.
     flags.set(Flags::OF, false);
     // There's a random "u32" type in the num-traits signed_shr signature, so cast here.
-    let result = x.signed_shr(y as u32);
+    let result = if y < I::bits() as u8 {
+        x.signed_shr(y as u32)
+    } else if x.high_bit().is_one() {
+        !I::zero()
+    } else {
+        I::zero()
+    };
 
     flags.set(Flags::SF, result.high_bit().is_one());
     flags.set(Flags::ZF, result.is_zero());
@@ -197,6 +217,13 @@ mod tests {
             0x8123_4567
         );
         assert_eq!("CF SF", flags.to_string());
+    }
+
+    #[test]
+    fn large_shifts_saturate_to_the_operand_width() {
+        let mut flags = Flags::default();
+        assert_eq!(super::shr(0x80u8, 8, &mut flags), 0);
+        assert_eq!(super::sar(0x80u8, 8, &mut flags), 0xff);
     }
 
     #[test]
