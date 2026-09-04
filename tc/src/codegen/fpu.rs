@@ -164,10 +164,11 @@ impl<'a> CodeGen<'a> {
                 );
                 self.line(self.fpu_set_reg(0, expr));
             }
-            Fisub => {
+            Fiadd | Fisub => {
                 let size = op_size(instr, 0);
+                let operator = if instr.mnemonic() == Fiadd { "+" } else { "-" };
                 let expr = format!(
-                    "{} - {} as i{size} as f64",
+                    "{} {operator} {} as i{size} as f64",
                     self.fpu_get_reg(0),
                     self.get_op(instr, 0)
                 );
