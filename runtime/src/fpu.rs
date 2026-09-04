@@ -229,6 +229,29 @@ impl FPU {
         };
     }
 
+    pub fn save(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        self.store_env(memory, addr);
+        for (index, value) in self.st.iter().enumerate() {
+            memory.write(
+                addr.wrapping_add(28 + index as u32 * 10),
+                F80::from_f64(*value),
+            );
+        }
+        self.control = 0x037f;
+        self.st_top = 8;
+        self.condition = 0;
+        self.cmp = std::cmp::Ordering::Greater;
+    }
+
+    pub fn restore(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.load_env(memory, addr);
+        for (index, value) in self.st.iter_mut().enumerate() {
+            *value = memory
+                .read::<F80>(addr.wrapping_add(28 + index as u32 * 10))
+                .to_f64();
+        }
+    }
+
     pub fn round(&self, val: f64) -> f64 {
         // TODO: rounding modes?
         // This implements default rounding mode of round towards even.
@@ -281,5 +304,26 @@ mod tests {
     #[test]
     fn f80_has_x87_memory_size() {
         assert_eq!(std::mem::size_of::<F80>(), 10);
+    }
+
+    #[test]
+    fn fsave_and_frstor_round_trip_state() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.control = 0x027f;
+        fpu.push(1.25);
+        fpu.push(-2.5);
+        fpu.set_cmp(std::cmp::Ordering::Less);
+        fpu.save(&mut memory, 0x1000);
+
+        assert_eq!(fpu.st_top, 8);
+        assert_eq!(fpu.control, 0x037f);
+        assert_eq!(fpu.condition, 0);
+
+        fpu.restore(&memory, 0x1000);
+        assert_eq!(fpu.control, 0x027f);
+        assert_eq!(fpu.get(0), -2.5);
+        assert_eq!(fpu.get(1), 1.25);
+        assert_eq!(fpu.condition, Status::C0.bits());
     }
 }

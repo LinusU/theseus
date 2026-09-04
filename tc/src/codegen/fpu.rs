@@ -285,6 +285,18 @@ impl<'a> CodeGen<'a> {
                     self.gen_addr(instr)
                 ));
             }
+            Fnsave => {
+                self.line(format!(
+                    "ctx.cpu.fpu.save(&mut ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
+            Frstor => {
+                self.line(format!(
+                    "ctx.cpu.fpu.restore(&ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
 
             // We don't model FPU exceptions, so clearing them is a no-op.
             Fnclex => {}
