@@ -2,6 +2,7 @@ use runtime::Context;
 use zerocopy::FromBytes;
 
 use crate::{
+    Ptr,
     heap::Heap,
     kernel32::{self, HANDLE, lock, teb},
     stub,
@@ -131,6 +132,14 @@ pub const CURRENT_PROCESS_HANDLE: HANDLE = -1i32 as u32;
 #[win32_derive::dllexport]
 pub fn GetCurrentProcess(_ctx: &mut Context) -> HANDLE {
     CURRENT_PROCESS_HANDLE
+}
+
+#[win32_derive::dllexport]
+pub fn GetExitCodeProcess(ctx: &mut Context, hProcess: HANDLE, lpExitCode: Ptr<u32>) -> bool {
+    if hProcess != CURRENT_PROCESS_HANDLE {
+        return false;
+    }
+    lpExitCode.write(&mut ctx.memory, 259).is_some()
 }
 
 #[allow(unused)]
