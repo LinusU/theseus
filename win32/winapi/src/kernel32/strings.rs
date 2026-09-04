@@ -42,6 +42,20 @@ pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
     lpString1.addr
 }
 
+#[win32_derive::dllexport]
+pub fn lstrcmpA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i32 {
+    match ctx
+        .memory
+        .read_str(lpString1.addr)
+        .as_bytes()
+        .cmp(ctx.memory.read_str(lpString2.addr).as_bytes())
+    {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
 fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Vec<u8> {
     if count < 0 {
         ctx.memory.read_str(addr).as_bytes().to_vec()
