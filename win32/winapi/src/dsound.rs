@@ -323,6 +323,11 @@ pub fn ordinal1(ctx: &mut Context, lpGuid: u32, ppDS: u32, pUnkOuter: u32) -> u3
 }
 
 #[win32_derive::dllexport]
+pub fn ordinal2(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> u32 {
+    DirectSoundEnumerateA(ctx, lpCallback, lpContext)
+}
+
+#[win32_derive::dllexport]
 pub fn DirectSoundEnumerateA(_ctx: &mut Context, _lpCallback: u32, _lpContext: u32) -> u32 {
     // Report no devices to enumerate; apps that care use the default device,
     // which DirectSoundCreate always provides.
