@@ -58,6 +58,32 @@ pub struct STARTUPINFOA {
     hStdError: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
+pub struct PROCESS_INFORMATION {
+    pub hProcess: u32,
+    pub hThread: u32,
+    pub dwProcessId: u32,
+    pub dwThreadId: u32,
+}
+
+#[win32_derive::dllexport]
+pub fn CreateProcessA(
+    _ctx: &mut Context,
+    _lpApplicationName: Ptr<u8>,
+    _lpCommandLine: Ptr<u8>,
+    _lpProcessAttributes: Ptr<()>,
+    _lpThreadAttributes: Ptr<()>,
+    _bInheritHandles: bool,
+    _dwCreationFlags: u32,
+    _lpEnvironment: Ptr<()>,
+    _lpCurrentDirectory: Ptr<u8>,
+    _lpStartupInfo: Ptr<STARTUPINFOA>,
+    _lpProcessInformation: Ptr<PROCESS_INFORMATION>,
+) -> bool {
+    false
+}
+
 #[win32_derive::dllexport]
 pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
     let size = ctx.memory.read::<u32>(lpStartupInfo.addr);
