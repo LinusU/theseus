@@ -134,6 +134,51 @@ fn find_string(ctx: &Context, uID: u32) -> Option<&[u8]> {
     unreachable!()
 }
 
+fn ansi_string(bytes: &[u8]) -> Vec<u8> {
+    let utf16: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16_lossy(&utf16)
+        .chars()
+        .map(|ch| {
+            if ch as u32 <= u8::MAX as u32 {
+                ch as u8
+            } else {
+                b'?'
+            }
+        })
+        .collect()
+}
+
+#[win32_derive::dllexport]
+pub fn LoadStringA(
+    ctx: &mut Context,
+    hInstance: HINSTANCE,
+    uID: u32,
+    lpBuffer: Ptr<u8>,
+    cchBufferMax: i32,
+) -> i32 {
+    assert!(hInstance == 0 || hInstance == kernel32::lock().image_base);
+    if cchBufferMax <= 0 || lpBuffer.addr < 0x1000 {
+        return 0;
+    }
+    let Some(bytes) = find_string(ctx, uID) else {
+        return 0;
+    };
+    let bytes = ansi_string(bytes);
+    let copy_len = bytes.len().min(cchBufferMax as usize - 1);
+    let Some(end) = lpBuffer.addr.checked_add(copy_len as u32 + 1) else {
+        return 0;
+    };
+    if end as usize > ctx.memory.bytes.len() {
+        return 0;
+    }
+    ctx.memory[lpBuffer.addr..][..copy_len].copy_from_slice(&bytes[..copy_len]);
+    ctx.memory.write::<u8>(lpBuffer.addr + copy_len as u32, 0);
+    copy_len as i32
+}
+
 #[win32_derive::dllexport]
 pub fn LoadStringW(
     ctx: &mut Context,
@@ -154,4 +199,15 @@ pub fn LoadStringW(
     // TODO: handle case where buf.len() > cchBufferMax
     out[..buf.len()].copy_from_slice(&buf);
     buf.len() as i32 / 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ansi_string;
+
+    #[test]
+    fn ansi_string_decodes_resource_utf16() {
+        assert_eq!(ansi_string(b"A\0B\0"), b"AB");
+        assert_eq!(ansi_string(&[0x00, 0x01]), b"?");
+    }
 }
