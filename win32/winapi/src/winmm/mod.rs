@@ -12,12 +12,15 @@ mod misc;
 pub use misc::*;
 mod mmio;
 pub use mmio::*;
+mod midi;
+pub use midi::*;
 
 #[derive(Default)]
 pub struct State {
     timer: Option<Timer>,
     wave: Option<wave::State>,
     mmio: Option<mmio::State>,
+    midi: Option<midi::State>,
 }
 
 impl State {
@@ -32,6 +35,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     timer: None,
     wave: None,
     mmio: None,
+    midi: None,
 });
 
 pub fn state() -> MutexGuard<'static, State> {
