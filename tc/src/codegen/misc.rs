@@ -146,7 +146,28 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.regs.ecx = cpuid_ecx;");
                 self.line("ctx.cpu.regs.edx = cpuid_edx;");
             }
-            Cmpxchg | Xgetbv | Div => self.todo(instr_name(instr)),
+            Cmpxchg => {
+                let (accumulator, set_accumulator) = match op_size(instr, 0) {
+                    8 => ("ctx.cpu.regs.get_al()", "ctx.cpu.regs.set_al(cmpxchg_old);"),
+                    16 => ("ctx.cpu.regs.get_ax()", "ctx.cpu.regs.set_ax(cmpxchg_old);"),
+                    32 => ("ctx.cpu.regs.eax", "ctx.cpu.regs.eax = cmpxchg_old;"),
+                    size => unreachable!("{size}"),
+                };
+                let old = self.get_op(instr, 0);
+                let source = self.get_op(instr, 1);
+                self.line("{");
+                self.line(format!("let cmpxchg_old = {old};"));
+                self.line(format!(
+                    "sub({accumulator}, cmpxchg_old, &mut ctx.cpu.flags);"
+                ));
+                self.line("if ctx.cpu.flags.contains(Flags::ZF) {");
+                self.line(self.set_op(instr, 0, source));
+                self.line("} else {");
+                self.line(set_accumulator);
+                self.line("}");
+                self.line("}");
+            }
+            Xgetbv | Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),

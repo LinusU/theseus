@@ -1147,6 +1147,30 @@ mod tests {
         );
         assert!(codegen.buf.contains("ctx.cpu.regs.edx = cpuid_edx;"));
     }
+
+    #[test]
+    fn codegen_handles_cmpxchg() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x0f, 0xb1, 0xc1];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(codegen.buf.contains("let cmpxchg_old = ctx.cpu.regs.ecx;"));
+        assert!(
+            codegen
+                .buf
+                .contains("sub(ctx.cpu.regs.eax, cmpxchg_old, &mut ctx.cpu.flags);")
+        );
+        assert!(codegen.buf.contains("ctx.cpu.regs.ecx = ctx.cpu.regs.eax;"));
+        assert!(codegen.buf.contains("ctx.cpu.regs.eax = cmpxchg_old;"));
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
