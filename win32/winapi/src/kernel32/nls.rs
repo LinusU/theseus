@@ -7,6 +7,11 @@ pub fn GetACP(_ctx: &mut Context) -> u32 {
     1252 // windows-1252
 }
 
+#[win32_derive::dllexport]
+pub fn GetSystemDefaultLangID(_ctx: &mut Context) -> u16 {
+    0x0409
+}
+
 #[repr(C)]
 #[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct CPINFO {
