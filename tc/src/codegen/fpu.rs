@@ -273,6 +273,12 @@ impl<'a> CodeGen<'a> {
                 assert_eq!(instr.op_count(), 1);
                 self.line(self.set_op(instr, 0, "ctx.cpu.fpu.status()".into()));
             }
+            Fnstenv => {
+                self.line(format!(
+                    "ctx.cpu.fpu.store_env(&mut ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
 
             // We don't model FPU exceptions, so clearing them is a no-op.
             Fnclex => {}

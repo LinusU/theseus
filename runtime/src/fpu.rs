@@ -186,6 +186,35 @@ impl FPU {
         self.condition | (self.st_top as u16 & 0b111) << 11
     }
 
+    fn tag_word(&self) -> u16 {
+        let mut tags = 0xffff;
+        let active = 8 - self.st_top;
+        for logical in 0..active {
+            let physical = (self.st_top + logical) & 7;
+            let value = self.st[physical];
+            let tag = if value == 0.0 {
+                1
+            } else if value.is_nan() || value.is_infinite() {
+                2
+            } else {
+                0
+            };
+            tags = (tags & !(3 << (physical * 2))) | (tag << (physical * 2));
+        }
+        tags
+    }
+
+    pub fn store_env(&self, memory: &mut crate::Memory<'_>, addr: u32) {
+        memory.write(addr, self.control);
+        memory.write(addr.wrapping_add(4), self.status());
+        memory.write(addr.wrapping_add(8), self.tag_word());
+        memory.write(addr.wrapping_add(12), 0u32);
+        memory.write(addr.wrapping_add(16), 0u16);
+        memory.write(addr.wrapping_add(18), 0u16);
+        memory.write(addr.wrapping_add(20), 0u32);
+        memory.write(addr.wrapping_add(24), 0u16);
+    }
+
     pub fn round(&self, val: f64) -> f64 {
         // TODO: rounding modes?
         // This implements default rounding mode of round towards even.
