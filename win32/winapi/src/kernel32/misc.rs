@@ -241,6 +241,14 @@ pub fn UnhandledExceptionFilter(_ctx: &mut Context, _ExceptionInfo: Ptr<()>) -> 
 }
 
 #[win32_derive::dllexport]
+pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, lpTopLevelExceptionFilter: Ptr<()>) -> u32 {
+    let mut state = lock();
+    let previous = state.unhandled_exception_filter;
+    state.unhandled_exception_filter = lpTopLevelExceptionFilter.addr;
+    previous
+}
+
+#[win32_derive::dllexport]
 pub fn DebugBreak(_ctx: &mut Context) {}
 
 #[win32_derive::dllexport]
