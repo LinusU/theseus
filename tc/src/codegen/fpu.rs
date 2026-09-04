@@ -174,6 +174,16 @@ impl<'a> CodeGen<'a> {
                 );
                 self.line(self.fpu_set_reg(0, expr));
             }
+            Fidiv | Fidivr => {
+                let size = op_size(instr, 0);
+                let operand = format!("{} as i{size} as f64", self.get_op(instr, 0));
+                let expr = if instr.mnemonic() == Fidiv {
+                    format!("{} / {operand}", self.fpu_get_reg(0))
+                } else {
+                    format!("{operand} / {}", self.fpu_get_reg(0))
+                };
+                self.line(self.fpu_set_reg(0, expr));
+            }
 
             Fprem => {
                 self.line(self.fpu_set_reg(

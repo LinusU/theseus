@@ -731,6 +731,34 @@ mod tests {
             "ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) + ctx.memory.read::<u32>(ctx.cpu.regs.eax) as i32 as f64);"
         ));
     }
+
+    #[test]
+    fn codegen_handles_fidiv_and_fidivr() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0xda, 0x30][..],
+                "ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) / ctx.memory.read::<u32>(ctx.cpu.regs.eax) as i32 as f64);",
+            ),
+            (
+                &[0xda, 0x38][..],
+                "ctx.cpu.fpu.set(0, ctx.memory.read::<u32>(ctx.cpu.regs.eax) as i32 as f64 / ctx.cpu.fpu.get(0));",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
