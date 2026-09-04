@@ -535,6 +535,25 @@ pub fn GetClientRect(ctx: &mut Context, _hWnd: HWND, lpRect: Ptr<RECT>) -> bool 
 }
 
 #[win32_derive::dllexport]
+pub fn GetWindowRect(ctx: &mut Context, hWnd: HWND, lpRect: Ptr<RECT>) -> bool {
+    let rect = {
+        let window = state().window.borrow();
+        let Some(window) = window.as_ref() else {
+            return false;
+        };
+        let window = window.borrow();
+        if hWnd != window.hwnd {
+            return false;
+        }
+        window.rect().add(POINT {
+            x: window.x,
+            y: window.y,
+        })
+    };
+    lpRect.write(&mut ctx.memory, rect).is_some()
+}
+
+#[win32_derive::dllexport]
 pub fn SetWindowPos(
     _ctx: &mut Context,
     _hWnd: HWND,
