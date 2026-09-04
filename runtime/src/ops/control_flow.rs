@@ -62,6 +62,34 @@ impl Context {
         from
     }
 
+    pub fn jo(&mut self, from: Cont, x: Cont) -> Cont {
+        if self.cpu.flags.contains(Flags::OF) {
+            return x;
+        }
+        from
+    }
+
+    pub fn jno(&mut self, from: Cont, x: Cont) -> Cont {
+        if !self.cpu.flags.contains(Flags::OF) {
+            return x;
+        }
+        from
+    }
+
+    pub fn jp(&mut self, from: Cont, x: Cont) -> Cont {
+        if self.cpu.flags.contains(Flags::PF) {
+            return x;
+        }
+        from
+    }
+
+    pub fn jnp(&mut self, from: Cont, x: Cont) -> Cont {
+        if !self.cpu.flags.contains(Flags::PF) {
+            return x;
+        }
+        from
+    }
+
     pub fn ja(&mut self, from: Cont, x: Cont) -> Cont {
         if !self.cpu.flags.contains(Flags::CF) && !self.cpu.flags.contains(Flags::ZF) {
             return x;
@@ -175,5 +203,50 @@ impl Context {
         } else {
             from
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BlockCache, CPU, Memory};
+
+    fn from(_: &mut Context) -> Cont {
+        Cont(from)
+    }
+
+    fn taken(_: &mut Context) -> Cont {
+        Cont(taken)
+    }
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x2000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [from; 4],
+        }
+    }
+
+    #[test]
+    fn overflow_and_parity_jumps_follow_flags() {
+        let mut ctx = context();
+        let from = Cont(from);
+        let taken = Cont(taken);
+
+        ctx.cpu.flags = Flags::OF | Flags::PF;
+        assert_eq!(ctx.jo(from, taken).0 as usize, taken.0 as usize);
+        assert_eq!(ctx.jno(from, taken).0 as usize, from.0 as usize);
+        assert_eq!(ctx.jp(from, taken).0 as usize, taken.0 as usize);
+        assert_eq!(ctx.jnp(from, taken).0 as usize, from.0 as usize);
+
+        ctx.cpu.flags = Flags::empty();
+        assert_eq!(ctx.jo(from, taken).0 as usize, from.0 as usize);
+        assert_eq!(ctx.jno(from, taken).0 as usize, taken.0 as usize);
+        assert_eq!(ctx.jp(from, taken).0 as usize, from.0 as usize);
+        assert_eq!(ctx.jnp(from, taken).0 as usize, taken.0 as usize);
     }
 }
