@@ -4,7 +4,7 @@ use runtime::Context;
 
 use crate::{
     HANDLE, POINT, Ptr,
-    gdi32::{self, Bitmap, COLORREF, Font, HBITMAP, HGDIOBJ, HPEN, Pen, State},
+    gdi32::{self, Bitmap, Brush, COLORREF, Font, HBITMAP, HBRUSH, HGDIOBJ, HPEN, Pen, State},
     stub,
 };
 
@@ -26,6 +26,7 @@ pub struct DC {
     /// Store the HBITMAP as well as the Bitmap itself so that when it is switched via SelectObject we can return it.
     pub bitmap: (HBITMAP, Arc<Bitmap>),
     pub pen: (HPEN, Pen),
+    pub brush: (HBRUSH, Brush),
     pub font: (HGDIOBJ, Font),
     rop2: R2,
     bk_mode: i32,
@@ -46,6 +47,7 @@ impl DC {
         DC {
             bitmap: (hbitmap, bitmap),
             pen: (HPEN::null(), Pen(COLORREF::default())),
+            brush: (HBRUSH::null(), Brush(COLORREF::from_rgb(0xff, 0xff, 0xff))),
             font: (HGDIOBJ::null(), Font::default()),
             rop2: R2::COPYPEN,
             bk_mode: 2,
@@ -268,6 +270,45 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
                 );
             }
         }
+    }
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn Rectangle(
+    ctx: &mut Context,
+    hdc: HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+) -> bool {
+    let mut state = gdi32::lock();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return false;
+    };
+    let bitmap = dc.bitmap.1.clone();
+    if !bitmap.is_simple() {
+        return false;
+    }
+    let (left, right) = (left.min(right), left.max(right));
+    let (top, bottom) = (top.min(bottom), top.max(bottom));
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    if width == 0 || height == 0 {
+        return true;
+    }
+    let fill = dc.brush.1.0.to_pixel();
+    let border = dc.pen.1.0.to_pixel();
+    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    fill_pixels(pixels, &bitmap, left, top, width, height, fill);
+    for x in left..right {
+        draw_pixel(pixels, &bitmap, x, top, border);
+        draw_pixel(pixels, &bitmap, x, bottom - 1, border);
+    }
+    for y in top..bottom {
+        draw_pixel(pixels, &bitmap, left, y, border);
+        draw_pixel(pixels, &bitmap, right - 1, y, border);
     }
     true
 }

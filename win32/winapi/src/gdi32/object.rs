@@ -171,11 +171,15 @@ pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
             dc.pen = (h, pen.clone());
             prev
         }
+        Object::Brush(brush) => {
+            let prev = dc.brush.0;
+            dc.brush = (h, brush.clone());
+            prev
+        }
         Object::Font(font) => {
             let prev = dc.font.0;
             dc.font = (h, font.clone());
             prev
         }
-        _ => todo!(),
     }
 }
