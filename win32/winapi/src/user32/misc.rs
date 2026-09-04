@@ -51,6 +51,60 @@ pub fn EnumDisplaySettingsA(
 }
 
 #[win32_derive::dllexport]
+pub fn ChangeDisplaySettingsA(ctx: &mut Context, lpDevMode: Ptr<u8>, _dwFlags: u32) -> i32 {
+    const DISP_CHANGE_SUCCESSFUL: i32 = 0;
+    const DISP_CHANGE_BADMODE: i32 = -2;
+    const DM_BITSPERPEL: u32 = 0x0004_0000;
+    const DM_PELSWIDTH: u32 = 0x0008_0000;
+    const DM_PELSHEIGHT: u32 = 0x0010_0000;
+    const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
+    const SUPPORTED_FIELDS: u32 =
+        DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+
+    if lpDevMode.addr == 0 {
+        return DISP_CHANGE_SUCCESSFUL;
+    }
+    if lpDevMode.addr < 0x1000 || ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94 {
+        return DISP_CHANGE_BADMODE;
+    }
+
+    let fields = ctx.memory.read::<u32>(lpDevMode.addr + 0x28);
+    if fields & !SUPPORTED_FIELDS != 0 {
+        return DISP_CHANGE_BADMODE;
+    }
+
+    let bits_per_pixel = if fields & DM_BITSPERPEL != 0 {
+        ctx.memory.read::<u32>(lpDevMode.addr + 0x68)
+    } else {
+        32
+    };
+    let width = if fields & DM_PELSWIDTH != 0 {
+        ctx.memory.read::<u32>(lpDevMode.addr + 0x6c)
+    } else {
+        640
+    };
+    let height = if fields & DM_PELSHEIGHT != 0 {
+        ctx.memory.read::<u32>(lpDevMode.addr + 0x70)
+    } else {
+        480
+    };
+    let frequency = if fields & DM_DISPLAYFREQUENCY != 0 {
+        ctx.memory.read::<u32>(lpDevMode.addr + 0x78)
+    } else {
+        60
+    };
+
+    if width != 640 || height != 480 || !matches!(bits_per_pixel, 8 | 16 | 32) || frequency != 60 {
+        return DISP_CHANGE_BADMODE;
+    }
+
+    if let Some(window) = state().window.borrow().as_ref() {
+        window.borrow_mut().resize(ctx, width, height);
+    }
+    DISP_CHANGE_SUCCESSFUL
+}
+
+#[win32_derive::dllexport]
 pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
     if bShow { stub!(1) } else { stub!(0) }
 }
