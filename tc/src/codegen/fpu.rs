@@ -93,6 +93,7 @@ impl<'a> CodeGen<'a> {
             Fld1 => self.line("ctx.cpu.fpu.push(1.0);"),
             Fldl2e => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG2_E);"),
             Fldpi => self.line("ctx.cpu.fpu.push(std::f64::consts::PI);"),
+            Fldlg2 => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG10_2);"),
 
             Fst | Fstp => {
                 self.line(self.fpu_set_op(instr, 0, self.fpu_get_reg(0)));
