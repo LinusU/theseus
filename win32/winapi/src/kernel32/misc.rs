@@ -277,6 +277,11 @@ pub fn IsBadWritePtr(ctx: &mut Context, lp: Ptr<()>, ucb: u32) -> bool {
 }
 
 #[win32_derive::dllexport]
+pub fn IsBadCodePtr(ctx: &mut Context, lp: Ptr<()>) -> bool {
+    IsBadReadPtr(ctx, lp, 1)
+}
+
+#[win32_derive::dllexport]
 pub fn VirtualAlloc(
     _ctx: &mut Context,
     lpAddress: Ptr<()>,
