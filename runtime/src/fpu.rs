@@ -2,6 +2,66 @@
 
 use bitflags::bitflags;
 
+#[repr(C, packed)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    zerocopy::FromBytes,
+    zerocopy::Immutable,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+)]
+pub struct F80 {
+    pub significand: u64,
+    pub sign_exponent: u16,
+}
+
+impl F80 {
+    pub fn to_f64(self) -> f64 {
+        let significand = self.significand;
+        let sign_exponent = self.sign_exponent;
+        let sign = if sign_exponent & 0x8000 != 0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let exponent = sign_exponent & 0x7fff;
+        let value = match exponent {
+            0..=0x7ffe => {
+                let exponent = exponent.max(1) as i32 - 16383;
+                (significand as f64) * 2f64.powi(-63) * 2f64.powi(exponent)
+            }
+            0x7fff if significand == 1 << 63 => f64::INFINITY,
+            0x7fff => f64::NAN,
+            _ => unreachable!(),
+        };
+        value.copysign(sign)
+    }
+
+    pub fn from_f64(value: f64) -> Self {
+        let bits = value.to_bits();
+        let sign = ((bits >> 63) as u16) << 15;
+        let exponent = ((bits >> 52) & 0x7ff) as u16;
+        let fraction = bits & ((1u64 << 52) - 1);
+        let (exponent, significand) = match exponent {
+            0 if fraction == 0 => (0, 0),
+            0 => {
+                let highest_bit = 63 - fraction.leading_zeros();
+                (15309 + highest_bit as u16, fraction << (63 - highest_bit))
+            }
+            0x7ff if fraction == 0 => (0x7fff, 1 << 63),
+            0x7ff => (0x7fff, (1 << 63) | (fraction << 11)),
+            exponent => (exponent + 15360, (1 << 63) | (fraction << 11)),
+        };
+        Self {
+            significand,
+            sign_exponent: sign | exponent,
+        }
+    }
+}
+
 bitflags! {
     pub struct Status: u16 {
         const C3 = 1 << 14;
@@ -107,5 +167,36 @@ impl FPU {
         // TODO: rounding modes?
         // This implements default rounding mode of round towards even.
         val.round_ties_even()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::F80;
+
+    #[test]
+    fn f80_round_trips_f64_values() {
+        for value in [
+            0.0,
+            -0.0,
+            1.0,
+            -2.5,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert_eq!(F80::from_f64(value).to_f64().to_bits(), value.to_bits());
+        }
+    }
+
+    #[test]
+    fn f80_preserves_nan() {
+        assert!(F80::from_f64(f64::NAN).to_f64().is_nan());
+    }
+
+    #[test]
+    fn f80_has_x87_memory_size() {
+        assert_eq!(std::mem::size_of::<F80>(), 10);
     }
 }

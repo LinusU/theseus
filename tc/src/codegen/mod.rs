@@ -184,6 +184,7 @@ pub fn mem_size(instr: &iced_x86::Instruction) -> usize {
         UInt64 | Int64 => 64,
         Float32 => 32,
         Float64 => 64,
+        Float80 => 80,
         Packed32_UInt8 => 32,
         Packed64_Int8 | Packed64_Int16 => 64,
         DwordOffset => 32, // e.g. `call dword ptr [...]`
@@ -559,6 +560,46 @@ regs.esp = {stack_pointer:#x};
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mem_size_handles_float80() {
+        let bytes = [0xdb, 0x28];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = decoder.decode();
+        assert_eq!(instr.memory_size(), iced_x86::MemorySize::Float80);
+        assert_eq!(super::mem_size(&instr), 80);
+    }
+
+    #[test]
+    fn codegen_handles_float80_load_and_store() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                [0xdb, 0x28],
+                "ctx.memory.read::<F80>(ctx.cpu.regs.eax).to_f64()",
+            ),
+            (
+                [0xdb, 0x38],
+                "ctx.memory.write::<F80>(ctx.cpu.regs.eax, F80::from_f64(ctx.cpu.fpu.get(0)))",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
     }
 }
 

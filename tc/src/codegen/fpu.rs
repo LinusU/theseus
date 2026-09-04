@@ -17,22 +17,28 @@ fn reg_to_index(register: iced_x86::Register) -> usize {
 
 impl<'a> CodeGen<'a> {
     fn fpu_get_mem(&self, instr: &iced_x86::Instruction) -> String {
-        let size = mem_size(instr);
-        if size != 64 {
-            format!(
-                "{} as f64",
-                get_mem(format!("f{size}"), self.gen_addr(instr))
-            )
+        let addr = self.gen_addr(instr);
+        if instr.memory_size() == iced_x86::MemorySize::Float80 {
+            format!("ctx.memory.read::<F80>({addr}).to_f64()")
         } else {
-            get_mem(format!("f{}", mem_size(instr)), self.gen_addr(instr))
+            let size = mem_size(instr);
+            if size != 64 {
+                format!("{} as f64", get_mem(format!("f{size}"), addr))
+            } else {
+                get_mem(format!("f{size}"), addr)
+            }
         }
     }
 
     fn fpu_set_mem(&self, instr: &iced_x86::Instruction, expr: String) -> String {
         // TODO: is this only needed by fst?
         let addr = self.gen_addr(instr);
-        let size = mem_size(instr);
-        format!("ctx.memory.write::<f{size}>({addr}, {expr});")
+        if instr.memory_size() == iced_x86::MemorySize::Float80 {
+            format!("ctx.memory.write::<F80>({addr}, F80::from_f64({expr}));")
+        } else {
+            let size = mem_size(instr);
+            format!("ctx.memory.write::<f{size}>({addr}, {expr});")
+        }
     }
 
     fn fpu_get_reg(&self, index: usize) -> String {
@@ -57,7 +63,7 @@ impl<'a> CodeGen<'a> {
         match instr.op_kind(n) {
             Memory => {
                 let size = mem_size(instr);
-                let expr = if size != 64 {
+                let expr = if size != 64 && size != 80 {
                     format!("{expr} as f{size}")
                 } else {
                     expr
