@@ -20,6 +20,7 @@ pub struct State {
     pub next_thread_id: u32,
     pub next_tls_index: u32,
     pub unhandled_exception_filter: u32,
+    pub console_ctrl_handlers: Vec<u32>,
     pub dlls: Box<dyn kernel32::DLLs>,
     pub objects: Handles<Object>,
 }
@@ -39,6 +40,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         next_thread_id: 2,
         next_tls_index: 0,
         unhandled_exception_filter: 0,
+        console_ctrl_handlers: Vec::new(),
         dlls: Box::new(kernel32::Exports::default()),
         objects: Handles::new(0x1000),
     });

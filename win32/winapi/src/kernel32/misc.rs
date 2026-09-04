@@ -249,6 +249,23 @@ pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, lpTopLevelExceptionFilter
 }
 
 #[win32_derive::dllexport]
+pub fn SetConsoleCtrlHandler(_ctx: &mut Context, HandlerRoutine: Ptr<()>, Add: bool) -> bool {
+    let mut state = lock();
+    if Add {
+        if HandlerRoutine.addr != 0 && !state.console_ctrl_handlers.contains(&HandlerRoutine.addr) {
+            state.console_ctrl_handlers.push(HandlerRoutine.addr);
+        }
+    } else if HandlerRoutine.addr == 0 {
+        state.console_ctrl_handlers.clear();
+    } else {
+        state
+            .console_ctrl_handlers
+            .retain(|handler| *handler != HandlerRoutine.addr);
+    }
+    true
+}
+
+#[win32_derive::dllexport]
 pub fn DebugBreak(_ctx: &mut Context) {}
 
 #[win32_derive::dllexport]
