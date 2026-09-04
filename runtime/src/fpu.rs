@@ -164,6 +164,15 @@ impl FPU {
         };
     }
 
+    pub fn compare(&mut self, left: f64, right: f64) {
+        let Some(cmp) = left.partial_cmp(&right) else {
+            self.cmp = std::cmp::Ordering::Equal;
+            self.condition = (Status::C0 | Status::C2 | Status::C3).bits();
+            return;
+        };
+        self.set_cmp(cmp);
+    }
+
     pub fn examine(&mut self) {
         let value = self.get(0);
         let mut condition = if value.is_nan() {
@@ -291,6 +300,15 @@ mod tests {
             fpu.examine();
             assert_eq!(fpu.status() & condition_mask, expected.bits());
         }
+    }
+
+    #[test]
+    fn fcom_marks_nan_as_unordered() {
+        let mut fpu = FPU::default();
+        fpu.compare(f64::NAN, 1.0);
+
+        let unordered = (Status::C0 | Status::C2 | Status::C3).bits();
+        assert_eq!(fpu.status() & unordered, unordered);
     }
 
     #[test]

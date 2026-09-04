@@ -922,7 +922,7 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.cpu.fpu.set_cmp(ctx.cpu.fpu.get(0).total_cmp(&0.0));")
+                .contains("ctx.cpu.fpu.compare(ctx.cpu.fpu.get(0), 0.0);")
         );
     }
 
@@ -981,9 +981,9 @@ mod tests {
 
         codegen.gen_instr(&instr).unwrap();
         assert!(
-            codegen.buf.contains(
-                "ctx.cpu.fpu.set_cmp(ctx.cpu.fpu.get(0).total_cmp(&ctx.cpu.fpu.get(1)));"
-            )
+            codegen
+                .buf
+                .contains("ctx.cpu.fpu.compare(ctx.cpu.fpu.get(0), ctx.cpu.fpu.get(1));")
         );
         assert_eq!(codegen.buf.matches("ctx.cpu.fpu.pop();").count(), 2);
     }
