@@ -18,6 +18,37 @@ pub fn SetLastError(ctx: &mut Context, error: u32) {
     teb_mut(ctx).LastErrorValue = error;
 }
 
+#[repr(C)]
+#[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
+pub struct SYSTEM_INFO {
+    pub dwOemId: u32,
+    pub dwPageSize: u32,
+    pub lpMinimumApplicationAddress: u32,
+    pub lpMaximumApplicationAddress: u32,
+    pub dwActiveProcessorMask: u32,
+    pub dwNumberOfProcessors: u32,
+    pub dwProcessorType: u32,
+    pub dwAllocationGranularity: u32,
+    pub wProcessorLevel: u16,
+    pub wProcessorRevision: u16,
+}
+
+#[win32_derive::dllexport]
+pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
+    let info = SYSTEM_INFO {
+        dwPageSize: 0x1000,
+        lpMinimumApplicationAddress: 0x10000,
+        lpMaximumApplicationAddress: 0x7fff0000,
+        dwActiveProcessorMask: 1,
+        dwNumberOfProcessors: 1,
+        dwProcessorType: 586,
+        dwAllocationGranularity: 0x10000,
+        wProcessorLevel: 6,
+        ..Default::default()
+    };
+    lpSystemInfo.write(&mut ctx.memory, info).unwrap();
+}
+
 #[win32_derive::dllexport]
 pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -> bool {
     let name = b"THESEUS";
@@ -306,6 +337,16 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
 pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
     let buf = &ctx.memory[lpString.addr..];
     buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap() as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SYSTEM_INFO;
+
+    #[test]
+    fn system_info_matches_win32_abi() {
+        assert_eq!(std::mem::size_of::<SYSTEM_INFO>(), 36);
+    }
 }
 
 #[win32_derive::dllexport]
