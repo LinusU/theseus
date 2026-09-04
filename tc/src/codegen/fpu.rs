@@ -287,6 +287,11 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.fpu.pop();");
                 self.line("ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0).atan2(t));");
             }
+            Fyl2x => {
+                self.line("let t = ctx.cpu.fpu.get(1) * ctx.cpu.fpu.get(0).log2();");
+                self.line("ctx.cpu.fpu.pop();");
+                self.line("ctx.cpu.fpu.set(0, t);");
+            }
             _ => return false,
         }
         true
