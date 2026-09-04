@@ -481,12 +481,38 @@ pub fn PostMessageA(
 }
 
 #[win32_derive::dllexport]
-pub fn SendMessageW(
-    _ctx: &mut Context,
-    _hWnd: HWND,
-    _Msg: u32,
-    _wParam: WPARAM,
-    _lParam: LPARAM,
+pub fn SendMessageA(
+    ctx: &mut Context,
+    hWnd: HWND,
+    Msg: u32,
+    wParam: WPARAM,
+    lParam: LPARAM,
 ) -> u32 {
-    todo!()
+    SendMessageW(ctx, hWnd, Msg, wParam, lParam)
+}
+
+#[win32_derive::dllexport]
+pub fn SendMessageW(
+    ctx: &mut Context,
+    hWnd: HWND,
+    Msg: u32,
+    wParam: WPARAM,
+    lParam: LPARAM,
+) -> u32 {
+    let wndproc = {
+        let window = state().window.borrow();
+        let Some(window) = window.as_ref() else {
+            return 0;
+        };
+        if window.borrow().hwnd != hWnd {
+            return 0;
+        }
+        let wndclass = state().wndclass.borrow();
+        let Some(wndclass) = wndclass.as_ref() else {
+            return 0;
+        };
+        wndclass.wndproc
+    };
+    ctx.call32_x86(wndproc, vec![hWnd.to_raw(), Msg, wParam, lParam]);
+    ctx.cpu.regs.eax
 }
