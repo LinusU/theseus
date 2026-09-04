@@ -266,6 +266,23 @@ pub fn ShowWindow(
 }
 
 #[win32_derive::dllexport]
+pub fn SetForegroundWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    if window.borrow().hwnd != hWnd {
+        return false;
+    }
+
+    use super::message::{WM, post_message};
+    post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
+    post_message(hWnd, WM::ACTIVATE as u32, 1, 0);
+    post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
+    true
+}
+
+#[win32_derive::dllexport]
 pub fn MoveWindow(
     ctx: &mut Context,
     _hWnd: HWND,
