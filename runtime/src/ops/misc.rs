@@ -105,6 +105,30 @@ impl Context {
         (self.cpu.flags.contains(Flags::CF) || self.cpu.flags.contains(Flags::ZF)) as u8
     }
 
+    pub fn seto(self: &Context) -> u8 {
+        self.cpu.flags.contains(Flags::OF) as u8
+    }
+
+    pub fn setno(self: &Context) -> u8 {
+        (!self.cpu.flags.contains(Flags::OF)) as u8
+    }
+
+    pub fn sets(self: &Context) -> u8 {
+        self.cpu.flags.contains(Flags::SF) as u8
+    }
+
+    pub fn setns(self: &Context) -> u8 {
+        (!self.cpu.flags.contains(Flags::SF)) as u8
+    }
+
+    pub fn setp(self: &Context) -> u8 {
+        self.cpu.flags.contains(Flags::PF) as u8
+    }
+
+    pub fn setnp(self: &Context) -> u8 {
+        (!self.cpu.flags.contains(Flags::PF)) as u8
+    }
+
     pub fn sti(&mut self) {
         // TODO: self.cpu.flags.insert(Flags::IF);
     }

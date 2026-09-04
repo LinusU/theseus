@@ -25,7 +25,8 @@ impl<'a> CodeGen<'a> {
             Popad => self.line("ctx.popad();"),
             Mov => self.line(self.set_op(instr, 0, self.get_op(instr, 1))),
 
-            Sete | Setne | Setg | Setge | Setl | Setle | Seta | Setae | Setb | Setbe => {
+            Sete | Setne | Setg | Setge | Setl | Setle | Seta | Setae | Setb | Setbe | Seto
+            | Setno | Sets | Setns | Setp | Setnp => {
                 self.line(self.set_op(instr, 0, format!("ctx.{}()", instr_name(instr))))
             }
 
