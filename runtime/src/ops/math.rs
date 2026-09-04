@@ -68,6 +68,7 @@ pub fn or<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
 pub fn neg<I: Int>(x: I, flags: &mut Flags) -> I {
     let (result, of) = I::zero().overflowing_sub(&x);
     flags.set(Flags::ZF, result.is_zero());
+    flags.set(Flags::SF, result.high_bit().is_one());
     flags.set(Flags::CF, !result.is_zero());
     flags.set(Flags::OF, of);
     flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
@@ -197,5 +198,12 @@ mod tests {
         let (result, flags) = sbb8(0x01, 0x00, true);
         assert_eq!(result, 0x00);
         assert_eq!(flags.to_string(), "PF ZF");
+    }
+
+    #[test]
+    fn neg_sets_the_sign_flag() {
+        let mut flags = Flags::default();
+        assert_eq!(neg(1u8, &mut flags), 0xff);
+        assert!(flags.contains(Flags::SF));
     }
 }
