@@ -218,8 +218,13 @@ impl FPU {
     pub fn load_env(&mut self, memory: &crate::Memory<'_>, addr: u32) {
         self.control = memory.read(addr);
         let status: u16 = memory.read(addr.wrapping_add(4));
+        let tag: u16 = memory.read(addr.wrapping_add(8));
         self.condition = status & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits();
-        self.st_top = ((status >> 11) & 0b111) as usize;
+        self.st_top = if tag == u16::MAX {
+            8
+        } else {
+            ((status >> 11) & 0b111) as usize
+        };
         self.cmp = if self.condition & Status::C3.bits() != 0 {
             std::cmp::Ordering::Equal
         } else if self.condition & Status::C0.bits() != 0 {
@@ -341,5 +346,15 @@ mod tests {
         assert_eq!(fpu.get(0), -2.5);
         assert_eq!(fpu.get(1), 1.25);
         assert_eq!(fpu.condition, Status::C0.bits());
+    }
+
+    #[test]
+    fn frstor_preserves_an_empty_stack() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.save(&mut memory, 0x1000);
+        fpu.restore(&memory, 0x1000);
+
+        assert_eq!(fpu.st_top, 8);
     }
 }
