@@ -5,7 +5,6 @@ use crate::{
     Ptr,
     heap::Heap,
     kernel32::{self, HANDLE, lock, teb},
-    stub,
 };
 
 #[win32_derive::dllexport]
@@ -160,10 +159,27 @@ pub fn TerminateProcess(_ctx: &mut Context, _hProcess: HANDLE, _uExitCode: u32) 
 }
 
 #[win32_derive::dllexport]
+pub fn GetPriorityClass(_ctx: &mut Context, hProcess: HANDLE) -> u32 {
+    if hProcess != CURRENT_PROCESS_HANDLE {
+        return 0;
+    }
+    lock().process_priority_class
+}
+
+#[win32_derive::dllexport]
 pub fn SetPriorityClass(
     _ctx: &mut Context,
-    _hProcess: HANDLE,
-    _dwPriorityClass: u32, /* PROCESS_CREATION_FLAGS */
+    hProcess: HANDLE,
+    dwPriorityClass: u32, /* PROCESS_CREATION_FLAGS */
 ) -> bool {
-    stub!(true)
+    if hProcess != CURRENT_PROCESS_HANDLE
+        || !matches!(
+            dwPriorityClass,
+            0x20 | 0x40 | 0x80 | 0x100 | 0x4000 | 0x8000
+        )
+    {
+        return false;
+    }
+    lock().process_priority_class = dwPriorityClass;
+    true
 }

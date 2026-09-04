@@ -22,6 +22,7 @@ pub struct State {
     pub unhandled_exception_filter: u32,
     pub console_ctrl_handlers: Vec<u32>,
     pub thread_priorities: HashMap<HANDLE, i32>,
+    pub process_priority_class: u32,
     pub dlls: Box<dyn kernel32::DLLs>,
     pub objects: Handles<Object>,
 }
@@ -43,6 +44,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         unhandled_exception_filter: 0,
         console_ctrl_handlers: Vec::new(),
         thread_priorities: HashMap::new(),
+        process_priority_class: 0x20,
         dlls: Box::new(kernel32::Exports::default()),
         objects: Handles::new(0x1000),
     });
