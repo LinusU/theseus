@@ -205,6 +205,11 @@ impl<'a> CodeGen<'a> {
                     ),
                 ));
             }
+            Frndint => {
+                self.line(
+                    self.fpu_set_reg(0, format!("ctx.cpu.fpu.round({})", self.fpu_get_reg(0))),
+                );
+            }
             Fabs => {
                 self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
             }
