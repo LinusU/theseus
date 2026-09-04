@@ -189,6 +189,14 @@ pub fn CreateWindowExW(
 }
 
 #[win32_derive::dllexport]
+pub fn IsWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    let window = state().window.borrow();
+    window
+        .as_ref()
+        .is_some_and(|window| window.borrow().hwnd == hWnd)
+}
+
+#[win32_derive::dllexport]
 pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
     const GWL_STYLE: i32 = -16;
     const GWL_EXSTYLE: i32 = -20;
