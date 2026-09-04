@@ -57,6 +57,19 @@ pub fn rdtsc() -> u64 {
         .as_nanos() as u64
 }
 
+pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
+    match (leaf, subleaf) {
+        (0, 0) => (1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69),
+        (1, 0) => (
+            0x0000_0633,
+            0,
+            0,
+            (1 << 0) | (1 << 4) | (1 << 8) | (1 << 23),
+        ),
+        _ => (0, 0, 0, 0),
+    }
+}
+
 pub type ContFn = fn(&mut Context) -> Cont;
 
 #[derive(Clone, Copy)]
@@ -126,4 +139,25 @@ impl Context {
 /// Combine a seg:ofs address into a single flat u32 address.
 pub const fn segofs(seg: u16, off: u16) -> u32 {
     ((seg as u32) << 4) + (off as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cpuid;
+
+    #[test]
+    fn cpuid_reports_the_supported_basic_leaves() {
+        assert_eq!(cpuid(0, 0), (1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69));
+        assert_eq!(
+            cpuid(1, 0),
+            (
+                0x0000_0633,
+                0,
+                0,
+                (1 << 0) | (1 << 4) | (1 << 8) | (1 << 23)
+            )
+        );
+        assert_eq!(cpuid(1, 1), (0, 0, 0, 0));
+        assert_eq!(cpuid(0x8000_0000, 0), (0, 0, 0, 0));
+    }
 }
