@@ -213,6 +213,30 @@ pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
 }
 
 #[win32_derive::dllexport]
+pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: i32) -> i32 {
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return 0;
+    };
+    let mut window = window.borrow_mut();
+    if hWnd != window.hwnd {
+        return 0;
+    }
+
+    match nIndex {
+        GWL_STYLE => std::mem::replace(&mut window.style, dwNewLong as u32) as i32,
+        GWL_EXSTYLE => std::mem::replace(&mut window.ex_style, dwNewLong as u32) as i32,
+        _ => {
+            log::warn!("SetWindowLongA: unsupported index {nIndex}");
+            0
+        }
+    }
+}
+
+#[win32_derive::dllexport]
 pub fn DestroyWindow(_ctx: &mut Context, _hWnd: HWND) -> bool {
     stub!(true)
 }
