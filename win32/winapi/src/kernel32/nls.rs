@@ -12,6 +12,12 @@ pub fn GetSystemDefaultLangID(_ctx: &mut Context) -> u16 {
     0x0409
 }
 
+#[win32_derive::dllexport]
+pub fn IsDBCSLeadByte(_ctx: &mut Context, _TestChar: u32) -> bool {
+    // The emulated ACP is Windows-1252, which has no lead bytes.
+    false
+}
+
 #[repr(C)]
 #[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct CPINFO {
