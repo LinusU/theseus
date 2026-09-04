@@ -37,6 +37,8 @@ const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
+const DRIVE_NO_ROOT_DIR: u32 = 1;
+const DRIVE_FIXED: u32 = 3;
 
 /// The host directory that maps to the root of the C: drive: the process's
 /// initial current directory. Captured on first use, before any chdir.
@@ -102,6 +104,31 @@ fn file_attributes(path: &std::path::Path) -> u32 {
 pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
     let name = ctx.memory.read_str(lpFileName.addr).to_owned();
     file_attributes(&resolve_path(&name))
+}
+
+fn drive_type(path: Option<&str>) -> u32 {
+    let Some(path) = path else {
+        return DRIVE_FIXED;
+    };
+    let path = path.replace('\\', "/");
+    if path.len() < 2
+        || path.as_bytes()[1] != b':'
+        || !path.as_bytes()[0].eq_ignore_ascii_case(&b'c')
+    {
+        return DRIVE_NO_ROOT_DIR;
+    }
+    if host::fs::exists(&resolve_path(&path)) {
+        DRIVE_FIXED
+    } else {
+        DRIVE_NO_ROOT_DIR
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetDriveTypeA(ctx: &mut Context, lpRootPathName: Ptr<u8>) -> u32 {
+    let path =
+        (lpRootPathName.addr != 0).then(|| ctx.memory.read_str(lpRootPathName.addr).to_owned());
+    drive_type(path.as_deref())
 }
 
 #[win32_derive::dllexport]
@@ -536,8 +563,8 @@ pub fn FindClose(_ctx: &mut Context, hFindFile: crate::HANDLE) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, INVALID_FILE_ATTRIBUTES, file_attributes,
-        wildcard_match,
+        DRIVE_FIXED, DRIVE_NO_ROOT_DIR, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+        INVALID_FILE_ATTRIBUTES, drive_type, file_attributes, wildcard_match,
     };
 
     #[test]
@@ -569,6 +596,14 @@ mod tests {
             let got = wildcard_match(pattern.as_bytes(), name.as_bytes());
             assert_eq!(got, want, "{pattern:?} vs {name:?}");
         }
+    }
+
+    #[test]
+    fn drive_type_reports_the_supported_fixed_drive() {
+        assert_eq!(drive_type(None), DRIVE_FIXED);
+        assert_eq!(drive_type(Some("C:/")), DRIVE_FIXED);
+        assert_eq!(drive_type(Some("D:/")), DRIVE_NO_ROOT_DIR);
+        assert_eq!(drive_type(Some("not-a-root")), DRIVE_NO_ROOT_DIR);
     }
 
     #[test]
