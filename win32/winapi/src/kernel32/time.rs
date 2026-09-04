@@ -1,5 +1,63 @@
 use runtime::Context;
 
+use crate::Ptr;
+
+#[repr(C)]
+#[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
+pub struct SYSTEMTIME {
+    pub wYear: u16,
+    pub wMonth: u16,
+    pub wDayOfWeek: u16,
+    pub wDay: u16,
+    pub wHour: u16,
+    pub wMinute: u16,
+    pub wSecond: u16,
+    pub wMilliseconds: u16,
+}
+
+fn current_system_time() -> SYSTEMTIME {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let seconds = now.as_secs() as i64;
+    let days = seconds.div_euclid(86_400);
+    let day_seconds = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }).div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_part = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * month_part + 2).div_euclid(5) + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    SYSTEMTIME {
+        wYear: year as u16,
+        wMonth: month as u16,
+        wDayOfWeek: (days + 4).rem_euclid(7) as u16,
+        wDay: day as u16,
+        wHour: (day_seconds / 3_600) as u16,
+        wMinute: (day_seconds / 60 % 60) as u16,
+        wSecond: (day_seconds % 60) as u16,
+        wMilliseconds: (now.subsec_millis()) as u16,
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetLocalTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
+    lpSystemTime
+        .write(&mut ctx.memory, current_system_time())
+        .unwrap();
+}
+
+#[win32_derive::dllexport]
+pub fn GetSystemTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
+    lpSystemTime
+        .write(&mut ctx.memory, current_system_time())
+        .unwrap();
+}
+
 #[win32_derive::dllexport]
 pub fn GetTickCount(_ctx: &mut Context) -> u32 {
     host::host().time()
@@ -49,4 +107,14 @@ pub fn FileTimeToSystemTime(
     // SYSTEMTIME is 16 bytes; the game only shows these values incidentally.
     ctx.memory[lpSystemTime.addr..][..16].fill(0);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SYSTEMTIME;
+
+    #[test]
+    fn system_time_matches_win32_abi() {
+        assert_eq!(std::mem::size_of::<SYSTEMTIME>(), 16);
+    }
 }
