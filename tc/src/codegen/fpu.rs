@@ -234,6 +234,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_op(instr, 1, "t".into()));
             }
 
+            Ftst => {
+                self.line("ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(&0.0);");
+            }
             Fcom | Fcomp => {
                 let (arg0, arg1) = match instr.op_count() {
                     1 => (self.fpu_get_reg(0), self.fpu_get_op(instr, 0)),
