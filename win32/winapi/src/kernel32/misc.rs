@@ -204,6 +204,15 @@ pub fn UnhandledExceptionFilter(_ctx: &mut Context, _ExceptionInfo: Ptr<()>) -> 
 pub fn DebugBreak(_ctx: &mut Context) {}
 
 #[win32_derive::dllexport]
+pub fn IsBadReadPtr(ctx: &mut Context, lp: Ptr<()>, ucb: u32) -> bool {
+    let start = lp.addr as usize;
+    start < 0x1000
+        || start
+            .checked_add(ucb as usize)
+            .map_or(true, |end| end > ctx.memory.bytes.len())
+}
+
+#[win32_derive::dllexport]
 pub fn VirtualAlloc(
     _ctx: &mut Context,
     lpAddress: Ptr<()>,
