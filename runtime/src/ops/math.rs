@@ -30,8 +30,10 @@ pub fn add<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
 }
 
 pub fn addc<I: Int>(x: I, y: I, z: I, flags: &mut Flags) -> I {
-    let result = x.wrapping_add(&y.wrapping_add(&z));
-    flags.set(Flags::CF, result < x || (result == x && !z.is_zero()));
+    let yz = y.wrapping_add(&z);
+    let result = x.wrapping_add(&yz);
+    let carry = yz < y;
+    flags.set(Flags::CF, carry || result < x);
     flags.set(Flags::ZF, result.is_zero());
     flags.set(Flags::SF, result.high_bit().is_one());
     // Overflow is true exactly when the high (sign) bits are like:
@@ -198,6 +200,13 @@ mod tests {
         let (result, flags) = sbb8(0x01, 0x00, true);
         assert_eq!(result, 0x00);
         assert_eq!(flags.to_string(), "PF ZF");
+    }
+
+    #[test]
+    fn addc_reports_carry_from_the_carry_operand() {
+        let mut flags = Flags::default();
+        assert_eq!(addc(0u8, 0xff, 2, &mut flags), 1);
+        assert!(flags.contains(Flags::CF));
     }
 
     #[test]
