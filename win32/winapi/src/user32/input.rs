@@ -389,6 +389,135 @@ fn shifted(shift: bool, plain: u8, shifted: u8) -> u8 {
     if shift { shifted } else { plain }
 }
 
+fn key_name(scan_code: u8, extended: bool) -> Option<&'static [u8]> {
+    Some(match scan_code {
+        0x01 => b"Esc",
+        0x02 => b"1",
+        0x03 => b"2",
+        0x04 => b"3",
+        0x05 => b"4",
+        0x06 => b"5",
+        0x07 => b"6",
+        0x08 => b"7",
+        0x09 => b"8",
+        0x0a => b"9",
+        0x0b => b"0",
+        0x0c => b"-",
+        0x0d => b"=",
+        0x0e => b"Backspace",
+        0x0f => b"Tab",
+        0x10 => b"Q",
+        0x11 => b"W",
+        0x12 => b"E",
+        0x13 => b"R",
+        0x14 => b"T",
+        0x15 => b"Y",
+        0x16 => b"U",
+        0x17 => b"I",
+        0x18 => b"O",
+        0x19 => b"P",
+        0x1a => b"[",
+        0x1b => b"]",
+        0x1c => {
+            if extended {
+                b"Num Enter"
+            } else {
+                b"Enter"
+            }
+        }
+        0x1d => {
+            if extended {
+                b"Right Ctrl"
+            } else {
+                b"Ctrl"
+            }
+        }
+        0x1e => b"A",
+        0x1f => b"S",
+        0x20 => b"D",
+        0x21 => b"F",
+        0x22 => b"G",
+        0x23 => b"H",
+        0x24 => b"J",
+        0x25 => b"K",
+        0x26 => b"L",
+        0x27 => b";",
+        0x28 => b"'",
+        0x29 => b"`",
+        0x2a => b"Left Shift",
+        0x2b => b"\\",
+        0x2c => b"Z",
+        0x2d => b"X",
+        0x2e => b"C",
+        0x2f => b"V",
+        0x30 => b"B",
+        0x31 => b"N",
+        0x32 => b"M",
+        0x33 => b",",
+        0x34 => b".",
+        0x35 => b"/",
+        0x36 => b"Right Shift",
+        0x37 => b"Print Screen",
+        0x38 => {
+            if extended {
+                b"Right Alt"
+            } else {
+                b"Alt"
+            }
+        }
+        0x39 => b"Space",
+        0x3a => b"Caps Lock",
+        0x3b => b"F1",
+        0x3c => b"F2",
+        0x3d => b"F3",
+        0x3e => b"F4",
+        0x3f => b"F5",
+        0x40 => b"F6",
+        0x41 => b"F7",
+        0x42 => b"F8",
+        0x43 => b"F9",
+        0x44 => b"F10",
+        0x45 => b"Num Lock",
+        0x46 => b"Scroll Lock",
+        0x47 => b"Home",
+        0x48 => b"Up",
+        0x49 => b"Page Up",
+        0x4b => b"Left",
+        0x4d => b"Right",
+        0x4f => b"End",
+        0x50 => b"Down",
+        0x51 => b"Page Down",
+        0x52 => b"Insert",
+        0x53 => b"Delete",
+        0x57 => b"F11",
+        0x58 => b"F12",
+        _ => return None,
+    })
+}
+
+#[win32_derive::dllexport]
+pub fn GetKeyNameTextA(ctx: &mut Context, lParam: i32, lpString: u32, cchSize: i32) -> i32 {
+    let raw = lParam as u32;
+    let scan_code = (raw >> 16) as u8;
+    let Some(name) = key_name(scan_code, raw & (1 << 24) != 0) else {
+        return 0;
+    };
+    if cchSize <= 0 || lpString < 0x1000 {
+        return 0;
+    }
+    let capacity = cchSize as usize;
+    let copy_len = name.len().min(capacity - 1);
+    let Some(end) = lpString.checked_add(copy_len as u32 + 1) else {
+        return 0;
+    };
+    if end as usize > ctx.memory.bytes.len() {
+        return 0;
+    }
+    ctx.memory[lpString..][..copy_len].copy_from_slice(&name[..copy_len]);
+    ctx.memory.write::<u8>(lpString + copy_len as u32, 0);
+    copy_len as i32
+}
+
 /// The character a WM_KEYDOWN translates to, or None for keys that produce no
 /// text. Used by TranslateMessage.
 pub fn char_for_key(vkey: u8) -> Option<u8> {
@@ -421,4 +550,17 @@ pub fn GetKeyboardState(ctx: &mut Context, lpKeyState: u32) -> bool {
         ctx.memory[lpKeyState + vkey] = input.key_state(vkey as u8);
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_name;
+
+    #[test]
+    fn key_names_cover_extended_and_unknown_scan_codes() {
+        assert_eq!(key_name(0x1c, false), Some(&b"Enter"[..]));
+        assert_eq!(key_name(0x1c, true), Some(&b"Num Enter"[..]));
+        assert_eq!(key_name(0x48, true), Some(&b"Up"[..]));
+        assert_eq!(key_name(0xff, false), None);
+    }
 }
