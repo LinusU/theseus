@@ -14,6 +14,7 @@ pub use object::*;
 pub type HGDIOBJ = HANDLE;
 pub type HBRUSH = HGDIOBJ;
 pub type HPEN = HGDIOBJ;
+pub type HFONT = HGDIOBJ;
 
 pub struct State {
     pub dcs: Handles<DC>,

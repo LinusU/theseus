@@ -4,7 +4,7 @@ use runtime::Context;
 
 use crate::{
     HANDLE, POINT, Ptr,
-    gdi32::{self, Bitmap, COLORREF, HBITMAP, HPEN, Pen, State},
+    gdi32::{self, Bitmap, COLORREF, Font, HBITMAP, HGDIOBJ, HPEN, Pen, State},
     stub,
 };
 
@@ -26,6 +26,7 @@ pub struct DC {
     /// Store the HBITMAP as well as the Bitmap itself so that when it is switched via SelectObject we can return it.
     pub bitmap: (HBITMAP, Arc<Bitmap>),
     pub pen: (HPEN, Pen),
+    pub font: (HGDIOBJ, Font),
     rop2: R2,
     pos: POINT,
 }
@@ -35,6 +36,7 @@ impl DC {
         DC {
             bitmap: (hbitmap, bitmap),
             pen: (HPEN::null(), Pen(COLORREF::default())),
+            font: (HGDIOBJ::null(), Font::default()),
             rop2: R2::COPYPEN,
             pos: POINT::default(),
         }

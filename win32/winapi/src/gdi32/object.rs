@@ -4,7 +4,7 @@ use runtime::Context;
 
 use crate::{
     Ptr,
-    gdi32::{self, Bitmap, COLORREF, HBRUSH, HDC, HGDIOBJ, HPEN},
+    gdi32::{self, Bitmap, COLORREF, HBRUSH, HDC, HFONT, HGDIOBJ, HPEN},
 };
 
 #[derive(Debug, Clone)]
@@ -12,6 +12,14 @@ pub struct Brush(pub COLORREF);
 
 #[derive(Debug, Clone)]
 pub struct Pen(pub COLORREF);
+
+#[derive(Debug, Clone, Default)]
+pub struct Font {
+    pub height: i32,
+    pub width: i32,
+    pub weight: i32,
+    pub face: String,
+}
 
 #[win32_derive::dllexport]
 pub fn CreatePen(
@@ -31,10 +39,42 @@ pub fn CreateSolidBrush(_ctx: &mut Context, color: COLORREF) -> HBRUSH {
     gdi32::lock().objects.add(Object::Brush(Brush(color)))
 }
 
+#[win32_derive::dllexport]
+pub fn CreateFontA(
+    ctx: &mut Context,
+    nHeight: i32,
+    nWidth: i32,
+    _nEscapement: i32,
+    _nOrientation: i32,
+    fnWeight: i32,
+    _fdwItalic: u32,
+    _fdwUnderline: u32,
+    _fdwStrikeOut: u32,
+    _fdwCharSet: u32,
+    _fdwOutputPrecision: u32,
+    _fdwClipPrecision: u32,
+    _fdwQuality: u32,
+    _fdwPitchAndFamily: u32,
+    lpszFace: Ptr<u8>,
+) -> HFONT {
+    let face = if lpszFace.addr == 0 {
+        String::new()
+    } else {
+        ctx.memory.read_str(lpszFace.addr).to_owned()
+    };
+    gdi32::lock().objects.add(Object::Font(Font {
+        height: nHeight,
+        width: nWidth,
+        weight: fnWeight,
+        face,
+    }))
+}
+
 pub enum Object {
     Bitmap(Arc<Bitmap>),
     Brush(Brush),
     Pen(Pen),
+    Font(Font),
 }
 
 impl Object {
@@ -129,6 +169,11 @@ pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
         Object::Pen(pen) => {
             let prev = dc.pen.0;
             dc.pen = (h, pen.clone());
+            prev
+        }
+        Object::Font(font) => {
+            let prev = dc.font.0;
+            dc.font = (h, font.clone());
             prev
         }
         _ => todo!(),
