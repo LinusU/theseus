@@ -601,6 +601,38 @@ mod tests {
             assert!(codegen.buf.contains(want));
         }
     }
+
+    #[test]
+    fn codegen_handles_bit_operations() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x0f, 0xa3, 0xc8][..],
+                "bt(ctx.cpu.regs.eax, bit, &mut ctx.cpu.flags);",
+            ),
+            (
+                &[0x0f, 0xab, 0xc8][..],
+                "ctx.cpu.regs.eax = bts(ctx.cpu.regs.eax, bit, &mut ctx.cpu.flags);",
+            ),
+            (
+                &[0x0f, 0xba, 0x28, 0x03][..],
+                "ctx.memory.write::<u32>(addr, bts(value, bit, &mut ctx.cpu.flags));",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

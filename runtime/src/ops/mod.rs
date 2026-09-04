@@ -1,3 +1,4 @@
+mod bit;
 mod control_flow;
 mod flags;
 mod int;
@@ -7,6 +8,7 @@ mod mmx;
 mod shift;
 mod string;
 
+pub use bit::*;
 pub use flags::*;
 pub use math::*;
 pub use mmx::*;

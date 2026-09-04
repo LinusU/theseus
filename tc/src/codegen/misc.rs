@@ -79,6 +79,47 @@ impl<'a> CodeGen<'a> {
 
             Not => self.line(self.set_op(instr, 0, format!("!{}", self.get_op(instr, 0)))),
 
+            Bt | Bts | Btr | Btc => {
+                let size = op_size(instr, 0);
+                assert!(matches!(size, 16 | 32));
+                let operation = instr_name(instr);
+                let bit = self.get_op(instr, 1);
+                self.line(format!("let bit = ({bit}) as u32;"));
+                if instr.op_kind(0) == iced_x86::OpKind::Memory {
+                    let addr = self.gen_addr(instr);
+                    let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
+                        let mask = !(size as u32 - 1);
+                        let bytes = size / 8;
+                        format!("{addr}.wrapping_add((bit & {mask:#x}u32) / {bytes}u32)")
+                    } else {
+                        addr
+                    };
+                    self.line(format!("let addr = {addr};"));
+                    self.line(format!("let value = ctx.memory.read::<u{size}>(addr);"));
+                    if operation == "bt" {
+                        self.line(format!("bt(value, bit, &mut ctx.cpu.flags);"));
+                    } else {
+                        self.line(format!(
+                            "ctx.memory.write::<u{size}>(addr, {operation}(value, bit, &mut ctx.cpu.flags));"
+                        ));
+                    }
+                } else if operation == "bt" {
+                    self.line(format!(
+                        "bt({}, bit, &mut ctx.cpu.flags);",
+                        self.get_op(instr, 0)
+                    ));
+                } else {
+                    self.line(self.set_op(
+                        instr,
+                        0,
+                        format!(
+                            "{operation}({}, bit, &mut ctx.cpu.flags)",
+                            self.get_op(instr, 0)
+                        ),
+                    ));
+                }
+            }
+
             Int => {
                 assert!(instr.op0_kind() == iced_x86::OpKind::Immediate8);
                 // A misidentified code pointer can land us on an `int` in
@@ -93,7 +134,7 @@ impl<'a> CodeGen<'a> {
                     self.todo(format!("int {:#x}", instr.immediate8()));
                 }
             }
-            Int3 | Cmpxchg | Pushfd | Cpuid | Xgetbv | Bt | Div => self.todo(instr_name(instr)),
+            Int3 | Cmpxchg | Pushfd | Cpuid | Xgetbv | Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),
