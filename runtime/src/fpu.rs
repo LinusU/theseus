@@ -174,6 +174,11 @@ impl FPU {
     }
 
     pub fn examine(&mut self) {
+        if self.st_top == 8 {
+            self.condition = (Status::C0 | Status::C3).bits();
+            return;
+        }
+
         let value = self.get(0);
         let mut condition = if value.is_nan() {
             Status::C0.bits()
@@ -303,6 +308,17 @@ mod tests {
             fpu.examine();
             assert_eq!(fpu.status() & condition_mask, expected.bits());
         }
+    }
+
+    #[test]
+    fn fxam_marks_an_empty_stack() {
+        let mut fpu = FPU::default();
+        fpu.examine();
+
+        assert_eq!(
+            fpu.status() & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits(),
+            (Status::C0 | Status::C3).bits()
+        );
     }
 
     #[test]
