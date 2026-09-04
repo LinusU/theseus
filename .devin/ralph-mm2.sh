@@ -5,8 +5,13 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 iterations="${1:-1}"
+agent_passes="${RALPH_AGENT_PASSES:-8}"
 if ! [[ "$iterations" =~ ^[1-9][0-9]*$ ]] || (( iterations > 1000 )); then
-    printf 'usage: %s [iterations 1-1000]\n' "$0" >&2
+    printf 'usage: %s [sessions 1-1000]\n' "$0" >&2
+    exit 2
+fi
+if ! [[ "$agent_passes" =~ ^[1-9][0-9]*$ ]] || (( agent_passes > 50 )); then
+    printf 'RALPH_AGENT_PASSES must be between 1 and 50\n' >&2
     exit 2
 fi
 
@@ -33,9 +38,10 @@ EOF
 }
 
 for ((iteration = 1; iteration <= iterations; iteration++)); do
-    printf 'MM2 Ralph iteration %d/%d\n' "$iteration" "$iterations"
+    printf 'MM2 Ralph session %d/%d (%d milestone passes)\n' "$iteration" "$iterations" "$agent_passes"
     before_commit="$(git rev-parse HEAD)"
-    if GIT_CONFIG_COUNT=1 \
+    if RALPH_AGENT_PASSES="$agent_passes" \
+        GIT_CONFIG_COUNT=1 \
         GIT_CONFIG_KEY_0=commit.gpgSign \
         GIT_CONFIG_VALUE_0=false \
         devin --print --permission-mode "$permission_mode" \

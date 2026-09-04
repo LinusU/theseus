@@ -56,13 +56,13 @@ The runtime capture phase is intentionally outside the macOS translator for now.
 
 ## Agent loop
 
-The project skill `/mm2-ralph` advances one focused blocker and records the result in `doc/mm2-progress.md`. For unattended bounded iterations, start from a clean worktree and run:
+The project skill `/mm2-ralph` runs several focused milestones in one agent session and records each result in `doc/mm2-progress.md`. Each spawned session uses `RALPH_AGENT_PASSES` (default 8, maximum 50) and commits after every milestone, including milestones whose builds or tests fail. For unattended bounded sessions, start from a clean worktree and run:
 
 ```text
-.devin/ralph-mm2.sh 1000
+RALPH_AGENT_PASSES=8 .devin/ralph-mm2.sh 1000
 ```
 
-The loop commits every iteration that changes tracked files with Git cryptographic signing disabled, but never pushes. It also creates a generic fallback commit for uncommitted changes left by an agent, including changes from a failed build or test. It stops after at most 1,000 iterations, when an agent makes no changes, or when changes cannot be committed. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
+The outer loop can launch up to 1,000 such sessions. It also creates a generic fallback commit for uncommitted changes left by an agent, including changes from a failed build or test. It never pushes. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
 
 ## Function overrides
 
