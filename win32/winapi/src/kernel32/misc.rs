@@ -352,8 +352,13 @@ pub fn VirtualFree(
 }
 
 #[win32_derive::dllexport]
-pub fn OutputDebugStringA(_ctx: &mut Context, _lpOutputString: Ptr<u8>) {
-    todo!()
+pub fn OutputDebugStringA(ctx: &mut Context, lpOutputString: Ptr<u8>) {
+    if lpOutputString.addr != 0 {
+        log::debug!(
+            "OutputDebugStringA: {}",
+            ctx.memory.read_str(lpOutputString.addr)
+        );
+    }
 }
 
 #[win32_derive::dllexport]
