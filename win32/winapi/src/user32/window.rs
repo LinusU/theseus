@@ -446,6 +446,11 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
     stub!(1)
 }
 
+#[win32_derive::dllexport]
+pub fn UnregisterClassA(_ctx: &mut Context, _lpClassName: Ptr<u8>, _hInstance: HINSTANCE) -> bool {
+    state().wndclass.borrow_mut().take().is_some()
+}
+
 #[repr(C)]
 #[derive(Debug, zerocopy::IntoBytes, zerocopy::Immutable, zerocopy::FromBytes)]
 pub struct PAINTSTRUCT {
