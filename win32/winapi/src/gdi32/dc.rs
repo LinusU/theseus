@@ -29,6 +29,7 @@ pub struct DC {
     pub font: (HGDIOBJ, Font),
     rop2: R2,
     bk_mode: i32,
+    text_color: COLORREF,
     pos: POINT,
 }
 
@@ -47,6 +48,7 @@ impl DC {
             font: (HGDIOBJ::null(), Font::default()),
             rop2: R2::COPYPEN,
             bk_mode: 2,
+            text_color: COLORREF::default(),
             pos: POINT::default(),
         }
     }
@@ -97,6 +99,15 @@ pub fn SetBkMode(_ctx: &mut Context, hdc: HDC, mode: i32) -> i32 {
         return 0;
     };
     std::mem::replace(&mut dc.bk_mode, mode)
+}
+
+#[win32_derive::dllexport]
+pub fn SetTextColor(_ctx: &mut Context, hdc: HDC, color: COLORREF) -> COLORREF {
+    let mut state = gdi32::lock();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return COLORREF(u32::MAX);
+    };
+    std::mem::replace(&mut dc.text_color, color)
 }
 
 fn text_extent(font: &Font, count: usize) -> SIZE {
