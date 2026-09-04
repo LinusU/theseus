@@ -31,6 +31,13 @@ pub struct DC {
     pos: POINT,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, zerocopy::Immutable, zerocopy::IntoBytes)]
+pub struct SIZE {
+    pub cx: i32,
+    pub cy: i32,
+}
+
 impl DC {
     pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>) -> Self {
         DC {
@@ -76,6 +83,52 @@ pub fn DeleteDC(_ctx: &mut Context, _hdc: HDC) -> bool {
 #[win32_derive::dllexport]
 pub fn GetLayout(_ctx: &mut Context, _hdc: HDC) -> u32 {
     0 // LTR
+}
+
+fn text_extent(font: &Font, count: usize) -> SIZE {
+    let height = if font.height == 0 {
+        16
+    } else {
+        font.height.unsigned_abs().min(i32::MAX as u32) as i32
+    };
+    let width = if font.width == 0 {
+        (height / 2).max(1)
+    } else {
+        font.width.unsigned_abs().min(i32::MAX as u32) as i32
+    };
+    SIZE {
+        cx: width.saturating_mul(count.min(i32::MAX as usize) as i32),
+        cy: height,
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetTextExtentPoint32A(
+    ctx: &mut Context,
+    hdc: HDC,
+    lpString: Ptr<u8>,
+    cchString: i32,
+    lpSize: Ptr<SIZE>,
+) -> bool {
+    if cchString < 0 || lpSize.addr < 0x1000 {
+        return false;
+    }
+    let count = cchString as usize;
+    if count != 0 {
+        let Some(end) = lpString.addr.checked_add(cchString as u32) else {
+            return false;
+        };
+        if lpString.addr < 0x1000 || end as usize > ctx.memory.bytes.len() {
+            return false;
+        }
+    }
+    let state = gdi32::lock();
+    let Some(dc) = state.dcs.get(hdc) else {
+        return false;
+    };
+    lpSize
+        .write(&mut ctx.memory, text_extent(&dc.font.1, count))
+        .is_some()
 }
 
 #[derive(Debug, win32_derive::ABIEnum)]
@@ -161,4 +214,25 @@ pub fn SetLayout(_ctx: &mut Context, _hdc: HDC, _l: u32 /* DC_LAYOUT */) -> u32 
 #[win32_derive::dllexport]
 pub fn SetPixel(_ctx: &mut Context, _hdc: HDC, _x: i32, _y: i32, _color: COLORREF) -> COLORREF {
     todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Font, SIZE, text_extent};
+
+    #[test]
+    fn text_extent_uses_requested_font_metrics() {
+        let font = Font {
+            height: -12,
+            width: 7,
+            weight: 400,
+            face: String::new(),
+        };
+        assert_eq!(text_extent(&font, 5), SIZE { cx: 35, cy: 12 });
+    }
+
+    #[test]
+    fn text_extent_defaults_zero_metrics() {
+        assert_eq!(text_extent(&Font::default(), 3), SIZE { cx: 24, cy: 16 });
+    }
 }
