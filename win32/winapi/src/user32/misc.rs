@@ -1,7 +1,11 @@
 use runtime::Context;
 
 use super::*;
-use crate::{Ptr, RECT, stub};
+use crate::{
+    Ptr, RECT,
+    gdi32::{self, HDC},
+    stub,
+};
 
 #[win32_derive::dllexport]
 pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX */) -> i32 {
@@ -14,6 +18,80 @@ pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX 
         0, 1, 0, 0, 640, 480, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
     METRICS[nIndex as usize]
+}
+
+#[win32_derive::dllexport]
+pub fn DrawTextA(
+    ctx: &mut Context,
+    hdc: HDC,
+    lpchText: Ptr<u8>,
+    cchText: i32,
+    lprc: Ptr<RECT>,
+    format: u32,
+) -> i32 {
+    const DT_SINGLELINE: u32 = 0x20;
+    const DT_CALCRECT: u32 = 0x400;
+
+    if cchText < -1
+        || lprc.addr < 0x1000
+        || lprc
+            .addr
+            .checked_add(std::mem::size_of::<RECT>() as u32)
+            .is_none_or(|end| end as usize > ctx.memory.bytes.len())
+    {
+        return 0;
+    }
+    let bytes = if cchText == -1 {
+        if lpchText.addr < 0x1000 || lpchText.addr as usize >= ctx.memory.bytes.len() {
+            return 0;
+        }
+        ctx.memory.read_str(lpchText.addr).as_bytes().to_vec()
+    } else {
+        let count = cchText as usize;
+        let Some(end) = lpchText.addr.checked_add(cchText as u32) else {
+            return 0;
+        };
+        if count != 0 && (lpchText.addr < 0x1000 || end as usize > ctx.memory.bytes.len()) {
+            return 0;
+        }
+        ctx.memory[lpchText.addr..][..count].to_vec()
+    };
+    let rect = lprc.read(&ctx.memory).unwrap();
+    let mut max_width = 0;
+    let mut line_height = 0;
+    let mut line_count = 0;
+    let lines = if format & DT_SINGLELINE != 0 {
+        bytes.split(|_| false).take(1).collect::<Vec<_>>()
+    } else {
+        bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>()
+    };
+    for line in lines {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(size) = gdi32::text_extent_for_dc(hdc, line.len()) else {
+            return 0;
+        };
+        max_width = max_width.max(size.cx);
+        line_height = line_height.max(size.cy);
+        line_count += 1;
+    }
+    if format & DT_CALCRECT != 0 {
+        let width = max_width;
+        let height = line_height.saturating_mul(line_count);
+        if lprc
+            .write(
+                &mut ctx.memory,
+                RECT {
+                    right: rect.left.saturating_add(width),
+                    bottom: rect.top.saturating_add(height),
+                    ..rect
+                },
+            )
+            .is_none()
+        {
+            return 0;
+        }
+    }
+    line_height.saturating_mul(line_count)
 }
 
 #[win32_derive::dllexport]

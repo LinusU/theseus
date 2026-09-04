@@ -127,6 +127,11 @@ fn text_extent(font: &Font, count: usize) -> SIZE {
     }
 }
 
+pub fn text_extent_for_dc(hdc: HDC, count: usize) -> Option<SIZE> {
+    let state = gdi32::lock();
+    state.dcs.get(hdc).map(|dc| text_extent(&dc.font.1, count))
+}
+
 #[win32_derive::dllexport]
 pub fn GetTextExtentPoint32A(
     ctx: &mut Context,
@@ -147,13 +152,10 @@ pub fn GetTextExtentPoint32A(
             return false;
         }
     }
-    let state = gdi32::lock();
-    let Some(dc) = state.dcs.get(hdc) else {
+    let Some(size) = text_extent_for_dc(hdc, count) else {
         return false;
     };
-    lpSize
-        .write(&mut ctx.memory, text_extent(&dc.font.1, count))
-        .is_some()
+    lpSize.write(&mut ctx.memory, size).is_some()
 }
 
 #[derive(Debug, win32_derive::ABIEnum)]
