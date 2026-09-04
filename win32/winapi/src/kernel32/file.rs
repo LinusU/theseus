@@ -36,6 +36,7 @@ const GENERIC_WRITE: u32 = 0x4000_0000;
 
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 /// The host directory that maps to the root of the C: drive: the process's
 /// initial current directory. Captured on first use, before any chdir.
@@ -84,6 +85,23 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
         result = direct; // may not exist, e.g. a file about to be created
     }
     result
+}
+
+fn file_attributes(path: &std::path::Path) -> u32 {
+    if !host::fs::exists(path) {
+        return INVALID_FILE_ATTRIBUTES;
+    }
+    if host::fs::read_dir(path).is_ok() {
+        FILE_ATTRIBUTE_DIRECTORY
+    } else {
+        FILE_ATTRIBUTE_NORMAL
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
+    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    file_attributes(&resolve_path(&name))
 }
 
 #[win32_derive::dllexport]
@@ -517,7 +535,10 @@ pub fn FindClose(_ctx: &mut Context, hFindFile: crate::HANDLE) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::wildcard_match;
+    use super::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, INVALID_FILE_ATTRIBUTES, file_attributes,
+        wildcard_match,
+    };
 
     #[test]
     fn wildcards() {
@@ -548,5 +569,19 @@ mod tests {
             let got = wildcard_match(pattern.as_bytes(), name.as_bytes());
             assert_eq!(got, want, "{pattern:?} vs {name:?}");
         }
+    }
+
+    #[test]
+    fn file_attributes_report_files_directories_and_missing_paths() {
+        let executable = std::env::current_exe().unwrap();
+        assert_eq!(file_attributes(&executable), FILE_ATTRIBUTE_NORMAL);
+        assert_eq!(
+            file_attributes(executable.parent().unwrap()),
+            FILE_ATTRIBUTE_DIRECTORY
+        );
+        assert_eq!(
+            file_attributes(&executable.with_file_name("theseus-missing-file")),
+            INVALID_FILE_ATTRIBUTES
+        );
     }
 }
