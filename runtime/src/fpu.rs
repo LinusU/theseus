@@ -181,6 +181,8 @@ impl FPU {
             (Status::C2 | Status::C0).bits()
         } else if value == 0.0 {
             Status::C3.bits()
+        } else if value.is_subnormal() {
+            (Status::C3 | Status::C2).bits()
         } else {
             Status::C2.bits()
         };
@@ -293,6 +295,7 @@ mod tests {
             (0.0, Status::C3),
             (-0.0, Status::C1 | Status::C3),
             (f64::INFINITY, Status::C2 | Status::C0),
+            (f64::MIN_POSITIVE / 2.0, Status::C3 | Status::C2),
             (f64::NAN, Status::C0),
         ] {
             let mut fpu = FPU::default();
