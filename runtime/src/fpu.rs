@@ -229,6 +229,13 @@ impl FPU {
         };
     }
 
+    pub fn init(&mut self) {
+        self.control = 0x037f;
+        self.st_top = 8;
+        self.condition = 0;
+        self.cmp = std::cmp::Ordering::Greater;
+    }
+
     pub fn save(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
         self.store_env(memory, addr);
         for (index, value) in self.st.iter().enumerate() {
@@ -237,10 +244,7 @@ impl FPU {
                 F80::from_f64(*value),
             );
         }
-        self.control = 0x037f;
-        self.st_top = 8;
-        self.condition = 0;
-        self.cmp = std::cmp::Ordering::Greater;
+        self.init();
     }
 
     pub fn restore(&mut self, memory: &crate::Memory<'_>, addr: u32) {
@@ -304,6 +308,18 @@ mod tests {
     #[test]
     fn f80_has_x87_memory_size() {
         assert_eq!(std::mem::size_of::<F80>(), 10);
+    }
+
+    #[test]
+    fn fninit_resets_status_and_stack() {
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+        fpu.set_cmp(std::cmp::Ordering::Less);
+        fpu.init();
+
+        assert_eq!(fpu.status(), 0);
+        assert_eq!(fpu.st_top, 8);
+        assert_eq!(fpu.control, 0x037f);
     }
 
     #[test]

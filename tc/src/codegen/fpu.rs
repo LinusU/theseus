@@ -301,12 +301,7 @@ impl<'a> CodeGen<'a> {
             // We don't model FPU exceptions, so clearing them is a no-op.
             Fnclex => {}
 
-            Fninit => {
-                // Also empties the stack, which is how a program recovers from
-                // leaving values on it.
-                self.line("ctx.cpu.fpu.control = 0x037f;");
-                self.line("ctx.cpu.fpu.st_top = 8;");
-            }
+            Fninit => self.line("ctx.cpu.fpu.init();"),
 
             Fnstcw => {
                 assert_eq!(instr.op_count(), 1);
