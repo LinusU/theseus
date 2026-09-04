@@ -59,10 +59,10 @@ The runtime capture phase is intentionally outside the macOS translator for now.
 The project skill `/mm2-ralph` advances one focused blocker and records the result in `doc/mm2-progress.md`. For unattended bounded iterations, start from a clean worktree and run:
 
 ```text
-.devin/ralph-mm2.sh 5
+.devin/ralph-mm2.sh 1000
 ```
 
-The loop commits one successful iteration at a time with Git cryptographic signing disabled, but never pushes. It stops after at most 20 iterations, when an agent makes no changes, or when an iteration reports a failure. A failed or blocked iteration is left uncommitted for review. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
+The loop commits every iteration that changes tracked files with Git cryptographic signing disabled, but never pushes. It also creates a generic fallback commit for uncommitted changes left by an agent, including changes from a failed build or test. It stops after at most 1,000 iterations, when an agent makes no changes, or when changes cannot be committed. The default permission mode is `smart`; set `DEVIN_PERMISSION_MODE` explicitly if a different local policy is appropriate.
 
 ## Function overrides
 

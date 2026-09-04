@@ -22,6 +22,6 @@ Work on one blocker at a time. Reproduce the failure, make the smallest change i
 
 Static function overrides use Theseus's existing `tc --extern ADDRESS[=NAME]` mechanism. Add the matching Rust function under `out/mm2/src/externs.rs`; generated code refers to it as `crate::externs::NAME`. Overrides receive `&mut runtime::Context` and return `runtime::Cont`.
 
-Do not commit generated output, game assets, missing-address logs, or reports. The Ralph loop is authorized to commit one successful iteration when it starts from a clean worktree; it must stage only that iteration's tracked source, documentation, or configuration changes, use `git -c commit.gpgSign=false commit --no-gpg-sign`, and must not push. Manual agent work remains uncommitted unless the user explicitly asks for a commit.
+Do not commit generated output, game assets, missing-address logs, or reports. The Ralph loop is authorized to commit every iteration that changes tracked files when it starts from a clean worktree; it must stage only that iteration's tracked source, documentation, or configuration changes, use `git -c commit.gpgSign=false commit --no-gpg-sign`, and must not push. Failed checks belong in `doc/mm2-progress.md`, followed by a commit so the loop can continue. Manual agent work remains uncommitted unless the user explicitly asks for a commit.
 
 Before submitting a change, run the relevant `cargo fmt --all`, `cargo check`, `cargo test`, or target build command and report any environment-specific limitation.
