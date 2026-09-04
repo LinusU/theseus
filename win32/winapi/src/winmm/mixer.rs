@@ -126,6 +126,69 @@ pub fn mixerGetLineInfoA(ctx: &mut Context, hmxobj: u32, pmxl: u32, fdwInfo: u32
     MMSYSERR_NOERROR
 }
 
+#[repr(C)]
+#[derive(Debug, zerocopy::Immutable, zerocopy::IntoBytes)]
+struct MIXERCONTROL {
+    cbStruct: u32,
+    dwControlID: u32,
+    dwControlType: u32,
+    fdwControl: u32,
+    cMultipleItems: u32,
+    szShortName: [u8; 16],
+    szName: [u8; 64],
+    bounds: [u32; 2],
+    metrics: [u32; 6],
+    reserved: [u32; 4],
+}
+
+#[win32_derive::dllexport]
+pub fn mixerGetLineControlsA(ctx: &mut Context, hmxobj: u32, pmxlc: u32, fdwControls: u32) -> u32 {
+    let hmxobj = crate::HANDLE::from_raw(hmxobj);
+    let state = kernel32::lock();
+    if !matches!(state.objects.get(hmxobj), Some(kernel32::Object::Mixer)) {
+        return MMSYSERR_INVALHANDLE;
+    }
+    drop(state);
+    if pmxlc < 0x1000 || ctx.memory.read::<u32>(pmxlc) < 24 {
+        return MMSYSERR_INVALPARAM;
+    }
+    let cControls = ctx.memory.read::<u32>(pmxlc + 12);
+    let cbmxctrl = ctx.memory.read::<u32>(pmxlc + 16);
+    let pamxctrl = ctx.memory.read::<u32>(pmxlc + 20);
+    if cControls != 1
+        || cbmxctrl < std::mem::size_of::<MIXERCONTROL>() as u32
+        || pamxctrl < 0x1000
+        || !matches!(fdwControls, 0..=2)
+    {
+        return MMSYSERR_INVALPARAM;
+    }
+    let dwControlType = if fdwControls == 2 {
+        ctx.memory.read::<u32>(pmxlc + 8)
+    } else {
+        0x5003_0001
+    };
+    let mut szShortName = [0; 16];
+    szShortName[..6].copy_from_slice(b"Volume");
+    let mut szName = [0; 64];
+    szName[..13].copy_from_slice(b"Master Volume");
+    ctx.memory.write(
+        pamxctrl,
+        MIXERCONTROL {
+            cbStruct: std::mem::size_of::<MIXERCONTROL>() as u32,
+            dwControlID: 1,
+            dwControlType,
+            fdwControl: 0,
+            cMultipleItems: 0,
+            szShortName,
+            szName,
+            bounds: [0, 65_535],
+            metrics: [65_535, 0, 0, 0, 0, 0],
+            reserved: [0; 4],
+        },
+    );
+    MMSYSERR_NOERROR
+}
+
 #[win32_derive::dllexport]
 pub fn mixerOpen(
     ctx: &mut Context,
@@ -160,10 +223,15 @@ pub fn mixerClose(_ctx: &mut Context, hmx: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::MIXERLINEA;
+    use super::{MIXERCONTROL, MIXERLINEA};
 
     #[test]
     fn mixer_line_abi_matches_windows() {
         assert_eq!(std::mem::size_of::<MIXERLINEA>(), 0xa8);
+    }
+
+    #[test]
+    fn mixer_control_abi_matches_the_game() {
+        assert_eq!(std::mem::size_of::<MIXERCONTROL>(), 0x94);
     }
 }
