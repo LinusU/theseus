@@ -17,6 +17,40 @@ pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX 
 }
 
 #[win32_derive::dllexport]
+pub fn EnumDisplaySettingsA(
+    ctx: &mut Context,
+    _lpszDeviceName: Ptr<u8>,
+    iModeNum: u32,
+    lpDevMode: Ptr<u8>,
+) -> bool {
+    const ENUM_CURRENT_SETTINGS: u32 = u32::MAX;
+    const ENUM_REGISTRY_SETTINGS: u32 = u32::MAX - 1;
+    const DM_BITSPERPEL: u32 = 0x0004_0000;
+    const DM_PELSWIDTH: u32 = 0x0008_0000;
+    const DM_PELSHEIGHT: u32 = 0x0010_0000;
+    const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
+
+    if lpDevMode.addr < 0x1000
+        || !matches!(iModeNum, ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS)
+    {
+        return false;
+    }
+    if ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94 {
+        return false;
+    }
+
+    ctx.memory.write::<u32>(
+        lpDevMode.addr + 0x28,
+        DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY,
+    );
+    ctx.memory.write::<u32>(lpDevMode.addr + 0x64, 32);
+    ctx.memory.write::<u32>(lpDevMode.addr + 0x68, 640);
+    ctx.memory.write::<u32>(lpDevMode.addr + 0x6c, 480);
+    ctx.memory.write::<u32>(lpDevMode.addr + 0x74, 60);
+    true
+}
+
+#[win32_derive::dllexport]
 pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
     if bShow { stub!(1) } else { stub!(0) }
 }
