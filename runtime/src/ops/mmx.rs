@@ -232,9 +232,25 @@ pub fn psubw(x: u64, y: u64) -> u64 {
 }
 
 pub fn psraw(x: u64, y: u64) -> u64 {
-    if y > 15 {
-        todo!();
-    }
     let x: [i16; 4] = x.unpack();
-    [x[0] >> y, x[1] >> y, x[2] >> y, x[3] >> y].pack()
+    let shifted = if y >= 16 {
+        x.map(|lane| if lane < 0 { -1 } else { 0 })
+    } else {
+        x.map(|lane| lane >> y)
+    };
+    shifted.pack()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::psraw;
+
+    #[test]
+    fn psraw_saturates_large_shift_counts_to_the_sign_bit() {
+        assert_eq!(psraw(0x8000_7fff_ffff_0001, 16), 0xffff_0000_ffff_0000);
+        assert_eq!(
+            psraw(0x8000_7fff_ffff_0001, u64::MAX),
+            0xffff_0000_ffff_0000
+        );
+    }
 }
