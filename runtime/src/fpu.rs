@@ -78,6 +78,9 @@ pub struct FPU {
     pub st_top: usize,
     /// The result of the last fcmp, used to generate status word.
     pub cmp: std::cmp::Ordering,
+    /// The x87 condition-code bits produced by the last status-producing
+    /// instruction.
+    pub condition: u16,
     /// Control word, as managed by fldcw/fnstcw. We only round-trip the value;
     /// precision/rounding control bits are not honored.
     pub control: u16,
@@ -89,6 +92,7 @@ impl Default for FPU {
             st: [0.; 8],
             st_top: 8,
             cmp: std::cmp::Ordering::Equal,
+            condition: Status::C3.bits(),
             control: 0x037f,
         }
     }
@@ -151,16 +155,35 @@ impl FPU {
         self.st[self.st_offset(ofs)] = val;
     }
 
-    pub fn status(&self) -> u16 {
-        let status = match self.cmp {
-            std::cmp::Ordering::Less => Status::C0,
-            std::cmp::Ordering::Equal => Status::C3,
-            std::cmp::Ordering::Greater => Status::empty(),
+    pub fn set_cmp(&mut self, cmp: std::cmp::Ordering) {
+        self.cmp = cmp;
+        self.condition = match cmp {
+            std::cmp::Ordering::Less => Status::C0.bits(),
+            std::cmp::Ordering::Equal => Status::C3.bits(),
+            std::cmp::Ordering::Greater => 0,
         };
+    }
+
+    pub fn examine(&mut self) {
+        let value = self.get(0);
+        let mut condition = if value.is_nan() {
+            Status::C0.bits()
+        } else if value.is_infinite() {
+            (Status::C2 | Status::C0).bits()
+        } else if value == 0.0 {
+            Status::C3.bits()
+        } else {
+            Status::C2.bits()
+        };
+        if value.is_sign_negative() {
+            condition |= Status::C1.bits();
+        }
+        self.condition = condition;
+    }
+
+    pub fn status(&self) -> u16 {
         // Our status register impl doesn't include st_top so include it here.
-        let mut status = status.bits();
-        status |= (self.st_top as u16 & 0b111) << 11;
-        status
+        self.condition | (self.st_top as u16 & 0b111) << 11
     }
 
     pub fn round(&self, val: f64) -> f64 {
@@ -172,7 +195,24 @@ impl FPU {
 
 #[cfg(test)]
 mod tests {
-    use super::F80;
+    use super::{F80, FPU, Status};
+
+    #[test]
+    fn fxam_sets_x87_condition_codes() {
+        let condition_mask = (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits();
+        for (value, expected) in [
+            (-2.0, Status::C1 | Status::C2),
+            (0.0, Status::C3),
+            (-0.0, Status::C1 | Status::C3),
+            (f64::INFINITY, Status::C2 | Status::C0),
+            (f64::NAN, Status::C0),
+        ] {
+            let mut fpu = FPU::default();
+            fpu.push(value);
+            fpu.examine();
+            assert_eq!(fpu.status() & condition_mask, expected.bits());
+        }
+    }
 
     #[test]
     fn f80_round_trips_f64_values() {

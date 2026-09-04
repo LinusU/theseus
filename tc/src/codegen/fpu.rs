@@ -235,7 +235,10 @@ impl<'a> CodeGen<'a> {
             }
 
             Ftst => {
-                self.line("ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(&0.0);");
+                self.line("ctx.cpu.fpu.set_cmp(ctx.cpu.fpu.get(0).total_cmp(&0.0));");
+            }
+            Fxam => {
+                self.line("ctx.cpu.fpu.examine();");
             }
             Fcom | Fcomp => {
                 let (arg0, arg1) = match instr.op_count() {
@@ -244,7 +247,7 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&({}));",
+                    "ctx.cpu.fpu.set_cmp({}.total_cmp(&({})));",
                     arg0, arg1
                 ));
                 if instr.mnemonic() == Fcomp {
@@ -252,7 +255,9 @@ impl<'a> CodeGen<'a> {
                 }
             }
             Fcompp => {
-                self.line("ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(&ctx.cpu.fpu.get(1));");
+                self.line(
+                    "ctx.cpu.fpu.set_cmp(ctx.cpu.fpu.get(0).total_cmp(&ctx.cpu.fpu.get(1)));",
+                );
                 self.line("ctx.cpu.fpu.pop();");
                 self.line("ctx.cpu.fpu.pop();");
             }
