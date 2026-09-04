@@ -11,6 +11,7 @@ pub mod dsound;
 pub mod gdi32;
 mod handle;
 mod heap;
+pub mod imm32;
 pub mod kernel32;
 mod locked_state;
 pub mod msacm32;
