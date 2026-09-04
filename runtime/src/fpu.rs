@@ -81,8 +81,8 @@ pub struct FPU {
     /// The x87 condition-code bits produced by the last status-producing
     /// instruction.
     pub condition: u16,
-    /// Control word, as managed by fldcw/fnstcw. We only round-trip the value;
-    /// precision/rounding control bits are not honored.
+    /// Control word, as managed by fldcw/fnstcw. Precision control is not
+    /// modeled, but the rounding-control bits are honored.
     pub control: u16,
 }
 
@@ -262,9 +262,13 @@ impl FPU {
     }
 
     pub fn round(&self, val: f64) -> f64 {
-        // TODO: rounding modes?
-        // This implements default rounding mode of round towards even.
-        val.round_ties_even()
+        match (self.control >> 10) & 0b11 {
+            0 => val.round_ties_even(),
+            1 => val.floor(),
+            2 => val.ceil(),
+            3 => val.trunc(),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -325,6 +329,25 @@ mod tests {
         assert_eq!(fpu.status(), 0);
         assert_eq!(fpu.st_top, 8);
         assert_eq!(fpu.control, 0x037f);
+    }
+
+    #[test]
+    fn frndint_uses_the_x87_rounding_control() {
+        let mut fpu = FPU::default();
+        assert_eq!(fpu.round(1.5), 2.0);
+        assert_eq!(fpu.round(-1.5), -2.0);
+
+        fpu.control = (fpu.control & !0x0c00) | 0x0400;
+        assert_eq!(fpu.round(1.9), 1.0);
+        assert_eq!(fpu.round(-1.1), -2.0);
+
+        fpu.control = (fpu.control & !0x0c00) | 0x0800;
+        assert_eq!(fpu.round(1.1), 2.0);
+        assert_eq!(fpu.round(-1.9), -1.0);
+
+        fpu.control = (fpu.control & !0x0c00) | 0x0c00;
+        assert_eq!(fpu.round(1.9), 1.0);
+        assert_eq!(fpu.round(-1.9), -1.0);
     }
 
     #[test]
