@@ -215,6 +215,20 @@ impl FPU {
         memory.write(addr.wrapping_add(24), 0u16);
     }
 
+    pub fn load_env(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.control = memory.read(addr);
+        let status: u16 = memory.read(addr.wrapping_add(4));
+        self.condition = status & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits();
+        self.st_top = ((status >> 11) & 0b111) as usize;
+        self.cmp = if self.condition & Status::C3.bits() != 0 {
+            std::cmp::Ordering::Equal
+        } else if self.condition & Status::C0.bits() != 0 {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        };
+    }
+
     pub fn round(&self, val: f64) -> f64 {
         // TODO: rounding modes?
         // This implements default rounding mode of round towards even.

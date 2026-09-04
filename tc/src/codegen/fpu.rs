@@ -279,6 +279,12 @@ impl<'a> CodeGen<'a> {
                     self.gen_addr(instr)
                 ));
             }
+            Fldenv => {
+                self.line(format!(
+                    "ctx.cpu.fpu.load_env(&ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
 
             // We don't model FPU exceptions, so clearing them is a no-op.
             Fnclex => {}
