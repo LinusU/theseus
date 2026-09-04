@@ -28,6 +28,7 @@ pub struct DC {
     pub pen: (HPEN, Pen),
     pub font: (HGDIOBJ, Font),
     rop2: R2,
+    bk_mode: i32,
     pos: POINT,
 }
 
@@ -45,6 +46,7 @@ impl DC {
             pen: (HPEN::null(), Pen(COLORREF::default())),
             font: (HGDIOBJ::null(), Font::default()),
             rop2: R2::COPYPEN,
+            bk_mode: 2,
             pos: POINT::default(),
         }
     }
@@ -83,6 +85,18 @@ pub fn DeleteDC(_ctx: &mut Context, _hdc: HDC) -> bool {
 #[win32_derive::dllexport]
 pub fn GetLayout(_ctx: &mut Context, _hdc: HDC) -> u32 {
     0 // LTR
+}
+
+#[win32_derive::dllexport]
+pub fn SetBkMode(_ctx: &mut Context, hdc: HDC, mode: i32) -> i32 {
+    if !matches!(mode, 1 | 2) {
+        return 0;
+    }
+    let mut state = gdi32::lock();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return 0;
+    };
+    std::mem::replace(&mut dc.bk_mode, mode)
 }
 
 fn text_extent(font: &Font, count: usize) -> SIZE {
