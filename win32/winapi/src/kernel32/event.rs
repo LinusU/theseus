@@ -23,29 +23,38 @@ pub struct Event {
 #[win32_derive::dllexport]
 pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: u32) -> u32 /* WAIT_EVENT */
 {
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 0x102;
+    const WAIT_FAILED: u32 = u32::MAX;
+
     let event = {
         let kernel32 = lock();
-        let Object::Event(event) = kernel32.objects.get(hHandle).unwrap() else {
-            panic!()
-        };
-        event.clone()
+        match kernel32.objects.get(hHandle) {
+            Some(Object::Event(event)) => event.clone(),
+            Some(Object::Mutex) => return WAIT_OBJECT_0,
+            Some(Object::Thread) => return WAIT_TIMEOUT,
+            _ => return WAIT_FAILED,
+        }
     };
 
     let mut signaled = event.signaled.lock().unwrap();
     while !*signaled {
-        signaled = event
+        let (new_signaled, result) = event
             .cond
             .wait_timeout(
                 signaled,
                 std::time::Duration::from_millis(dwMilliseconds as u64),
             )
-            .unwrap()
-            .0;
+            .unwrap();
+        signaled = new_signaled;
+        if result.timed_out() {
+            return WAIT_TIMEOUT;
+        }
     }
     if !event.manual_reset {
         *signaled = false;
     }
-    0
+    WAIT_OBJECT_0
 }
 
 #[win32_derive::dllexport]
