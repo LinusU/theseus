@@ -103,6 +103,18 @@ pub fn GetStringTypeA(
 }
 
 #[win32_derive::dllexport]
+pub fn GetStringTypeExA(
+    ctx: &mut Context,
+    Locale: u32,
+    dwInfoType: u32,
+    lpSrcStr: Ptr<u8>,
+    cchSrc: i32,
+    lpCharType: Ptr<u16>,
+) -> bool {
+    GetStringTypeA(ctx, Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
+}
+
+#[win32_derive::dllexport]
 pub fn GetStringTypeW(
     ctx: &mut Context,
     dwInfoType: u32,
