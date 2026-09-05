@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use runtime::Context;
 use zerocopy::FromBytes;
 
-use crate::{FromABIParam, dllexport::win32flags, kernel32, stub, winmm::state};
+use crate::{dllexport::win32flags, kernel32, stub, winmm::state};
 
 const MMSYSERR_NOERROR: u32 = 0;
 
@@ -156,15 +156,37 @@ pub fn waveOutOpen(
     dwInstance: u32,
     fdwOpen: u32,
 ) -> u32 {
-    if fdwOpen & !0x000F_0000 != 0 {
-        todo!("{fdwOpen:x?}");
-    }
+    const WAVERR_BADFORMAT: u32 = 32;
+    const MMSYSERR_NOTSUPPORTED: u32 = 8;
+    const MMSYSERR_INVALFLAG: u32 = 10;
 
     let fmt = <WAVEFORMATEX>::read_from_prefix(&ctx.memory[pwfx..])
         .unwrap()
         .0;
+    if fmt.wFormatTag != 1 || fmt.wBitsPerSample != 16 {
+        // The emulated device only supports 16-bit PCM.
+        return WAVERR_BADFORMAT;
+    }
 
-    assert_eq!(fmt.wBitsPerSample, 16);
+    // WAVE_FORMAT_QUERY (also part of WAVE_FORMAT_DIRECT_QUERY) asks
+    // whether the format is supported without opening the device.
+    if fdwOpen & 0x0001 != 0 {
+        return MMSYSERR_NOERROR;
+    }
+
+    // The remaining known flags (WAVE_ALLOWSYNC, WAVE_FORMAT_DIRECT,
+    // WAVE_MAPPED) don't affect the emulated stream.
+    if fdwOpen & !0x000F_001B != 0 {
+        return MMSYSERR_INVALFLAG;
+    }
+    let Ok(callback) = CALLBACK::try_from(fdwOpen & 0x000F_0000) else {
+        return MMSYSERR_INVALFLAG;
+    };
+    if matches!(callback, CALLBACK::WINDOW | CALLBACK::EVENT) {
+        // The emulated stream only delivers function callbacks.
+        return MMSYSERR_NOTSUPPORTED;
+    }
+
     let stream = host::host().create_audio_stream(host::AudioSpec {
         channels: fmt.nChannels as u32,
         sample_rate: fmt.nSamplesPerSec as u32,
@@ -174,15 +196,10 @@ pub fn waveOutOpen(
     let (sender, receiver) = std::sync::mpsc::channel::<u32>();
     state().wave = Some(State { sender });
 
-    let callback = CALLBACK::from_abi(fdwOpen);
-    match callback {
-        CALLBACK::NULL => {}
-        CALLBACK::FUNCTION => {
-            kernel32::lock().create_thread(ctx, format!("winmm thread"), move |ctx| {
-                thread_proc(ctx, stream, receiver, dwCallback, dwInstance)
-            });
-        }
-        _ => todo!("{callback:?}"),
+    if matches!(callback, CALLBACK::FUNCTION | CALLBACK::TASK) {
+        kernel32::lock().create_thread(ctx, format!("winmm thread"), move |ctx| {
+            thread_proc(ctx, stream, receiver, dwCallback, dwInstance)
+        });
     }
 
     ctx.memory.write::<u32>(phwo, 1);
