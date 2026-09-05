@@ -81,6 +81,11 @@ impl AudioStream {
     pub fn resume(&self) {
         todo!()
     }
+
+    /// No audio in the wasm host yet; see the web front end.
+    pub fn clear(&self) {
+        todo!()
+    }
 }
 
 pub struct Host {

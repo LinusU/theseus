@@ -1,14 +1,34 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+        mpsc::{Receiver, Sender, TryRecvError},
+    },
+};
 
-use runtime::Context;
+use runtime::{Cont, Context};
 use zerocopy::FromBytes;
 
-use crate::{dllexport::win32flags, kernel32, stub, winmm::state};
+use crate::{dllexport::win32flags, kernel32, winmm::state};
 
 const MMSYSERR_NOERROR: u32 = 0;
+const MMSYSERR_INVALHANDLE: u32 = 5;
+const WAVERR_STILLPLAYING: u32 = 33;
+
+/// What the waveOut API surface hands to the feeder thread.
+enum WaveMsg {
+    /// waveOutWrite submitted a prepared WAVEHDR address.
+    Block(u32),
+    /// waveOutReset: stop playback and return every pending block as done.
+    Reset,
+}
 
 pub struct State {
-    sender: std::sync::mpsc::Sender<u32>,
+    sender: Sender<WaveMsg>,
+    /// WAVEHDRs written but not yet returned as done; lets waveOutClose
+    /// report WAVERR_STILLPLAYING.
+    pending: Arc<AtomicU32>,
 }
 
 #[win32_derive::dllexport]
@@ -82,6 +102,44 @@ enum MM_WOM {
     DONE = 0x3BD,
 }
 
+struct QueuedBlock {
+    addr: u32,
+    len: u32,
+}
+
+/// waveOutReset: stop playback and return every pending block — those fed to
+/// the stream, stashed behind a full queue, or still in the channel — marked
+/// WHDR_DONE with a WOM_DONE callback each.
+fn reset(
+    ctx: &mut Context,
+    stream: &host::AudioStream,
+    receiver: &Receiver<WaveMsg>,
+    incoming: &mut VecDeque<u32>,
+    queued_blocks: &mut VecDeque<QueuedBlock>,
+    total_pending: &mut u32,
+    callback: Option<Cont>,
+    callback_data: u32,
+    pending: &AtomicU32,
+) {
+    stream.clear();
+    *total_pending = 0;
+    let mut done: Vec<u32> = queued_blocks.drain(..).map(|block| block.addr).collect();
+    done.extend(incoming.drain(..));
+    while let Ok(WaveMsg::Block(addr)) = receiver.try_recv() {
+        done.push(addr);
+    }
+    for addr in done {
+        let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[addr..])
+            .unwrap()
+            .0;
+        header.dwFlags.insert(WHDR::DONE);
+        if let Some(f) = callback {
+            ctx.call32_x86(f, vec![1, MM_WOM::DONE as u32, callback_data, addr, 0]);
+        }
+    }
+    pending.store(0, Ordering::SeqCst);
+}
+
 /// Thread procedure to pass data from wave APIs to SDL.
 /// We use a win32 thread here because the callbacks to the executable
 /// that indicate more data is needed come from a thread.
@@ -91,9 +149,10 @@ enum MM_WOM {
 fn thread_proc(
     ctx: &mut Context,
     stream: host::AudioStream,
-    receiver: std::sync::mpsc::Receiver<u32>,
+    receiver: Receiver<WaveMsg>,
     callback: u32,
     callback_data: u32,
+    pending: Arc<AtomicU32>,
 ) {
     // We need to notify when a queued block is done, but SDL doesn't make that easy.
     // We keep track of how much data we have passed to SDL, then compare it against
@@ -102,24 +161,46 @@ fn thread_proc(
     // total_pending is the total number of bytes that have been submitted to SDL,
     // and is the sum of the lengths of all queued blocks.
     let mut total_pending = 0u32;
-    struct QueuedBlock {
-        addr: u32,
-        len: u32,
-    }
     let mut queued_blocks: VecDeque<QueuedBlock> = VecDeque::new();
+    // Block submissions pulled while the SDL queue was full; they are fed to
+    // the stream before anything still in the channel, preserving order.
+    let mut incoming: VecDeque<u32> = VecDeque::new();
+    let callback = (callback != 0).then(|| ctx.indirect(callback));
 
-    let f = ctx.indirect(callback);
     loop {
         while stream.queued_bytes() < 8 << 10 {
-            let addr = receiver.recv().unwrap();
-            let header = <WAVEHDR>::ref_from_prefix(&ctx.memory[addr..]).unwrap().0;
-            let buf = &ctx.memory[header.lpData..][..header.dwBufferLength as usize];
-            stream.put_data(buf);
-            total_pending += header.dwBufferLength;
-            queued_blocks.push_back(QueuedBlock {
-                addr,
-                len: header.dwBufferLength,
-            });
+            let msg = if let Some(addr) = incoming.pop_front() {
+                WaveMsg::Block(addr)
+            } else {
+                match receiver.recv() {
+                    Ok(msg) => msg,
+                    // waveOutClose dropped the channel: shut the stream down.
+                    Err(_) => return,
+                }
+            };
+            match msg {
+                WaveMsg::Block(addr) => {
+                    let header = <WAVEHDR>::ref_from_prefix(&ctx.memory[addr..]).unwrap().0;
+                    let buf = &ctx.memory[header.lpData..][..header.dwBufferLength as usize];
+                    stream.put_data(buf);
+                    total_pending += header.dwBufferLength;
+                    queued_blocks.push_back(QueuedBlock {
+                        addr,
+                        len: header.dwBufferLength,
+                    });
+                }
+                WaveMsg::Reset => reset(
+                    ctx,
+                    &stream,
+                    &receiver,
+                    &mut incoming,
+                    &mut queued_blocks,
+                    &mut total_pending,
+                    callback,
+                    callback_data,
+                    &pending,
+                ),
+            }
         }
 
         if let Some(block) = queued_blocks.front() {
@@ -129,16 +210,41 @@ fn thread_proc(
                 let QueuedBlock { addr, len } = *block;
                 total_pending -= len;
                 queued_blocks.pop_front();
+                pending.fetch_sub(1, Ordering::SeqCst);
 
                 let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[addr..])
                     .unwrap()
                     .0;
                 header.dwFlags.insert(WHDR::DONE);
 
-                let hwo = 1u32; // XXX
-                let uMsg = MM_WOM::DONE as u32;
-                // waveOutProc, WOM_DONE message
-                ctx.call32_x86(f, vec![hwo, uMsg, callback_data, addr, 0]);
+                if let Some(f) = callback {
+                    let hwo = 1u32; // XXX
+                    let uMsg = MM_WOM::DONE as u32;
+                    // waveOutProc, WOM_DONE message
+                    ctx.call32_x86(f, vec![hwo, uMsg, callback_data, addr, 0]);
+                }
+            }
+        }
+
+        // While the SDL queue is full, still service control messages; block
+        // submissions are stashed so channel order is preserved.
+        loop {
+            match receiver.try_recv() {
+                Ok(WaveMsg::Block(addr)) => incoming.push_back(addr),
+                Ok(WaveMsg::Reset) => reset(
+                    ctx,
+                    &stream,
+                    &receiver,
+                    &mut incoming,
+                    &mut queued_blocks,
+                    &mut total_pending,
+                    callback,
+                    callback_data,
+                    &pending,
+                ),
+                Err(TryRecvError::Empty) => break,
+                // waveOutClose dropped the channel.
+                Err(TryRecvError::Disconnected) => return,
             }
         }
 
@@ -193,28 +299,57 @@ pub fn waveOutOpen(
     });
     stream.resume();
 
-    let (sender, receiver) = std::sync::mpsc::channel::<u32>();
-    state().wave = Some(State { sender });
+    let (sender, receiver) = std::sync::mpsc::channel::<WaveMsg>();
+    let pending = Arc::new(AtomicU32::new(0));
+    state().wave = Some(State {
+        sender,
+        pending: pending.clone(),
+    });
 
-    if matches!(callback, CALLBACK::FUNCTION | CALLBACK::TASK) {
-        kernel32::lock().create_thread(ctx, "winmm thread".to_string(), move |ctx| {
-            thread_proc(ctx, stream, receiver, dwCallback, dwInstance)
-        });
-    }
+    // The feeder thread consumes blocks for every callback style: an app
+    // with no callback still expects playback and the WHDR_DONE flag.
+    kernel32::lock().create_thread(ctx, "winmm thread".to_string(), move |ctx| {
+        thread_proc(ctx, stream, receiver, dwCallback, dwInstance, pending)
+    });
 
     ctx.memory.write::<u32>(phwo, 1);
 
     MMSYSERR_NOERROR
 }
 
-#[win32_derive::dllexport]
-pub fn waveOutReset(_ctx: &mut Context, _hwo: u32) -> u32 {
-    stub!(MMSYSERR_NOERROR)
+/// The one emulated output handle waveOutOpen vends.
+fn open_wave(hwo: u32) -> bool {
+    hwo == 1 && state().wave.is_some()
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutClose(_ctx: &mut Context, _hwo: u32) -> u32 {
-    stub!(MMSYSERR_NOERROR)
+pub fn waveOutReset(_ctx: &mut Context, hwo: u32) -> u32 {
+    if !open_wave(hwo) {
+        return MMSYSERR_INVALHANDLE;
+    }
+    // The feeder thread drains and returns pending blocks; a dead thread
+    // just means the stream is already gone.
+    let _ = state().wave.as_ref().unwrap().sender.send(WaveMsg::Reset);
+    MMSYSERR_NOERROR
+}
+
+#[win32_derive::dllexport]
+pub fn waveOutClose(_ctx: &mut Context, hwo: u32) -> u32 {
+    if hwo != 1 {
+        return MMSYSERR_INVALHANDLE;
+    }
+    let mut state = state();
+    let Some(wave) = state.wave.take() else {
+        return MMSYSERR_INVALHANDLE;
+    };
+    if wave.pending.load(Ordering::SeqCst) != 0 {
+        // Buffers are still out; per the contract the app must reset first.
+        state.wave = Some(wave);
+        return WAVERR_STILLPLAYING;
+    }
+    // Dropping the sender ends the feeder thread, and dropping its stream
+    // destroys the SDL audio stream.
+    MMSYSERR_NOERROR
 }
 
 #[repr(C)]
@@ -243,25 +378,44 @@ win32flags! {
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutPrepareHeader(ctx: &mut Context, _hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+pub fn waveOutPrepareHeader(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+    if !open_wave(hwo) {
+        return MMSYSERR_INVALHANDLE;
+    }
     assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
     let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[pwh..])
         .unwrap()
         .0;
     header.dwFlags.remove(WHDR::DONE);
+    header.dwFlags.insert(WHDR::PREPARED);
     MMSYSERR_NOERROR
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutUnprepareHeader(_ctx: &mut Context, _hwo: u32, _pwh: u32, _cbwh: u32) -> u32 {
+pub fn waveOutUnprepareHeader(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+    if !open_wave(hwo) {
+        return MMSYSERR_INVALHANDLE;
+    }
+    assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
+    let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[pwh..])
+        .unwrap()
+        .0;
+    header.dwFlags.remove(WHDR::PREPARED);
     MMSYSERR_NOERROR
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutWrite(_ctx: &mut Context, _hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+pub fn waveOutWrite(_ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+    if !open_wave(hwo) {
+        return MMSYSERR_INVALHANDLE;
+    }
     assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
     let mut state = state();
-    let state = state.wave.as_mut().unwrap();
-    state.sender.send(pwh).unwrap();
+    let wave = state.wave.as_mut().unwrap();
+    wave.pending.fetch_add(1, Ordering::SeqCst);
+    if wave.sender.send(WaveMsg::Block(pwh)).is_err() {
+        wave.pending.fetch_sub(1, Ordering::SeqCst);
+        return MMSYSERR_INVALHANDLE;
+    }
     MMSYSERR_NOERROR
 }

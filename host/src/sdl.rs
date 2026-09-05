@@ -549,6 +549,24 @@ impl AudioStream {
             check(sdl::audio::SDL_ResumeAudioStreamDevice(self.0));
         }
     }
+
+    /// Discard every queued byte without playing it.
+    pub fn clear(&self) {
+        if self.0.is_null() {
+            return;
+        }
+        unsafe {
+            check(sdl::audio::SDL_ClearAudioStream(self.0));
+        }
+    }
+}
+
+impl Drop for AudioStream {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { sdl::audio::SDL_DestroyAudioStream(self.0) };
+        }
+    }
 }
 
 /// Windows VK_* code -> (PC set-1 scan code, extended flag) for the keys a
