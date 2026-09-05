@@ -144,8 +144,8 @@ mod tests {
 
     #[test]
     fn time_set_event_rejects_unknown_callback_kinds() {
-        assert_eq!(TIME::from_abi(0x30).valid, false);
-        assert_eq!(TIME::from_abi(0x11).valid, true); // periodic | EVENT_SET
-        assert_eq!(TIME::from_abi(0x21).valid, true); // periodic | EVENT_PULSE
+        assert!(!TIME::from_abi(0x30).valid);
+        assert!(TIME::from_abi(0x11).valid); // periodic | EVENT_SET
+        assert!(TIME::from_abi(0x21).valid); // periodic | EVENT_PULSE
     }
 }
