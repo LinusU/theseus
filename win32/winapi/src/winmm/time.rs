@@ -66,6 +66,50 @@ pub fn timeSetEvent(
 }
 
 #[win32_derive::dllexport]
-pub fn timeKillEvent(_ctx: &mut Context, _uTimerID: u32) -> u32 {
-    todo!()
+pub fn timeKillEvent(_ctx: &mut Context, uTimerID: u32) -> u32 {
+    const TIMERR_NOERROR: u32 = 0;
+    const MMSYSERR_INVALHANDLE: u32 = 5;
+
+    // The emulated timer model supports a single periodic event with id 1.
+    // Clearing it makes the winmm thread exit its loop at the next wake.
+    let mut state = state();
+    if uTimerID == 1 && state.timer.take().is_some() {
+        TIMERR_NOERROR
+    } else {
+        MMSYSERR_INVALHANDLE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn time_kill_event_clears_only_the_registered_timer() {
+        let mut ctx = context();
+        assert_eq!(timeKillEvent(&mut ctx, 1), 5); // none registered
+
+        state().timer = Some(Timer {
+            period: 10,
+            next: 0,
+            callback: 0,
+            user_data: 0,
+        });
+        assert_eq!(timeKillEvent(&mut ctx, 2), 5); // wrong id
+        assert_eq!(timeKillEvent(&mut ctx, 1), 0);
+        assert!(state().timer.is_none());
+    }
 }
