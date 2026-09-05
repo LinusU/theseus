@@ -376,6 +376,9 @@ pub struct Device {
     textures: HashMap<u32, u32>,
     clip_status: Option<D3DCLIPSTATUS>,
     clip_planes: HashMap<u32, [f32; 4]>,
+    in_scene: bool,
+    /// Pixels rasterized since the last full-target clear.
+    drew_since_clear: bool,
 }
 
 impl Device {
@@ -394,6 +397,8 @@ impl Device {
             textures: HashMap::new(),
             clip_status: None,
             clip_planes: HashMap::new(),
+            in_scene: false,
+            drew_since_clear: false,
         }
     }
 }
@@ -826,12 +831,20 @@ pub mod IDirect3DDevice7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn BeginScene(_ctx: &mut Context, _this: u32) -> DD {
+    pub fn BeginScene(_ctx: &mut Context, this: u32) -> DD {
+        log::debug!("BeginScene dev={this:#x}");
+        if let Some(device) = d3d_state().devices.borrow_mut().get_mut(&this) {
+            device.in_scene = true;
+        }
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn EndScene(_ctx: &mut Context, _this: u32) -> DD {
+    pub fn EndScene(_ctx: &mut Context, this: u32) -> DD {
+        log::debug!("EndScene dev={this:#x}");
+        if let Some(device) = d3d_state().devices.borrow_mut().get_mut(&this) {
+            device.in_scene = false;
+        }
         DD::OK
     }
 
@@ -885,8 +898,8 @@ pub mod IDirect3DDevice7 {
     pub fn Clear(
         ctx: &mut Context,
         this: u32,
-        _dwCount: u32,
-        _lpRects: u32,
+        dwCount: u32,
+        lpRects: u32,
         dwFlags: u32,
         dwColor: u32,
         dvZ: u32,
@@ -897,20 +910,73 @@ pub mod IDirect3DDevice7 {
         if dwFlags & (D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER) == 0 {
             return DD::OK;
         }
-        log::debug!("Clear: flags={dwFlags:#x} color={dwColor:#x} z={:#x}", dvZ);
-        let surface_addr = {
+        let (surface_addr, skip_target) = {
             let devices = d3d_state().devices.borrow();
             let Some(device) = devices.get(&this) else {
                 return DD::ERR_INVALIDPARAMS;
             };
-            device.render_target
+            // MM2 issues a second full-target Clear mid-scene after the world
+            // pass; on real hardware that would erase the frame, so the only
+            // consistent reading is that this clear is meant to refresh just
+            // the depth buffer for the HUD pass. Skip the color fill once
+            // geometry has landed since the last clear.
+            let skip = device.in_scene && device.drew_since_clear;
+            (device.render_target, skip)
         };
+        log::debug!(
+            "Clear: dev={this:#x} rt={surface_addr:#x} flags={dwFlags:#x} count={dwCount} rects={lpRects:#x} color={dwColor:#x} z={:#x}",
+            dvZ
+        );
         let surf = {
             let surfs = state().surf.borrow();
             let Some(surf) = surfs.get(&surface_addr) else {
                 return DD::ERR_INVALIDPARAMS;
             };
             surf.clone()
+        };
+        // The rect list restricts the clear; none means the whole surface.
+        // D3DRECT is {x1,y1,x2,y2} i32s, 16 bytes each.
+        let rects: Vec<(i32, i32, i32, i32)> = if dwCount != 0 && lpRects != 0 {
+            (0..dwCount)
+                .map(|i| {
+                    let base = lpRects + i * 16;
+                    (
+                        ctx.memory.read::<i32>(base),
+                        ctx.memory.read::<i32>(base + 4),
+                        ctx.memory.read::<i32>(base + 8),
+                        ctx.memory.read::<i32>(base + 12),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Rows covered by the clear rects; without a list this is the whole
+        // surface. Calls `write` per scanline run to fill.
+        let fill = |ctx: &mut Context,
+                    surf: &std::rc::Rc<RefCell<crate::ddraw::Surface>>,
+                    write: &dyn Fn(&mut Context, u32, usize)| {
+            let mut surf = surf.borrow_mut();
+            let addr = surf.lock(&mut ctx.memory);
+            let bpp = surf.bytes_per_pixel;
+            let stride = surf.width * bpp;
+            if rects.is_empty() {
+                write(ctx, addr, (surf.height * stride) as usize);
+                return;
+            }
+            for &(x1, y1, x2, y2) in &rects {
+                let left = x1.max(0).min(surf.width as i32) as u32;
+                let right = x2.max(0).min(surf.width as i32) as u32;
+                let top = y1.max(0).min(surf.height as i32) as u32;
+                let bottom = y2.max(0).min(surf.height as i32) as u32;
+                for y in top..bottom {
+                    write(
+                        ctx,
+                        addr + y * stride + left * bpp,
+                        (right.saturating_sub(left) * bpp) as usize,
+                    );
+                }
+            }
         };
         if dwFlags & D3DCLEAR_ZBUFFER != 0 {
             // The z-buffer is the DDSCAPS_ZBUFFER surface attached to the
@@ -923,28 +989,30 @@ pub mod IDirect3DDevice7 {
                     .cloned()
             };
             if let Some(zbuf) = zbuf {
-                let mut zbuf = zbuf.borrow_mut();
-                let addr = zbuf.lock(&mut ctx.memory);
-                let size = (zbuf.width * zbuf.height * zbuf.bytes_per_pixel) as usize;
                 let z = z_to_u16(f32::from_bits(dvZ));
-                let pixels = &mut ctx.memory[addr..][..size];
-                for chunk in pixels.chunks_exact_mut(2) {
-                    chunk.copy_from_slice(&z.to_le_bytes());
-                }
+                fill(ctx, &zbuf, &|ctx, at, len| {
+                    let bytes = z.to_le_bytes();
+                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(2) {
+                        chunk.copy_from_slice(&bytes);
+                    }
+                });
             }
         }
-        if dwFlags & D3DCLEAR_TARGET == 0 {
+        if dwFlags & D3DCLEAR_TARGET == 0 || skip_target {
             return DD::OK;
         }
-        let mut surface = surf.borrow_mut();
-        let addr = surface.lock(&mut ctx.memory);
-        let size = (surface.width * surface.height * surface.bytes_per_pixel) as usize;
-        match surface.bytes_per_pixel {
+        if let Some(device) = d3d_state().devices.borrow_mut().get_mut(&this) {
+            device.drew_since_clear = false;
+        }
+        let bpp = surf.borrow().bytes_per_pixel;
+        match bpp {
             4 => {
-                let pixels = &mut ctx.memory[addr..][..size];
-                for chunk in pixels.chunks_exact_mut(4) {
-                    chunk.copy_from_slice(&dwColor.to_le_bytes());
-                }
+                fill(ctx, &surf, &|ctx, at, len| {
+                    let bytes = dwColor.to_le_bytes();
+                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(4) {
+                        chunk.copy_from_slice(&bytes);
+                    }
+                });
             }
             2 => {
                 let r = ((dwColor >> 16) & 0xFF) as u16;
@@ -952,13 +1020,16 @@ pub mod IDirect3DDevice7 {
                 let b = (dwColor & 0xFF) as u16;
                 let pixel: u16 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
                 let bytes = pixel.to_le_bytes();
-                let pixels = &mut ctx.memory[addr..][..size];
-                for chunk in pixels.chunks_exact_mut(2) {
-                    chunk.copy_from_slice(&bytes);
-                }
+                fill(ctx, &surf, &|ctx, at, len| {
+                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(2) {
+                        chunk.copy_from_slice(&bytes);
+                    }
+                });
             }
             _ => {
-                ctx.memory[addr..][..size].fill(0);
+                fill(ctx, &surf, &|ctx, at, len| {
+                    ctx.memory[at..][..len].fill(0);
+                });
             }
         }
         DD::OK
@@ -2225,6 +2296,11 @@ fn rasterize(
         t.tex_addr,
         last_color
     );
+    if pixels_written != 0
+        && let Some(device) = d3d_state().devices.borrow_mut().get_mut(&this)
+    {
+        device.drew_since_clear = true;
+    }
 }
 
 #[cfg(test)]

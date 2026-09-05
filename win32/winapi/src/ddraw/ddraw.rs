@@ -617,6 +617,7 @@ pub fn blit_copy(
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == at {
+                log::warn!("src dump: src={src_ptr:#x} pixels={addr:#x} dst={dst_ptr:#x}");
                 let path = std::env::var("THESEUS_SRC_DUMP").unwrap();
                 let (w, h) = (src.width, src.height);
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
