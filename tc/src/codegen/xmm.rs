@@ -192,6 +192,37 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // 64-bit low/high loads and stores. Memory loads replace the
+            // corresponding qword and leave the other qword unchanged; stores
+            // write the selected qword from a register source.
+            Movlps | Movhps => {
+                use iced_x86::OpKind::*;
+                let func = instr_name(instr);
+                match (instr.op_kind(0), instr.op_kind(1)) {
+                    (Register, Memory) => {
+                        let src = codegen::get_mem("[u32; 2]".into(), self.gen_addr(instr));
+                        let dst = self.xmm_get(instr, 0);
+                        let reg = instr.op_register(0);
+                        self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
+                    }
+                    (Memory, Register) => {
+                        let qword = if func == "movlps" {
+                            "low_qword"
+                        } else {
+                            "high_qword"
+                        };
+                        let addr = self.gen_addr(instr);
+                        let src = self.xmm_get(instr, 1);
+                        self.line(codegen::set_mem(
+                            "[u32; 2]".into(),
+                            addr,
+                            format!("{qword}({src})"),
+                        ));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
             _ => return false,
         }
         true

@@ -111,6 +111,22 @@ pub fn movlhps(dst: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     [dst[0], dst[1], src[0], src[1]]
 }
 
+pub fn movlps(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    [src[0], src[1], dst[2], dst[3]]
+}
+
+pub fn movhps(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    [dst[0], dst[1], src[0], src[1]]
+}
+
+pub fn low_qword(xmm: [u32; 4]) -> [u32; 2] {
+    [xmm[0], xmm[1]]
+}
+
+pub fn high_qword(xmm: [u32; 4]) -> [u32; 2] {
+    [xmm[2], xmm[3]]
+}
+
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
     std::array::from_fn(|i| {
         let a = f32::from_bits(a[i]);
