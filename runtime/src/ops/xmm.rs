@@ -182,6 +182,140 @@ pub fn cvttpd2dq(src: [u32; 4]) -> [u32; 4] {
     ]
 }
 
+fn to_bytes(a: [u32; 4]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    for i in 0..4 {
+        for j in 0..4 {
+            out[i * 4 + j] = (a[i] >> (j * 8)) as u8;
+        }
+    }
+    out
+}
+
+fn from_bytes(b: [u8; 16]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            out[i] |= (b[i * 4 + j] as u32) << (j * 8);
+        }
+    }
+    out
+}
+
+pub fn pslldq(a: [u32; 4], count: u64) -> [u32; 4] {
+    if count >= 16 {
+        return [0; 4];
+    }
+    let bytes = to_bytes(a);
+    let count = count as usize;
+    let mut out = [0u8; 16];
+    for i in 0..(16 - count) {
+        out[i + count] = bytes[i];
+    }
+    from_bytes(out)
+}
+
+pub fn psrldq(a: [u32; 4], count: u64) -> [u32; 4] {
+    if count >= 16 {
+        return [0; 4];
+    }
+    let bytes = to_bytes(a);
+    let count = count as usize;
+    let mut out = [0u8; 16];
+    for i in 0..(16 - count) {
+        out[i] = bytes[i + count];
+    }
+    from_bytes(out)
+}
+
+fn to_words(a: [u32; 4]) -> [u16; 8] {
+    let mut out = [0u16; 8];
+    for i in 0..4 {
+        out[i * 2] = a[i] as u16;
+        out[i * 2 + 1] = (a[i] >> 16) as u16;
+    }
+    out
+}
+
+fn from_words(w: [u16; 8]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    for i in 0..4 {
+        out[i] = (w[i * 2] as u32) | ((w[i * 2 + 1] as u32) << 16);
+    }
+    out
+}
+
+fn to_qwords(a: [u32; 4]) -> [u64; 2] {
+    [
+        (a[0] as u64) | ((a[1] as u64) << 32),
+        (a[2] as u64) | ((a[3] as u64) << 32),
+    ]
+}
+
+fn from_qwords(q: [u64; 2]) -> [u32; 4] {
+    [
+        q[0] as u32,
+        (q[0] >> 32) as u32,
+        q[1] as u32,
+        (q[1] >> 32) as u32,
+    ]
+}
+
+pub fn psllw_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let words = to_words(a);
+    let out = words.map(|w| if count >= 16 { 0 } else { w << (count as u32) });
+    from_words(out)
+}
+
+pub fn pslld_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let out = a.map(|w| if count >= 32 { 0 } else { w << (count as u32) });
+    out
+}
+
+pub fn psllq_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let q = to_qwords(a);
+    let out = q.map(|v| if count >= 64 { 0 } else { v << count });
+    from_qwords(out)
+}
+
+pub fn psrlw_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let words = to_words(a);
+    let out = words.map(|w| if count >= 16 { 0 } else { w >> (count as u32) });
+    from_words(out)
+}
+
+pub fn psrld_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    a.map(|w| if count >= 32 { 0 } else { w >> (count as u32) })
+}
+
+pub fn psrlq_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let q = to_qwords(a);
+    let out = q.map(|v| if count >= 64 { 0 } else { v >> count });
+    from_qwords(out)
+}
+
+pub fn psraw_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    let words = to_words(a);
+    let out = words.map(|w| {
+        if count >= 16 {
+            if (w as i16) < 0 { 0xffff } else { 0 }
+        } else {
+            ((w as i16) >> (count as u32)) as u16
+        }
+    });
+    from_words(out)
+}
+
+pub fn psrad_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
+    a.map(|w| {
+        if count >= 32 {
+            if (w as i32) < 0 { 0xffff_ffff } else { 0 }
+        } else {
+            ((w as i32) >> (count as u32)) as u32
+        }
+    })
+}
+
 pub fn movsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     [src[0], src[1], dst[2], dst[3]]
 }

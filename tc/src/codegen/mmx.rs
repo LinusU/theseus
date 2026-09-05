@@ -71,6 +71,15 @@ impl<'a> CodeGen<'a> {
 
     pub fn codegen_mmx(&mut self, instr: &iced_x86::Instruction) -> bool {
         use iced_x86::Mnemonic::*;
+        // The PSLL/PSRL/PSRA mnemonics are shared between MMX and SSE2. MMX
+        // forms operate on an MMX destination; SSE2 forms use an XMM register.
+        if matches!(
+            instr.mnemonic(),
+            Psllw | Pslld | Psllq | Psrlw | Psrld | Psrlq | Psraw | Psrad
+        ) && !is_mmx_reg(instr.op_register(0))
+        {
+            return false;
+        }
         match instr.mnemonic() {
             Movd => self.line(self.mmx_set_32(instr, 0, self.mmx_get_32(instr, 1))),
             // MOVNTQ is a non-temporal MMX store; in the flat memory model it

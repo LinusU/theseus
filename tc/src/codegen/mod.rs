@@ -3774,6 +3774,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_packed_shifts() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pslldq xmm0, 4
+            (
+                &[0x66, 0x0f, 0x73, 0xf8, 0x04][..],
+                "ctx.cpu.xmm.xmm0 = pslldq(ctx.cpu.xmm.xmm0, 0x4u64);",
+            ),
+            // psrldq xmm0, 8
+            (
+                &[0x66, 0x0f, 0x73, 0xd8, 0x08],
+                "ctx.cpu.xmm.xmm0 = psrldq(ctx.cpu.xmm.xmm0, 0x8u64);",
+            ),
+            // psllw xmm0, 2
+            (
+                &[0x66, 0x0f, 0x71, 0xf0, 0x02],
+                "ctx.cpu.xmm.xmm0 = psllw_xmm(ctx.cpu.xmm.xmm0, 0x2u64);",
+            ),
+            // pslld xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0xf2, 0x00],
+                "ctx.cpu.xmm.xmm0 = pslld_xmm(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // psrad xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0xe2, 0xc1],
+                "ctx.cpu.xmm.xmm0 = psrad_xmm(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

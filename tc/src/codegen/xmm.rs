@@ -71,6 +71,21 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    // SSE2 packed shift instructions take the shift count as an immediate,
+    // another XMM/MMX register's low qword, or a 64-bit memory location.
+    fn xmm_get_shift_count(&self, instr: &iced_x86::Instruction, n: u32) -> String {
+        use iced_x86::OpKind::*;
+        match instr.op_kind(n) {
+            Immediate8 => format!("{:#x}u64", instr.immediate8()),
+            Register => format!("low_qword({})", xmm_reg(instr.op_register(n))),
+            Memory => {
+                let addr = self.gen_addr(instr);
+                codegen::get_mem("[u32; 2]".into(), addr)
+            }
+            k => todo!("{k:?}"),
+        }
+    }
+
     fn xmm_set(&self, instr: &iced_x86::Instruction, n: u32, expr: String) -> String {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
@@ -356,6 +371,24 @@ impl<'a> CodeGen<'a> {
                 let func = instr_name(instr);
                 let src = self.xmm_get_64(instr, 1);
                 self.line(self.mmx_set(instr, 0, format!("{func}({src})")));
+            }
+
+            // Packed integer shifts. PSLLDQ/PSRLDQ are byte shifts of the whole
+            // 128-bit value; PSLLW/PSLLD/PSLLQ and PSRLW/PSRLD/PSRLQ are logical
+            // lane shifts; PSRAW/PSRAD are arithmetic lane shifts.
+            Pslldq | Psrldq => {
+                let func = instr_name(instr);
+                let count = format!("{:#x}u64", instr.immediate8());
+                let dst = self.xmm_get(instr, 0);
+                self.line(self.xmm_set(instr, 0, format!("{func}({dst}, {count})")));
+            }
+            Psllw | Pslld | Psllq | Psrlw | Psrld | Psrlq | Psraw | Psrad => {
+                // These mnemonics are also used by the MMX integer shifters,
+                // so the 128-bit XMM variants use a distinct helper name.
+                let func = format!("{}_xmm", instr_name(instr));
+                let count = self.xmm_get_shift_count(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                self.line(self.xmm_set(instr, 0, format!("{func}({dst}, {count})")));
             }
 
             // Scalar ordered/unordered compare that updates EFLAGS. The helper
