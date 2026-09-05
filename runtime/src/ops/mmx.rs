@@ -525,6 +525,30 @@ pub fn pmullw(x: u64, y: u64) -> u64 {
     .pack()
 }
 
+/// PMULHRW (3DNow!) keeps bits [30:15] of each lane product after adding
+/// 0x4000, which rounds the high 16-bit result.
+pub fn pmulhrw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    let mut out = [0i16; 4];
+    for i in 0..4 {
+        let prod = (x[i] as i32).wrapping_mul(y[i] as i32);
+        out[i] = ((prod as u32).wrapping_add(0x4000) >> 15) as i16;
+    }
+    out.pack()
+}
+
+/// PAVGUSB (3DNow!) is the same rounded unsigned byte average as PAVGB.
+pub fn pavgusb(x: u64, y: u64) -> u64 {
+    pavgb(x, y)
+}
+
+/// PSWAPD (3DNow!) swaps the low and high dwords of an MMX qword.
+pub fn pswapd(x: u64) -> u64 {
+    let x: [u32; 2] = x.unpack();
+    [x[1], x[0]].pack()
+}
+
 pub fn psrlw(x: u64, y: u64) -> u64 {
     if y > 15 {
         return 0;
@@ -643,10 +667,10 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw,
-        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhuw, pmulhw, pmuludq,
-        psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
-        punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
+        pextrw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw,
+        pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd,
+        psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -777,6 +801,22 @@ mod tests {
         assert_eq!(pmuludq(0xffff_ffff, 0xffff_ffff), 0xffff_fffe_0000_0001);
         // Only the low dword of each operand participates.
         assert_eq!(pmuludq(0x1234_5678_ffff_ffff, 2), 0x1_ffff_fffe);
+        // PSWAPD swaps dwords.
+        assert_eq!(pswapd(0x1234_5678_9abc_def0), 0x9abc_def0_1234_5678);
+    }
+
+    #[test]
+    fn pavgusb_pmulhrw_pswapd_3dnow_helpers() {
+        assert_eq!(pavgusb(0xff, 0), 0x80);
+        assert_eq!(pavgusb(u64::MAX, u64::MAX), u64::MAX);
+        assert_eq!(pswapd(0x1234_5678_9abc_def0), 0x9abc_def0_1234_5678);
+        // PMULHRW: bits [30:15] of (product + 0x4000).
+        // 0x4000 * 2 = 0x8000; + 0x4000 = 0xc000; bits [30:15] = 1.
+        assert_eq!(pmulhrw(0x4000, 2), 0x0001);
+        // -32768 * 2 = 0xffff_0000; + 0x4000 = 0xffff_4000; bits [30:15] = 0xfffe.
+        assert_eq!(pmulhrw(0x0000_0000_0000_8000, 2), 0xfffe);
+        // 0x7fff * 0x7fff = 0x3fff_0001; + 0x4000 = 0x3fff_4001; bits [30:15] = 0x7ffe.
+        assert_eq!(pmulhrw(0x7fff, 0x7fff), 0x0000_0000_0000_7ffe);
     }
 
     #[test]
