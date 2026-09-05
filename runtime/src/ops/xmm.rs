@@ -487,6 +487,40 @@ pub fn phaddsw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     ])
 }
 
+/// PSIGNB (SSSE3) applies the sign of each byte in `dest` to the
+/// corresponding byte in `src`.
+pub fn psignb_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_bytes(dest).map(|w| w as i8);
+    let s = to_bytes(src).map(|w| w as i8);
+    from_bytes(std::array::from_fn(|i| match d[i].cmp(&0) {
+        std::cmp::Ordering::Less => s[i].wrapping_neg() as u8,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => s[i] as u8,
+    }))
+}
+
+/// PSIGNW (SSSE3) applies the sign of each word in `dest` to the
+/// corresponding word in `src`.
+pub fn psignw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_words(dest).map(|w| w as i16);
+    let s = to_words(src).map(|w| w as i16);
+    from_words(std::array::from_fn(|i| match d[i].cmp(&0) {
+        std::cmp::Ordering::Less => s[i].wrapping_neg() as u16,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => s[i] as u16,
+    }))
+}
+
+/// PSIGND (SSSE3) applies the sign of each dword in `dest` to the
+/// corresponding dword in `src`.
+pub fn psignd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| match (dest[i] as i32).cmp(&0) {
+        std::cmp::Ordering::Less => (src[i] as i32).wrapping_neg() as u32,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => src[i],
+    })
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally. The first
 /// two result dwords come from dest; the last two come from src.
 pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {

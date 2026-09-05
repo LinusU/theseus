@@ -704,6 +704,52 @@ pub fn phaddd(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
+/// PSIGNB (SSSE3) applies the sign of each byte in `dest` to the
+/// corresponding byte in `src`.
+pub fn psignb(dest: u64, src: u64) -> u64 {
+    let d: [i8; 8] = dest.unpack();
+    let s: [i8; 8] = src.unpack();
+    std::array::from_fn(|i| match d[i].cmp(&0) {
+        std::cmp::Ordering::Less => s[i].wrapping_neg() as u8,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => s[i] as u8,
+    })
+    .pack()
+}
+
+/// PSIGNW (SSSE3) applies the sign of each word in `dest` to the
+/// corresponding word in `src`.
+pub fn psignw(dest: u64, src: u64) -> u64 {
+    let d: [i16; 4] = dest.unpack();
+    let s: [i16; 4] = src.unpack();
+    std::array::from_fn(|i| match d[i].cmp(&0) {
+        std::cmp::Ordering::Less => s[i].wrapping_neg() as u16,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => s[i] as u16,
+    })
+    .pack()
+}
+
+/// PSIGND (SSSE3) applies the sign of each dword in `dest` to the
+/// corresponding dword in `src`.
+pub fn psignd(dest: u64, src: u64) -> u64 {
+    let d: [i32; 2] = dest.unpack();
+    let s: [i32; 2] = src.unpack();
+    [
+        match d[0].cmp(&0) {
+            std::cmp::Ordering::Less => s[0].wrapping_neg() as u32,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => s[0] as u32,
+        },
+        match d[1].cmp(&0) {
+            std::cmp::Ordering::Less => s[1].wrapping_neg() as u32,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => s[1] as u32,
+        },
+    ]
+    .pack()
+}
+
 /// PF2ID (3DNow!) converts two packed single-precision floats to two
 /// 32-bit signed integers using round-to-zero with saturation.
 pub fn pf2id(x: u64) -> u64 {
