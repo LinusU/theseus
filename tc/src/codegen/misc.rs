@@ -227,27 +227,24 @@ impl<'a> CodeGen<'a> {
 
             Lds | Les | Lfs | Lgs | Lss => {
                 assert_eq!(instr.op_count(), 2);
-                if self.module.bitness() != 16 {
-                    // Usually a junk block from a misidentified code pointer.
-                    self.todo(instr_name(instr));
-                    return true;
+                let segment = match instr.mnemonic() {
+                    Lds => "ds",
+                    Les => "es",
+                    Lfs => "fs",
+                    Lgs => "gs",
+                    Lss => "ss",
+                    _ => unreachable!(),
+                };
+                let address = self.gen_addr(instr);
+                if self.module.bitness() == 16 {
+                    self.line(format!("let ptr = {};", get_mem("u32".into(), address),));
+                    self.line(format!("ctx.cpu.regs.{segment} = (ptr >> 16) as u16;"));
+                    self.line(self.set_op(instr, 0, "ptr as u16".into()));
+                } else {
+                    self.line(format!("let ptr = {};", get_mem("u64".into(), address),));
+                    self.line(format!("ctx.cpu.regs.{segment} = (ptr >> 32) as u16;"));
+                    self.line(self.set_op(instr, 0, "ptr as u32".into()));
                 }
-                self.line(format!(
-                    "let ptr = {};",
-                    get_mem("u32".into(), self.gen_addr(instr)),
-                ));
-                self.line(format!(
-                    "ctx.cpu.regs.{} = (ptr >> 16) as u16;",
-                    match instr.mnemonic() {
-                        Lds => "ds",
-                        Les => "es",
-                        Lfs => "fs",
-                        Lgs => "gs",
-                        Lss => "ss",
-                        _ => unreachable!(),
-                    }
-                ));
-                self.line(self.set_op(instr, 0, "ptr as u16".into()));
             }
 
             Xlatb => self.line("ctx.xlat();"),

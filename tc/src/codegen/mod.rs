@@ -672,6 +672,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_protected_mode_segment_loads() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0xc4, 0x00];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("let ptr = ctx.memory.read::<u64>(ctx.cpu.regs.eax);")
+        );
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.regs.es = (ptr >> 32) as u16;")
+        );
+        assert!(codegen.buf.contains("ctx.cpu.regs.eax = ptr as u32;"));
+        assert!(!codegen.buf.contains("todo!"));
+    }
+
+    #[test]
     fn codegen_registers_statically_imported_modules() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule {
