@@ -375,37 +375,78 @@ pub fn SetROP2(_ctx: &mut Context, hdc: HDC, rop2: R2) -> i32 {
     std::mem::replace(&mut dc.rop2, rop2) as i32
 }
 
-fn ascending(a: i32, b: i32) -> std::ops::RangeInclusive<i32> {
-    if a < b { a..=b } else { b..=a }
-}
-
 #[win32_derive::dllexport]
 pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
     let mut state = gdi32::lock();
     let dc = state.dcs.get_mut(hdc).unwrap();
     let bitmap = dc.bitmap();
     assert!(bitmap.is_simple());
+    let stride = bitmap.stride();
+    let width = bitmap.width;
+    let height = bitmap.height;
 
-    let color = match dc.rop2 {
-        R2::COPYPEN => dc.pen.1.0,
-        R2::WHITE => Some(COLORREF::from_rgb(0xff, 0xff, 0xff)),
-        _ => todo!("{:?}", dc.rop2),
+    let pen = dc.pen.1.0;
+    // The binary raster operation combining pen and destination pixel,
+    // or None when the pixel is left untouched.
+    let rop = |d: u32| -> Option<u32> {
+        use R2::*;
+        Some(match dc.rop2 {
+            NOP => return None,
+            BLACK => 0,
+            WHITE => 0x00ff_ffff,
+            NOT => !d,
+            _ => match pen.map(|p| p.as_win32()) {
+                // A NULL pen draws nothing for pen-dependent operations.
+                None => return None,
+                Some(p) => match dc.rop2 {
+                    NOTMERGEPEN => !(d | p),
+                    MASKNOTPEN => d & !p,
+                    NOTCOPYPEN => !p,
+                    MASKPENNOT => p & !d,
+                    XORPEN => d ^ p,
+                    NOTMASKPEN => !(d & p),
+                    MASKPEN => d & p,
+                    NOTXORPEN => !(d ^ p),
+                    MERGENOTPEN => d | !p,
+                    COPYPEN => p,
+                    MERGEPENNOT => p | !d,
+                    MERGEPEN => d | p,
+                    _ => unreachable!(),
+                },
+            },
+        })
     };
 
+    // Bresenham rasterization covering horizontal, vertical, and
+    // diagonal segments, with per-pixel clipping.
+    let mut x0 = dc.pos.x;
+    let mut y0 = dc.pos.y;
+    let dx = (x - x0).abs();
+    let sx = if x0 < x { 1 } else { -1 };
+    let dy = -(y - y0).abs();
+    let sy = if y0 < y { 1 } else { -1 };
+    let mut err = dx + dy;
+
     let pixels = bitmap.pixels_mut(&mut ctx.memory);
-    if let Some(color) = color {
-        if x == dc.pos.x {
-            for y in ascending(dc.pos.y, y) {
-                let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
-                pixels[i..][..4].copy_from_slice(&color.to_pixel());
+    loop {
+        if x0 >= 0 && y0 >= 0 && (x0 as u32) < width && (y0 as u32) < height {
+            let i = (y0 as u32 * stride + x0 as u32 * 4) as usize;
+            let d = u32::from_le_bytes(pixels[i..][..4].try_into().unwrap());
+            if let Some(v) = rop(d) {
+                pixels[i..][..4].copy_from_slice(&((v & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
             }
-        } else if y == dc.pos.y {
-            for x in ascending(dc.pos.x, x) {
-                let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
-                pixels[i..][..4].copy_from_slice(&color.to_pixel());
-            }
-        } else {
-            todo!(); // only axis-aligned supported for now
+        }
+        if x0 == x && y0 == y {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
         }
     }
 
