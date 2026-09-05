@@ -66,6 +66,10 @@ pub fn port_out(port: u16, data: u32, width: u32) {
     log::warn!("port output {port:#x}/{width}: {data:#x} ignored");
 }
 
+pub fn unhandled_interrupt(vector: u8, ip: u32) -> ! {
+    panic!("unhandled x86 interrupt {vector:#x} at {ip:#x}");
+}
+
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     match (leaf, subleaf) {
         (0, 0) => (1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69),

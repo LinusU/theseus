@@ -132,7 +132,11 @@ impl<'a> CodeGen<'a> {
                         instr.immediate8()
                     ));
                 } else {
-                    self.todo(format!("int {:#x}", instr.immediate8()));
+                    self.line(format!(
+                        "unhandled_interrupt({:#x}, {:#x});",
+                        instr.immediate8(),
+                        instr.ip32()
+                    ));
                 }
             }
             Rdtsc => self.line("ctx.cpu.regs.set_edx_eax(rdtsc());"),
