@@ -84,7 +84,7 @@ impl kernel32::State {
         let origin = ctx.memory.as_ptr() as usize;
         let buf = &mut ctx.memory[process_data_addr..][..0x1000];
 
-        let command_line = "TODO\0";
+        let command_line = "Midtown2.exe nolockcheck\0";
 
         let len = align_to_4(command_line.len());
         let (command_line_16, buf) = buf.split_at_mut(len * 2);
