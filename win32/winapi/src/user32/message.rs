@@ -106,16 +106,27 @@ fn mouse_msg(wm: WM, hwnd: HWND, message: &host::MouseMessage) -> MSG {
         wParam |= MK::RBUTTON;
     }
 
+    // MSG.pt is the cursor position in *screen* coordinates: the client-space
+    // message position plus the window's screen origin (no frame or caption is
+    // modeled, so the client origin coincides with the window origin).
+    let origin = state()
+        .window
+        .borrow()
+        .as_ref()
+        .map(|window| {
+            let window = window.borrow();
+            (window.x, window.y)
+        })
+        .unwrap_or_default();
     MSG {
         hwnd,
         message: wm as u32,
         wParam: wParam.bits(),
         lParam: (message.y as u16 as u32) << 16 | message.x as u16 as u32,
-        time: 0, // todo
-        // TODO: screen coordinates
+        time: host::host().time(),
         pt: POINT {
-            x: message.x as i32,
-            y: message.y as i32,
+            x: message.x as i32 + origin.0,
+            y: message.y as i32 + origin.1,
         },
     }
 }

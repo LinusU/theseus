@@ -783,16 +783,21 @@ pub fn MapWindowPoints(
     let window = state.window.borrow();
     let window_origin = |hwnd: HWND| -> POINT {
         if hwnd.is_null() {
+            // A null HWND is the desktop: points are already in screen space.
             return POINT::default();
         }
-
-        let _window = window.as_ref().unwrap().borrow();
+        let Some(window) = window.as_ref() else {
+            return POINT::default();
+        };
+        let window = window.borrow();
+        if window.hwnd != hwnd {
+            return POINT::default();
+        }
+        // The emulated window has no frame or caption, so the client origin
+        // coincides with the window's screen position.
         POINT {
-            x: 0,
-            y: 0,
-            // TODO: screen coordinates, need MSG.point to translate as well
-            // x: window.x,
-            // y: window.y,
+            x: window.x,
+            y: window.y,
         }
     };
 
