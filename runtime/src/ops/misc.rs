@@ -180,6 +180,19 @@ impl Context {
         self.cpu.flags.remove(Flags::IF);
     }
 
+    pub fn aaa(&mut self) {
+        let al = self.cpu.regs.get_al();
+        let adjust = (al & 0x0f) > 9 || self.cpu.flags.contains(Flags::AF);
+        if adjust {
+            self.cpu.regs.set_al(al.wrapping_add(6) & 0x0f);
+            self.cpu.regs.set_ah(self.cpu.regs.get_ah().wrapping_add(1));
+        } else {
+            self.cpu.regs.set_al(al & 0x0f);
+        }
+        self.cpu.flags.set(Flags::AF, adjust);
+        self.cpu.flags.set(Flags::CF, adjust);
+    }
+
     pub fn daa(&mut self) {
         let al = self.cpu.regs.get_al();
         let old_cf = self.cpu.flags.contains(Flags::CF);
@@ -251,6 +264,29 @@ mod tests {
 
         ctx.sti();
         assert!(ctx.cpu.flags.contains(Flags::IF));
+    }
+
+    #[test]
+    fn aaa_adjusts_ascii_digit_and_increments_ah() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_ax(0x120b);
+
+        ctx.aaa();
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 0x1301);
+        assert!(ctx.cpu.flags.contains(Flags::AF | Flags::CF));
+    }
+
+    #[test]
+    fn aaa_truncates_unadjusted_al_and_clears_adjust_flags() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_ax(0x1234);
+        ctx.cpu.flags.insert(Flags::CF);
+
+        ctx.aaa();
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 0x1204);
+        assert!(!ctx.cpu.flags.intersects(Flags::AF | Flags::CF));
     }
 
     #[test]
