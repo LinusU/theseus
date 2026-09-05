@@ -25,11 +25,15 @@ bitflags::bitflags! {
     }
 }
 
-impl Flags {
-    pub fn to_string(&self) -> String {
-        self.iter_names()
-            .map(|(name, _)| name)
-            .collect::<Vec<_>>()
-            .join(" ")
+impl std::fmt::Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.iter_names()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     }
 }

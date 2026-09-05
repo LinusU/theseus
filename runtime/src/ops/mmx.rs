@@ -4,7 +4,7 @@ trait Unpack<T> {
 
 impl Unpack<[u32; 2]> for u64 {
     fn unpack(self) -> [u32; 2] {
-        [(self >> 0) as u32, (self >> 32) as u32]
+        [self as u32, (self >> 32) as u32]
     }
 }
 
@@ -17,14 +17,14 @@ impl Unpack<[f32; 2]> for u64 {
 
 impl Unpack<[i32; 2]> for u64 {
     fn unpack(self) -> [i32; 2] {
-        [(self >> 0) as i32, (self >> 32) as i32]
+        [self as i32, (self >> 32) as i32]
     }
 }
 
 impl Unpack<[u16; 4]> for u64 {
     fn unpack(self) -> [u16; 4] {
         [
-            (self >> 0) as u16,
+            self as u16,
             (self >> 16) as u16,
             (self >> 32) as u16,
             (self >> 48) as u16,
@@ -54,7 +54,7 @@ impl Unpack<[u8; 8]> for u64 {
 
 impl Unpack<[u16; 2]> for u32 {
     fn unpack(self) -> [u16; 2] {
-        [(self >> 0) as u16, (self >> 16) as u16]
+        [self as u16, (self >> 16) as u16]
     }
 }
 

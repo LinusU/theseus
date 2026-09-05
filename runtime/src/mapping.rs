@@ -40,7 +40,7 @@ impl Mappings {
         let index = self.insert_index(&mut mapping);
         let addr = mapping.addr;
         self.mappings.insert(index, mapping);
-        return addr;
+        addr
     }
 
     pub fn alloc(&mut self, desc: String, size: u32) -> u32 {
@@ -55,7 +55,7 @@ impl Mappings {
         let index = self.insert_index(&mut new_mapping);
         let addr = new_mapping.addr;
         self.mappings.insert(index, new_mapping);
-        return addr;
+        addr
     }
 
     /// Choose the index into self.mappings to add this mapping, potentially assigning it an address.

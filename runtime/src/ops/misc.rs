@@ -256,7 +256,9 @@ impl Context {
         self.cpu.regs.set_al(value);
         self.cpu.flags.set(Flags::SF, value & 0x80 != 0);
         self.cpu.flags.set(Flags::ZF, value == 0);
-        self.cpu.flags.set(Flags::PF, value.count_ones() % 2 == 0);
+        self.cpu
+            .flags
+            .set(Flags::PF, value.count_ones().is_multiple_of(2));
     }
 
     pub fn aam(&mut self, base: u8) {
@@ -267,7 +269,9 @@ impl Context {
         let result = self.cpu.regs.get_al();
         self.cpu.flags.set(Flags::SF, result & 0x80 != 0);
         self.cpu.flags.set(Flags::ZF, result == 0);
-        self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
+        self.cpu
+            .flags
+            .set(Flags::PF, result.count_ones().is_multiple_of(2));
     }
 
     pub fn daa(&mut self) {
@@ -283,7 +287,9 @@ impl Context {
         self.cpu.flags.set(Flags::CF, high_adjust);
         self.cpu.flags.set(Flags::SF, result & 0x80 != 0);
         self.cpu.flags.set(Flags::ZF, result == 0);
-        self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
+        self.cpu
+            .flags
+            .set(Flags::PF, result.count_ones().is_multiple_of(2));
     }
 
     pub fn das(&mut self) {
@@ -299,7 +305,9 @@ impl Context {
         self.cpu.flags.set(Flags::CF, high_adjust);
         self.cpu.flags.set(Flags::SF, result & 0x80 != 0);
         self.cpu.flags.set(Flags::ZF, result == 0);
-        self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
+        self.cpu
+            .flags
+            .set(Flags::PF, result.count_ones().is_multiple_of(2));
     }
 
     pub fn xlat(&mut self) {

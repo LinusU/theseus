@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 mod exe;
 mod flags;
 mod fpu;

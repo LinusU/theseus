@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 fn binop_ps(a: [u32; 4], b: [u32; 4], op: impl Fn(f32, f32) -> f32) -> [u32; 4] {
     std::array::from_fn(|i| op(f32::from_bits(a[i]), f32::from_bits(b[i])).to_bits())
 }
@@ -209,9 +211,7 @@ pub fn pslldq(a: [u32; 4], count: u64) -> [u32; 4] {
     let bytes = to_bytes(a);
     let count = count as usize;
     let mut out = [0u8; 16];
-    for i in 0..(16 - count) {
-        out[i + count] = bytes[i];
-    }
+    out[count..16].copy_from_slice(&bytes[..16 - count]);
     from_bytes(out)
 }
 
@@ -222,9 +222,7 @@ pub fn psrldq(a: [u32; 4], count: u64) -> [u32; 4] {
     let bytes = to_bytes(a);
     let count = count as usize;
     let mut out = [0u8; 16];
-    for i in 0..(16 - count) {
-        out[i] = bytes[i + count];
-    }
+    out[..16 - count].copy_from_slice(&bytes[count..16]);
     from_bytes(out)
 }
 
@@ -268,8 +266,7 @@ pub fn psllw_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
 }
 
 pub fn pslld_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
-    let out = a.map(|w| if count >= 32 { 0 } else { w << (count as u32) });
-    out
+    a.map(|w| if count >= 32 { 0 } else { w << (count as u32) })
 }
 
 pub fn psllq_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
@@ -461,10 +458,10 @@ pub fn palignr_xmm(dest: [u32; 4], src: [u32; 4], count: u8) -> [u32; 4] {
     composite[0..16].copy_from_slice(&s);
     composite[16..32].copy_from_slice(&d);
     let mut out = [0u8; 16];
-    for i in 0..16 {
+    for (i, out_byte) in out.iter_mut().enumerate() {
         let idx = i + count as usize;
         if idx < 32 {
-            out[i] = composite[idx];
+            *out_byte = composite[idx];
         }
     }
     from_bytes(out)
@@ -1129,8 +1126,8 @@ pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
         2 => a <= b,
         3 => a.is_nan() || b.is_nan(),
         4 => a != b,
-        5 => !(a < b),
-        6 => !(a <= b),
+        5 => !matches!(a.partial_cmp(&b), Some(Ordering::Less)),
+        6 => matches!(a.partial_cmp(&b), Some(Ordering::Greater) | None),
         7 => !a.is_nan() && !b.is_nan(),
         _ => false,
     };
@@ -1225,8 +1222,8 @@ pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
             2 => a <= b,
             3 => a.is_nan() || b.is_nan(),
             4 => a != b,
-            5 => !(a < b),
-            6 => !(a <= b),
+            5 => !matches!(a.partial_cmp(&b), Some(Ordering::Less)),
+            6 => matches!(a.partial_cmp(&b), Some(Ordering::Greater) | None),
             7 => !a.is_nan() && !b.is_nan(),
             _ => false,
         };
@@ -1241,8 +1238,8 @@ fn cmppd_result(a: f64, b: f64, predicate: u8) -> bool {
         2 => a <= b,
         3 => a.is_nan() || b.is_nan(),
         4 => a != b,
-        5 => !(a < b),
-        6 => !(a <= b),
+        5 => !matches!(a.partial_cmp(&b), Some(Ordering::Less)),
+        6 => matches!(a.partial_cmp(&b), Some(Ordering::Greater) | None),
         7 => !a.is_nan() && !b.is_nan(),
         _ => false,
     }

@@ -34,7 +34,7 @@ pub fn btc<I: Int>(x: I, bit: u32, flags: &mut Flags) -> I {
 pub fn arpl(dest: u16, src: u16, flags: &mut Flags) -> Option<u16> {
     let needs_adjust = dest & 3 < src & 3;
     flags.set(Flags::ZF, needs_adjust);
-    needs_adjust.then(|| dest & !3 | src & 3)
+    needs_adjust.then_some(dest & !3 | src & 3)
 }
 
 #[cfg(test)]

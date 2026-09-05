@@ -200,7 +200,7 @@ impl Regs {
     }
 
     pub fn get_dx_ax(&self) -> u32 {
-        ((self.edx as u32) << 16) | self.eax as u32
+        (self.edx << 16) | self.eax
     }
 
     pub fn set_dx_ax(&mut self, val: u32) {

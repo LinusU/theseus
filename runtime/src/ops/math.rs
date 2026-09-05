@@ -17,7 +17,7 @@ fn sbb_impl<I: Int>(x: I, y: I, b: bool, flags: &mut Flags) -> I {
     //   1  0  0  (neg - pos => positive)
     let of = ((x ^ y) & (x ^ result)).high_bit().is_one();
     flags.set(Flags::OF, of);
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 
@@ -73,7 +73,7 @@ pub fn addc<I: Int>(x: I, y: I, z: I, flags: &mut Flags) -> I {
     //   1  1  0
     let of = ((x ^ !y) & (x ^ result)).high_bit().is_one();
     flags.set(Flags::OF, of);
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 
@@ -83,7 +83,7 @@ pub fn and<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
     flags.set(Flags::SF, result.high_bit().is_one());
     flags.set(Flags::OF, false);
     flags.set(Flags::CF, false);
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 
@@ -93,7 +93,7 @@ pub fn or<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
     flags.remove(Flags::OF | Flags::CF);
     flags.set(Flags::SF, result.high_bit().is_one());
     flags.set(Flags::ZF, result.is_zero());
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 
@@ -105,7 +105,7 @@ pub fn neg<I: Int>(x: I, flags: &mut Flags) -> I {
     flags.set(Flags::AF, (x & I::from(0xf).unwrap()) != I::zero());
     flags.set(Flags::CF, !result.is_zero());
     flags.set(Flags::OF, of);
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 
@@ -131,7 +131,7 @@ pub fn xor<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
     flags.remove(Flags::CF);
     flags.set(Flags::ZF, result.is_zero());
     flags.set(Flags::SF, result.high_bit().is_one());
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 

@@ -76,7 +76,7 @@ impl<'a> Memory<'a> {
         let buf = &self.bytes[addr as usize..];
         let mut str: Vec<u16> = vec![];
         for chunk in buf.chunks_exact(2) {
-            if chunk == &[0, 0] {
+            if chunk == [0, 0] {
                 break;
             }
             str.push(u16::from_le_bytes([chunk[0], chunk[1]]));

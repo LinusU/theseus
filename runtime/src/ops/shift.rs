@@ -28,7 +28,7 @@ pub fn shl<I: Int + num_traits::WrappingShl>(x: I, y: u8, flags: &mut Flags) -> 
         x.shr(I::bits() - 1).is_one() ^ (x.shr(I::bits() - 2) & I::one()).is_one(),
     );
     flags.set(Flags::ZF, val.is_zero());
-    flags.set(Flags::PF, val.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, val.low_byte().count_ones().is_multiple_of(2));
 
     val
 }
@@ -43,7 +43,7 @@ pub fn shld16(x: u16, y: u16, count: u8, flags: &mut Flags) -> u16 {
         flags.set(Flags::OF, (x >> 15) != ((x >> 14) & 1));
     }
     let result = (((x as u32) << count) | ((y as u32) >> (16 - count))) as u16;
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     flags.set(Flags::SF, (result >> 15) != 0);
     flags.set(Flags::ZF, result == 0);
     result
@@ -61,7 +61,7 @@ pub fn shld(x: u32, y: u32, count: u8, flags: &mut Flags) -> u32 {
         flags.set(Flags::OF, (x >> 31) != ((x >> 30) & 1));
     }
     let result = (x << count) | (y >> (32 - count));
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     flags.set(Flags::SF, (result >> 31) != 0);
     flags.set(Flags::ZF, result == 0);
     result
@@ -77,7 +77,7 @@ pub fn shrd16(x: u16, y: u16, count: u8, flags: &mut Flags) -> u16 {
     if count == 1 {
         flags.set(Flags::OF, ((x >> 15) & 1) != ((result >> 15) & 1));
     }
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     flags.set(Flags::SF, (result >> 15) != 0);
     flags.set(Flags::ZF, result == 0);
     result
@@ -94,7 +94,7 @@ pub fn shrd(x: u32, y: u32, count: u8, flags: &mut Flags) -> u32 {
         // For a 1-bit shrd, OF is set if the sign bit changed.
         flags.set(Flags::OF, ((x >> 31) & 1) != ((result >> 31) & 1));
     }
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     flags.set(Flags::SF, (result >> 31) != 0);
     flags.set(Flags::ZF, result == 0);
     result
@@ -123,7 +123,7 @@ pub fn shr<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
 
     // Note: OF state undefined for shifts > 1 bit.
     flags.set(Flags::OF, x.high_bit().is_one());
-    flags.set(Flags::PF, val.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, val.low_byte().count_ones().is_multiple_of(2));
     val
 }
 
@@ -153,7 +153,7 @@ pub fn sar<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
 
     flags.set(Flags::SF, result.high_bit().is_one());
     flags.set(Flags::ZF, result.is_zero());
-    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::PF, result.low_byte().count_ones().is_multiple_of(2));
     result
 }
 

@@ -55,7 +55,7 @@ impl StringInt for u16 {
 }
 impl StringInt for u32 {
     fn from_eax(u: u32) -> Self {
-        u as u32
+        u
     }
     fn set_eax(&self, regs: &mut Regs) {
         regs.eax = *self;
