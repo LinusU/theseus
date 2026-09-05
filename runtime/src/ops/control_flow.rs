@@ -199,6 +199,14 @@ impl Context {
         self.jmpf16(cs, ip)
     }
 
+    pub fn retf32(&mut self, n: u16) -> Cont {
+        let ip = self.pop32();
+        let cs = self.pop32();
+        self.cpu.regs.esp += n as u32;
+        self.cpu.regs.set_cs(cs as u16);
+        self.indirect(ip)
+    }
+
     pub fn jmpf16(&mut self, seg: u16, ofs: u16) -> Cont {
         self.cpu.regs.set_cs(seg);
         self.indirect(segofs(seg, ofs))
@@ -323,6 +331,22 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
+    }
+
+    #[test]
+    fn retf32_restores_flat_far_return_state() {
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0x100;
+        ctx.memory.write::<u32>(0x100, 0x1234);
+        ctx.memory.write::<u32>(0x104, 0x001b);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.retf32(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.cs, 0x001b);
+        assert_eq!(ctx.cpu.regs.esp, 0x10c);
     }
 
     #[test]
