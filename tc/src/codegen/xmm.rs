@@ -192,6 +192,16 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // Scalar single-precision arithmetic. Only the low 32-bit lane is
+            // modified; the three high lanes are preserved.
+            Addss | Subss | Mulss | Divss => {
+                let func = instr_name(instr);
+                let src = self.xmm_get_32(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
+            }
+
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.

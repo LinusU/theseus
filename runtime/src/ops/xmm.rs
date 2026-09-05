@@ -127,6 +127,46 @@ pub fn high_qword(xmm: [u32; 4]) -> [u32; 2] {
     [xmm[2], xmm[3]]
 }
 
+fn scalar_binop(a: u32, b: u32, op: impl Fn(f32, f32) -> f32) -> u32 {
+    op(f32::from_bits(a), f32::from_bits(b)).to_bits()
+}
+
+pub fn addss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [
+        scalar_binop(dst[0], src, |a, b| a + b),
+        dst[1],
+        dst[2],
+        dst[3],
+    ]
+}
+
+pub fn subss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [
+        scalar_binop(dst[0], src, |a, b| a - b),
+        dst[1],
+        dst[2],
+        dst[3],
+    ]
+}
+
+pub fn mulss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [
+        scalar_binop(dst[0], src, |a, b| a * b),
+        dst[1],
+        dst[2],
+        dst[3],
+    ]
+}
+
+pub fn divss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [
+        scalar_binop(dst[0], src, |a, b| a / b),
+        dst[1],
+        dst[2],
+        dst[3],
+    ]
+}
+
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
     std::array::from_fn(|i| {
         let a = f32::from_bits(a[i]);

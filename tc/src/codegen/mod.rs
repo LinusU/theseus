@@ -1718,6 +1718,52 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_sse1_scalar_arithmetic() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // addss xmm0, xmm1
+            (
+                &[0xf3, 0x0f, 0x58, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = addss(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1[0]);",
+            ),
+            // subss xmm0, [eax]
+            (
+                &[0xf3, 0x0f, 0x5c, 0x00],
+                "ctx.cpu.xmm.xmm0 = subss(ctx.cpu.xmm.xmm0, ctx.memory.read::<u32>(ctx.cpu.regs.eax));",
+            ),
+            // mulss xmm0, xmm1
+            (
+                &[0xf3, 0x0f, 0x59, 0xc1],
+                "ctx.cpu.xmm.xmm0 = mulss(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1[0]);",
+            ),
+            // divss xmm0, xmm1
+            (
+                &[0xf3, 0x0f, 0x5e, 0xc1],
+                "ctx.cpu.xmm.xmm0 = divss(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1[0]);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_bsf_xadd_cmov() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
