@@ -17,6 +17,9 @@ pub fn DialogBoxParamA(
     stub!(1) // return value from dialog proc
 }
 
+// The emulated model has no dialogs: DialogBoxParam returns without
+// creating one, so every dialog-item accessor and mutator fails.
+
 #[win32_derive::dllexport]
 pub fn DialogBoxParamW(
     _ctx: &mut Context,
@@ -26,7 +29,7 @@ pub fn DialogBoxParamW(
     _lpDialogFunc: Ptr<()>, /* DLGPROC */
     _dwInitParam: u32,
 ) -> i32 {
-    todo!()
+    stub!(1) // same as DialogBoxParamA: no dialog is ever created
 }
 
 #[win32_derive::dllexport]
@@ -36,12 +39,12 @@ pub fn CheckDlgButton(
     _nIDButton: i32,
     _uCheck: u32, /* DLG_BUTTON_CHECK_STATE */
 ) -> bool {
-    todo!()
+    false
 }
 
 #[win32_derive::dllexport]
 pub fn EndDialog(_ctx: &mut Context, _hDlg: HWND, _nResult: i32) -> bool {
-    todo!()
+    false
 }
 
 #[win32_derive::dllexport]
@@ -58,34 +61,40 @@ pub fn SendDlgItemMessageA(
 
 #[win32_derive::dllexport]
 pub fn IsDlgButtonChecked(_ctx: &mut Context, _hDlg: HWND, _nIDButton: i32) -> u32 {
-    todo!()
+    0 // BST_UNCHECKED
 }
 
 #[win32_derive::dllexport]
 pub fn GetDlgItem(_ctx: &mut Context, _hDlg: HWND, _nIDDlgItem: i32) -> HWND {
-    todo!()
+    HWND::null()
 }
 
 #[win32_derive::dllexport]
 pub fn GetDlgItemInt(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _hDlg: HWND,
     _nIDDlgItem: i32,
-    _lpTranslated: Ptr<u32>,
+    lpTranslated: Ptr<u32>,
     _bSigned: bool,
 ) -> u32 {
-    todo!()
+    if lpTranslated.addr != 0 {
+        ctx.memory.write::<u32>(lpTranslated.addr, 0);
+    }
+    0
 }
 
 #[win32_derive::dllexport]
 pub fn GetDlgItemTextW(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _hDlg: HWND,
     _nIDDlgItem: i32,
-    _lpString: Ptr<u16>, /* WSTR */
-    _cchMax: i32,
+    lpString: Ptr<u16>, /* WSTR */
+    cchMax: i32,
 ) -> u32 {
-    todo!()
+    if lpString.addr != 0 && cchMax > 0 {
+        ctx.memory.write::<u16>(lpString.addr, 0);
+    }
+    0
 }
 
 #[win32_derive::dllexport]
@@ -96,7 +105,7 @@ pub fn SetDlgItemInt(
     _uValue: u32,
     _bSigned: bool,
 ) -> bool {
-    todo!()
+    false
 }
 
 #[win32_derive::dllexport]
@@ -106,5 +115,5 @@ pub fn SetDlgItemTextW(
     _nIDDlgItem: i32,
     _lpString: Ptr<u16>, /* WSTR */
 ) -> bool {
-    todo!()
+    false
 }

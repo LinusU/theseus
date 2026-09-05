@@ -219,7 +219,8 @@ pub fn WinHelpW(
     _uCommand: u32,
     _dwData: u32,
 ) -> bool {
-    todo!()
+    // There is no host help viewer to launch.
+    false
 }
 
 #[win32_derive::dllexport]
@@ -237,7 +238,8 @@ pub fn GetMenuItemRect(
     _uItem: u32,
     _lprcItem: Ptr<RECT>,
 ) -> bool {
-    todo!()
+    // No menus are tracked in the emulated model.
+    false
 }
 
 #[win32_derive::dllexport]
