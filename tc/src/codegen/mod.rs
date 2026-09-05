@@ -645,6 +645,28 @@ mod tests {
     }
 
     #[test]
+    fn codegen_uses_signed_offsets_for_memory_bit_indices() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x0f, 0xa3, 0x08];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.regs.eax.wrapping_add((((bit as i32 >> 5) * 4i32) as u32))")
+        );
+    }
+
+    #[test]
     fn codegen_handles_16_bit_double_shifts() {
         let mut state = crate::State::default();
         state.module = crate::Module::DOS(crate::DOSModule::default());

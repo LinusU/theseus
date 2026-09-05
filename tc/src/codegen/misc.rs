@@ -90,9 +90,11 @@ impl<'a> CodeGen<'a> {
                 if instr.op_kind(0) == iced_x86::OpKind::Memory {
                     let addr = self.gen_addr(instr);
                     let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
-                        let mask = !(size as u32 - 1);
+                        let shift = size.trailing_zeros();
                         let bytes = size / 8;
-                        format!("{addr}.wrapping_add((bit & {mask:#x}u32) / {bytes}u32)")
+                        format!(
+                            "{addr}.wrapping_add((((bit as i32 >> {shift}) * {bytes}i32) as u32))"
+                        )
                     } else {
                         addr
                     };
