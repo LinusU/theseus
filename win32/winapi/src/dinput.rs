@@ -219,7 +219,7 @@ fn lock() -> Lock {
     LockedState::from_or_init(&STATE, Default::default)
 }
 
-pub const VTABLES: [(&'static str, &[&str]); 2] = [
+pub const VTABLES: [(&str, &[&str]); 2] = [
     ("IDirectInput", IDirectInput::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectInputDevice",

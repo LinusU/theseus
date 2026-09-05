@@ -68,7 +68,7 @@ impl BITMAPINFOHEADER {
 
     pub fn height(&self) -> u32 {
         // Height is negative if top-down DIB.
-        (self.biHeight as i32).abs() as u32
+        (self.biHeight as i32).unsigned_abs()
     }
 
     pub fn is_bottom_up(&self) -> bool {
@@ -118,7 +118,7 @@ impl Bitmap {
     }
 
     pub fn is_simple(&self) -> bool {
-        self.is_bottom_up == false && self.bit_count == 32 && self.palette.len() == 0
+        !self.is_bottom_up && self.bit_count == 32 && self.palette.is_empty()
     }
 
     pub fn stride(&self) -> u32 {
@@ -190,7 +190,7 @@ impl Bitmap {
         };
         let (palette, buf) = <[[u8; 3]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBTRIPLE
         let palette = palette
-            .into_iter()
+            .iter()
             .map(|&[b, g, r]| COLORREF::from_rgb(r, g, b))
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -237,7 +237,7 @@ impl Bitmap {
             return Self::degenerate();
         };
         let palette = palette
-            .into_iter()
+            .iter()
             .map(|&[b, g, r, _]| COLORREF::from_rgb(r, g, b))
             .collect::<Vec<_>>()
             .into_boxed_slice();

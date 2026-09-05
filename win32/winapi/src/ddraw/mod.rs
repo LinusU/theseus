@@ -152,7 +152,7 @@ fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
     ctx.blocks = Box::leak(blocks.into_boxed_slice());
 }
 
-pub const VTABLES: [(&'static str, &[&str]); 8] = [
+pub const VTABLES: [(&str, &[&str]); 8] = [
     ("IDirectDraw", IDirectDraw::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectDrawSurface",

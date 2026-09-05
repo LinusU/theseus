@@ -337,7 +337,7 @@ pub fn DirectSoundEnumerateA(_ctx: &mut Context, _lpCallback: u32, _lpContext: u
 pub mod IDirectSound {
     use super::*;
 
-    pub const VTABLE_ENTRIES: [&'static str; 11] = [
+    pub const VTABLE_ENTRIES: [&str; 11] = [
         "QueryInterface",
         "AddRef",
         "Release",
@@ -527,7 +527,7 @@ pub mod IDirectSound {
 pub mod IDirectSoundBuffer {
     use super::*;
 
-    pub const VTABLE_ENTRIES: [&'static str; 21] = [
+    pub const VTABLE_ENTRIES: [&str; 21] = [
         "QueryInterface",
         "AddRef",
         "Release",
@@ -998,7 +998,7 @@ pub struct WAVEFORMATEX {
     pub cbSize: u16,
 }
 
-pub const VTABLES: [(&'static str, &[&str]); 2] = [
+pub const VTABLES: [(&str, &[&str]); 2] = [
     ("IDirectSound", IDirectSound::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectSoundBuffer",

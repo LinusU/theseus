@@ -138,7 +138,7 @@ pub mod IDirectDraw {
         let desc = <DDSURFACEDESC>::ref_from_prefix(&ctx.memory[desc..])
             .unwrap()
             .0;
-        let desc2 = DDSURFACEDESC2::from_desc(&desc);
+        let desc2 = DDSURFACEDESC2::from_desc(desc);
         let mut state = kernel32::lock();
         let surface = ddraw.create_surface(&desc2, &mut || {
             IDirectDrawSurface::new(ctx, &mut state.process_heap)
@@ -207,28 +207,29 @@ pub mod IDirectDraw {
                         continue;
                     }
                 }
-                let mut desc = DDSURFACEDESC::default();
-                desc.dwSize = std::mem::size_of::<DDSURFACEDESC>() as u32;
-                desc.dwFlags = DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH;
-                desc.dwWidth = width;
-                desc.dwHeight = height;
-                desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
-
                 // DDPF_RGB = 0x40, DDPF_PALETTEINDEXED8 = 0x20.
                 let (flags, r, g, b) = match bpp {
                     8 => (0x40 | 0x20, 0, 0, 0),
                     16 => (0x40, 0xF800, 0x07E0, 0x001F), // 5-6-5
                     _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF), // 24/32
                 };
-                desc.ddpfPixelFormat = DDPIXELFORMAT {
-                    dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                    dwFlags: flags,
-                    dwFourCC: 0,
-                    dwRGBBitCount: bpp,
-                    dwRBitMask: r,
-                    dwGBitMask: g,
-                    dwBBitMask: b,
-                    dwRGBAlphaBitMask: 0,
+                let desc = DDSURFACEDESC {
+                    dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH,
+                    dwWidth: width,
+                    dwHeight: height,
+                    lPitch_dwLinearSize: width * bpp.div_ceil(8),
+                    ddpfPixelFormat: DDPIXELFORMAT {
+                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                        dwFlags: flags,
+                        dwFourCC: 0,
+                        dwRGBBitCount: bpp,
+                        dwRBitMask: r,
+                        dwGBitMask: g,
+                        dwBBitMask: b,
+                        dwRGBAlphaBitMask: 0,
+                    },
+                    ..Default::default()
                 };
 
                 let desc_addr = kernel32::lock()
@@ -431,7 +432,7 @@ pub mod IDirectDraw {
             .unwrap()
             .borrow_mut()
             .resize(ctx, width, height);
-        assert!(bpp % 8 == 0);
+        assert!(bpp.is_multiple_of(8));
         ddraw.bytes_per_pixel = bpp / 8;
         stub!(DD::OK)
     }
