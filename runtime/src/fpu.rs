@@ -85,6 +85,9 @@ pub struct FPU {
     pub st: [f64; 8],
     /// Index of top of FPU stack; 8 when stack empty.
     pub st_top: usize,
+    /// Per-register non-empty tag. FFREE clears a register's tag without
+    /// moving TOP, so tags are tracked independently of `st_top`.
+    pub tags: [bool; 8],
     /// The result of the last fcmp, used to generate status word.
     pub cmp: std::cmp::Ordering,
     /// The x87 condition-code bits produced by the last status-producing
@@ -100,6 +103,7 @@ impl Default for FPU {
         Self {
             st: [0.; 8],
             st_top: 8,
+            tags: [false; 8],
             cmp: std::cmp::Ordering::Equal,
             condition: Status::C3.bits(),
             control: 0x037f,
@@ -131,14 +135,39 @@ impl FPU {
         }
         self.st_top -= 1;
         self.st[self.st_top] = val;
+        self.tags[self.st_top] = true;
     }
 
+    /// Popping (FSTP, FADDP, etc.) tags the freed register empty.
     pub fn pop(&mut self) {
         if self.st_top == 8 {
             Self::exception("fpu stack underflow");
             return;
         }
+        self.tags[self.st_top] = false;
         self.st_top += 1;
+    }
+
+    /// FINCSTP moves TOP up one slot; register contents and tags are
+    /// unchanged, unlike a data pop.
+    pub fn inc_top(&mut self) {
+        if self.st_top == 8 {
+            Self::exception("fpu stack underflow");
+            return;
+        }
+        self.st_top += 1;
+    }
+
+    /// FFREE marks the referenced register's tag empty without moving TOP.
+    pub fn ffree(&mut self, ofs: usize) {
+        let offset = self.st_offset(ofs);
+        self.tags[offset] = false;
+    }
+
+    /// FFREEP marks the referenced register empty, then pops the stack.
+    pub fn ffreep(&mut self, ofs: usize) {
+        self.ffree(ofs);
+        self.pop();
     }
 
     /// FDECSTP moves the TOP pointer down without writing a value;
@@ -238,9 +267,10 @@ impl FPU {
 
     fn tag_word(&self) -> u16 {
         let mut tags = 0xffff;
-        let active = 8 - self.st_top;
-        for logical in 0..active {
-            let physical = (self.st_top + logical) & 7;
+        for physical in 0..8 {
+            if !self.tags[physical] {
+                continue;
+            }
             let value = self.st[physical];
             let tag = if value == 0.0 {
                 1
@@ -284,6 +314,9 @@ impl FPU {
         } else {
             ((status >> 11) & 0b111) as usize
         };
+        for i in 0..8 {
+            self.tags[i] = (tag >> (i * 2)) & 3 != 3;
+        }
         self.cmp = if self.condition & Status::C3.bits() != 0 {
             std::cmp::Ordering::Equal
         } else if self.condition & Status::C0.bits() != 0 {
@@ -310,6 +343,7 @@ impl FPU {
     pub fn init(&mut self) {
         self.control = 0x037f;
         self.st_top = 8;
+        self.tags = [false; 8];
         self.condition = 0;
         self.cmp = std::cmp::Ordering::Greater;
     }
@@ -357,11 +391,13 @@ impl FPU {
     /// Abridged tag word used by FXSAVE: one bit per physical register, set
     /// where the register is non-empty.
     fn abridged_tag(&self) -> u8 {
-        if self.st_top >= 8 {
-            0
-        } else {
-            (0xff_u16 << self.st_top) as u8
+        let mut tag = 0;
+        for (i, &nonempty) in self.tags.iter().enumerate() {
+            if nonempty {
+                tag |= 1 << i;
+            }
         }
+        tag
     }
 
     /// FXSAVE writes a 512-byte image. Fields this model does not track
@@ -578,6 +614,44 @@ mod tests {
         other.push(1.0);
         other.fxrstor(&memory, 0x1000);
         assert_eq!(other.st_top, 8);
+    }
+
+    #[test]
+    fn ffree_marks_a_register_empty_without_moving_top() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+        fpu.push(2.0);
+
+        fpu.ffree(1);
+        fpu.store_env(&mut memory, 0x1000);
+
+        // Physical slot 6 stays valid; the freed st(1) in slot 7 is empty.
+        assert_eq!(memory.read::<u16>(0x1008), 0xcfff);
+        assert_eq!(fpu.st_top, 6);
+    }
+
+    #[test]
+    fn ffreep_marks_empty_and_pops() {
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+        fpu.push(2.0);
+
+        fpu.ffreep(1);
+
+        assert_eq!(fpu.st_top, 7);
+        assert!(fpu.tags.iter().all(|&nonempty| !nonempty));
+    }
+
+    #[test]
+    fn fincstp_moves_top_without_changing_tags() {
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+
+        fpu.inc_top();
+
+        assert_eq!(fpu.st_top, 8);
+        assert!(fpu.tags[7]);
     }
 
     #[test]

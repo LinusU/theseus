@@ -1283,7 +1283,7 @@ mod tests {
             (&[0xd9, 0xf5], "round_ties_even"),                           // fprem1
             (&[0xd9, 0xd0], ""), // fnop (no output beyond the comment)
             (&[0xd9, 0xf6], "ctx.cpu.fpu.dec_top();"), // fdecstp
-            (&[0xd9, 0xf7], "ctx.cpu.fpu.pop();"), // fincstp
+            (&[0xd9, 0xf7], "ctx.cpu.fpu.inc_top();"), // fincstp
             // fisubr dword ptr [eax]: int - st0
             (&[0xda, 0x28], "as i32 as f64 - ctx.cpu.fpu.get(0)"),
             // fcmovb st0, st1
@@ -2455,6 +2455,30 @@ mod tests {
                 &[0x0f, 0xae, 0x09][..],
                 "ctx.cpu.fpu.fxrstor(&ctx.memory, ctx.cpu.regs.ecx);",
             ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
+    fn codegen_handles_ffree() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (&[0xdd, 0xc1][..], "ctx.cpu.fpu.ffree(1);"),
+            (&[0xdf, 0xc1][..], "ctx.cpu.fpu.ffreep(1);"),
+            (&[0xd9, 0xf7][..], "ctx.cpu.fpu.inc_top();"),
         ] {
             let mut decoder =
                 iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);

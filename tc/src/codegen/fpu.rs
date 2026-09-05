@@ -1,4 +1,4 @@
-use crate::codegen::{CodeGen, get_mem, mem_size, op_size};
+use crate::codegen::{CodeGen, get_mem, instr_name, mem_size, op_size};
 
 fn reg_to_index(register: iced_x86::Register) -> usize {
     use iced_x86::Register::*;
@@ -259,7 +259,14 @@ impl<'a> CodeGen<'a> {
             }
             Fnop => {}
             Fdecstp => self.line("ctx.cpu.fpu.dec_top();"),
-            Fincstp => self.line("ctx.cpu.fpu.pop();"),
+            Fincstp => self.line("ctx.cpu.fpu.inc_top();"),
+            Ffree | Ffreep => {
+                self.line(format!(
+                    "ctx.cpu.fpu.{}({});",
+                    instr_name(instr),
+                    reg_to_index(instr.op_register(0))
+                ));
+            }
             Fsqrt => {
                 self.line(self.fpu_set_reg(0, format!("{}.sqrt()", self.fpu_get_reg(0))));
             }
