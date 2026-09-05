@@ -813,7 +813,8 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn AddOverlayDirtyRect(_ctx: &mut Context, _this: u32, _lpRect: u32) -> DD {
-        todo!()
+        // No emulated surface is an overlay.
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
@@ -845,7 +846,9 @@ pub mod IDirectDrawSurface7 {
         _dwCount: u32,
         _dwFlags: u32,
     ) -> DD {
-        todo!()
+        // BltBatch is documented as unimplemented; its blits already happened
+        // synchronously through Blt, so acknowledge it.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -968,7 +971,9 @@ pub mod IDirectDrawSurface7 {
         _lpContext: u32,
         _lpfnCallback: u32,
     ) -> DD {
-        todo!()
+        // There are no overlays in the emulated display, so the callback is
+        // never invoked.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -1014,8 +1019,14 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetBltStatus(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
-        todo!()
+    pub fn GetBltStatus(_ctx: &mut Context, _this: u32, dwFlags: u32) -> DD {
+        // DDGBS_CANBLT | DDGBS_ISBLTDONE.
+        if dwFlags & !0x3 != 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // Every blit runs synchronously, so the surface can always blit and no
+        // blit is ever still drawing.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -1067,13 +1078,18 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFlipStatus(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
-        todo!()
+    pub fn GetFlipStatus(_ctx: &mut Context, _this: u32, dwFlags: u32) -> DD {
+        // DDGFS_CANFLIP | DDGFS_ISFLIPDONE.
+        if dwFlags & !0x3 != 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // Flips are synchronous, so the previous flip is always done.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn GetOverlayPosition(_ctx: &mut Context, _this: u32, _lplX: u32, _lplY: u32) -> DD {
-        todo!()
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
@@ -1220,7 +1236,7 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn SetOverlayPosition(_ctx: &mut Context, _this: u32, _lX: i32, _lY: i32) -> DD {
-        todo!()
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
@@ -1259,12 +1275,12 @@ pub mod IDirectDrawSurface7 {
         _dwFlags: u32,
         _lpDDOverlayFx: u32,
     ) -> DD {
-        todo!()
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
     pub fn UpdateOverlayDisplay(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
-        todo!()
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
@@ -1274,7 +1290,7 @@ pub mod IDirectDrawSurface7 {
         _dwFlags: u32,
         _lpDDSurfaceReference: u32,
     ) -> DD {
-        todo!()
+        DD::ERR_NOTAOVERLAYSURFACE
     }
 
     #[win32_derive::dllexport]
@@ -1284,12 +1300,13 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn PageLock(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
-        todo!()
+        // Emulated surface memory never pages, so locking it is a no-op.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn PageUnlock(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
