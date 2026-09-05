@@ -56,15 +56,21 @@ pub fn lstrcmpA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i3
     }
 }
 
-fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Vec<u8> {
-    if count < 0 {
+fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
+    if count < -1 {
+        return None;
+    }
+    Some(if count < 0 {
         ctx.memory.read_str(addr).as_bytes().to_vec()
     } else {
         ctx.memory[addr..][..count as usize].to_vec()
-    }
+    })
 }
 
-fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Vec<u16> {
+fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
+    if count < -1 {
+        return None;
+    }
     let mut out = Vec::new();
     let mut addr = addr;
     if count < 0 {
@@ -82,7 +88,7 @@ fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Vec<u16> {
             addr += 2;
         }
     }
-    out
+    Some(out)
 }
 
 fn compare_ordering(ord: std::cmp::Ordering) -> i32 {
@@ -104,8 +110,12 @@ pub fn CompareStringA(
     lpString2: Ptr<u8>,
     cchCount2: i32,
 ) -> i32 {
-    let mut a = read_counted_a(ctx, lpString1.addr, cchCount1);
-    let mut b = read_counted_a(ctx, lpString2.addr, cchCount2);
+    let Some(mut a) = read_counted_a(ctx, lpString1.addr, cchCount1) else {
+        return 0;
+    };
+    let Some(mut b) = read_counted_a(ctx, lpString2.addr, cchCount2) else {
+        return 0;
+    };
     if dwCmpFlags & NORM_IGNORECASE != 0 {
         a.make_ascii_lowercase();
         b.make_ascii_lowercase();
@@ -123,8 +133,12 @@ pub fn CompareStringW(
     lpString2: Ptr<u16>,
     cchCount2: i32,
 ) -> i32 {
-    let mut a = read_counted_w(ctx, lpString1.addr, cchCount1);
-    let mut b = read_counted_w(ctx, lpString2.addr, cchCount2);
+    let Some(mut a) = read_counted_w(ctx, lpString1.addr, cchCount1) else {
+        return 0;
+    };
+    let Some(mut b) = read_counted_w(ctx, lpString2.addr, cchCount2) else {
+        return 0;
+    };
     if dwCmpFlags & NORM_IGNORECASE != 0 {
         for c in a.iter_mut().chain(b.iter_mut()) {
             if *c < 0x80 {
@@ -133,4 +147,54 @@ pub fn CompareStringW(
         }
     }
     compare_ordering(a.cmp(&b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn compare_string_rejects_invalid_negative_counts() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+        ctx.memory[0x1100..][..2].copy_from_slice(b"a\0");
+
+        assert_eq!(
+            CompareStringA(
+                &mut ctx,
+                0,
+                NORM_IGNORECASE,
+                Ptr::new(0x1000),
+                -2,
+                Ptr::new(0x1100),
+                -1,
+            ),
+            0
+        );
+        assert_eq!(
+            CompareStringA(
+                &mut ctx,
+                0,
+                NORM_IGNORECASE,
+                Ptr::new(0x1000),
+                -1,
+                Ptr::new(0x1100),
+                -1,
+            ),
+            CSTR::EQUAL as i32,
+        );
+    }
 }
