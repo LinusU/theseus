@@ -7,9 +7,9 @@ impl Context {
     }
 
     pub fn push16(&mut self, x: u16) {
-        self.cpu.regs.esp -= 2;
-        self.memory
-            .write::<u16>(segofs(self.cpu.regs.ss, self.cpu.regs.get_sp()), x);
+        let sp = self.cpu.regs.get_sp().wrapping_sub(2);
+        self.cpu.regs.set_sp(sp);
+        self.memory.write::<u16>(segofs(self.cpu.regs.ss, sp), x);
     }
 
     pub fn pop32(&mut self) -> u32 {
@@ -19,10 +19,9 @@ impl Context {
     }
 
     pub fn pop16(&mut self) -> u16 {
-        let x = self
-            .memory
-            .read::<u16>(segofs(self.cpu.regs.ss, self.cpu.regs.get_sp()));
-        self.cpu.regs.esp += 2;
+        let sp = self.cpu.regs.get_sp();
+        let x = self.memory.read::<u16>(segofs(self.cpu.regs.ss, sp));
+        self.cpu.regs.set_sp(sp.wrapping_add(2));
         x
     }
 
@@ -146,5 +145,36 @@ impl Context {
         let offset = offset.wrapping_add(self.cpu.regs.get_al() as u32);
         let value = self.memory.read::<u8>(self.addr(self.cpu.regs.ds, offset));
         self.cpu.regs.set_al(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x20_000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn real_mode_stack_preserves_esp_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0xabcd_0000;
+
+        ctx.push16(0x1234);
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_fffe);
+        assert_eq!(ctx.pop16(), 0x1234);
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0000);
     }
 }
