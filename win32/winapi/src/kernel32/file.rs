@@ -192,6 +192,24 @@ pub fn CreateFileA(
     let path = resolve_path(&name);
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
     let read = dwDesiredAccess & GENERIC_READ != 0;
+
+    // Games that extract on-demand data (e.g., audio banks) to a cache
+    // directory assume the parent path already exists on a normal install.
+    // Create the directory tree first, exactly as CreateDirectoryA would,
+    // so the file-open can succeed without the caller probing every level.
+    match dwCreationDisposition {
+        CreationDisposition::CREATE_NEW
+        | CreationDisposition::CREATE_ALWAYS
+        | CreationDisposition::OPEN_ALWAYS => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = host::fs::create_dir_all(parent);
+                }
+            }
+        }
+        _ => {}
+    }
+
     let mut opts = host::fs::OpenOptions::new();
     opts.read(read || !write);
     if write {

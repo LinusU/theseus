@@ -133,6 +133,10 @@ mod imp {
         std::fs::create_dir(path)
     }
 
+    pub fn create_dir_all(path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)
+    }
+
     pub fn exists(path: &Path) -> bool {
         path.exists()
     }
@@ -409,6 +413,38 @@ mod imp {
         Ok(())
     }
 
+    pub fn create_dir_all(path: &Path) -> Result<()> {
+        let path = normalize(path);
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let mut cur = String::from("/");
+        let mut fs = fs();
+        let fs = fs.as_mut().unwrap();
+        for part in parts {
+            if !cur.ends_with('/') {
+                cur.push('/');
+            }
+            cur.push_str(part);
+            if fs.directories.contains(&cur) || fs.files.contains_key(&cur) {
+                continue;
+            }
+            let parent =
+                cur.rsplit_once('/')
+                    .map_or("/", |(p, _)| if p.is_empty() { "/" } else { p });
+            let parent_exists = parent == "/"
+                || fs.directories.contains(parent)
+                || fs.files.contains_key(parent)
+                || fs
+                    .files
+                    .keys()
+                    .any(|file| file.starts_with(&dir_prefix(parent)));
+            if !parent_exists {
+                return Err(not_found());
+            }
+            fs.directories.insert(cur.clone());
+        }
+        Ok(())
+    }
+
     /// The prefix every path inside `dir` starts with, without doubling the
     /// slash at the root.
     fn dir_prefix(dir: &str) -> String {
@@ -451,5 +487,6 @@ mod imp {
 #[cfg(target_family = "wasm")]
 pub use imp::mount;
 pub use imp::{
-    File, create_dir, current_dir, exists, open, read_dir, remove_file, set_current_dir,
+    File, create_dir, create_dir_all, current_dir, exists, open, read_dir, remove_file,
+    set_current_dir,
 };
