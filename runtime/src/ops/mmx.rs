@@ -275,6 +275,34 @@ pub fn psubd(x: u64, y: u64) -> u64 {
     [x[0].wrapping_sub(y[0]), x[1].wrapping_sub(y[1])].pack()
 }
 
+pub fn psubsb(x: u64, y: u64) -> u64 {
+    let x: [i8; 8] = x.unpack();
+    let y: [i8; 8] = y.unpack();
+    [
+        x[0].saturating_sub(y[0]),
+        x[1].saturating_sub(y[1]),
+        x[2].saturating_sub(y[2]),
+        x[3].saturating_sub(y[3]),
+        x[4].saturating_sub(y[4]),
+        x[5].saturating_sub(y[5]),
+        x[6].saturating_sub(y[6]),
+        x[7].saturating_sub(y[7]),
+    ]
+    .pack()
+}
+
+pub fn psubsw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    [
+        x[0].saturating_sub(y[0]),
+        x[1].saturating_sub(y[1]),
+        x[2].saturating_sub(y[2]),
+        x[3].saturating_sub(y[3]),
+    ]
+    .pack()
+}
+
 pub fn psubw(x: u64, y: u64) -> u64 {
     let x: [u16; 4] = x.unpack();
     let y: [u16; 4] = y.unpack();
@@ -299,7 +327,7 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{paddb, paddd, paddw, psraw, psubb, psubd};
+    use super::{paddb, paddd, paddw, psraw, psubb, psubd, psubsb, psubsw};
 
     #[test]
     fn paddb_and_paddd_wrap_each_lane_independently() {
@@ -328,6 +356,14 @@ mod tests {
             psubd(0x0000_0001_0000_0000, 0x0000_0002_0000_0001),
             0xffff_ffff_ffff_ffff
         );
+    }
+
+    #[test]
+    fn psubsb_and_psubsw_saturate_signed_lanes() {
+        assert_eq!(psubsb(0x7f, 0xff), 0x7f);
+        assert_eq!(psubsb(0x80, 1), 0x80);
+        assert_eq!(psubsw(0x7fff, 0xffff), 0x7fff);
+        assert_eq!(psubsw(0x8000, 1), 0x8000);
     }
 
     #[test]

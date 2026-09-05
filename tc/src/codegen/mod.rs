@@ -683,6 +683,8 @@ mod tests {
             ([0x0f, 0xfe, 0xc1], "paddd"),
             ([0x0f, 0xf8, 0xc1], "psubb"),
             ([0x0f, 0xfa, 0xc1], "psubd"),
+            ([0x0f, 0xe8, 0xc1], "psubsb"),
+            ([0x0f, 0xe9, 0xc1], "psubsw"),
         ] {
             let mut decoder =
                 iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
