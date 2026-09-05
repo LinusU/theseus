@@ -1713,6 +1713,7 @@ pub mod IDirect3DVertexBuffer7 {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 struct RhwVertex {
     x: f32,
@@ -1723,18 +1724,29 @@ struct RhwVertex {
     specular: u32,
     u: f32,
     v: f32,
+    u_w: f32,
+    v_w: f32,
 }
 
 fn read_vertex(mem: &Memory, addr: u32) -> RhwVertex {
+    let x = mem.read::<f32>(addr);
+    let y = mem.read::<f32>(addr + 4);
+    let z = mem.read::<f32>(addr + 8);
+    let w = mem.read::<f32>(addr + 12);
+    let u = mem.read::<f32>(addr + 24);
+    let v = mem.read::<f32>(addr + 28);
+    let (u_w, v_w) = if w != 0.0 { (u * w, v * w) } else { (u, v) };
     RhwVertex {
-        x: mem.read::<f32>(addr),
-        y: mem.read::<f32>(addr + 4),
-        z: mem.read::<f32>(addr + 8),
-        w: mem.read::<f32>(addr + 12),
+        x,
+        y,
+        z,
+        w,
         diffuse: mem.read::<u32>(addr + 16),
         specular: mem.read::<u32>(addr + 20),
-        u: mem.read::<f32>(addr + 24),
-        v: mem.read::<f32>(addr + 28),
+        u,
+        v,
+        u_w,
+        v_w,
     }
 }
 
@@ -1819,18 +1831,27 @@ fn rasterize(
     let vsize = vertex_size(dwVertexTypeDesc);
     let stride = rt_width * rt_bpp;
 
-    // Build the list of triangles.
+    // Build the list of triangles for a D3DPT_TRIANGLESTRIP, alternating
+    // the vertex order so every triangle has the same winding.
     let mut triangles: Vec<[u32; 3]> = Vec::new();
     if lpwIndices != 0 && dwIndexCount >= 3 {
         for i in 2..dwIndexCount {
             let i0 = ctx.memory.read::<u16>(lpwIndices + (i - 2) * 2) as u32;
             let i1 = ctx.memory.read::<u16>(lpwIndices + (i - 1) * 2) as u32;
             let i2 = ctx.memory.read::<u16>(lpwIndices + i * 2) as u32;
-            triangles.push([i0, i1, i2]);
+            if i % 2 == 0 {
+                triangles.push([i0, i1, i2]);
+            } else {
+                triangles.push([i1, i0, i2]);
+            }
         }
     } else {
         for i in 2..dwVertexCount {
-            triangles.push([i - 2, i - 1, i]);
+            if i % 2 == 0 {
+                triangles.push([i - 2, i - 1, i]);
+            } else {
+                triangles.push([i - 1, i - 2, i]);
+            }
         }
     }
 
@@ -1866,7 +1887,7 @@ fn rasterize(
                 let w1 = (c.x - px_f) * (a.y - py_f) - (c.y - py_f) * (a.x - px_f);
                 let w2 = area - w0 - w1;
 
-                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                if w0 * area < 0.0 || w1 * area < 0.0 || w2 * area < 0.0 {
                     continue;
                 }
 
@@ -1874,9 +1895,27 @@ fn rasterize(
                 let beta = w1 / area;
                 let gamma = w2 / area;
 
-                // Affine texture coordinate interpolation.
-                let u = alpha * a.u + beta * b.u + gamma * c.u;
-                let v = alpha * a.v + beta * b.v + gamma * c.v;
+                // Perspective-correct texture coordinate interpolation.
+                let u = if tex_addr != 0 {
+                    let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
+                    if w_sum != 0.0 {
+                        (alpha * a.u_w + beta * b.u_w + gamma * c.u_w) / w_sum
+                    } else {
+                        alpha * a.u + beta * b.u + gamma * c.u
+                    }
+                } else {
+                    alpha * a.u + beta * b.u + gamma * c.u
+                };
+                let v = if tex_addr != 0 {
+                    let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
+                    if w_sum != 0.0 {
+                        (alpha * a.v_w + beta * b.v_w + gamma * c.v_w) / w_sum
+                    } else {
+                        alpha * a.v + beta * b.v + gamma * c.v
+                    }
+                } else {
+                    alpha * a.v + beta * b.v + gamma * c.v
+                };
 
                 let color = if tex_addr != 0 {
                     sample_565(&ctx.memory, tex_addr, tex_width, tex_height, u, v)
