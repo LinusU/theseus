@@ -49,6 +49,15 @@ pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
     lpSystemInfo.write(&mut ctx.memory, info).unwrap();
 }
 
+fn processor_feature_present(feature: u32) -> bool {
+    matches!(feature, 3 | 8)
+}
+
+#[win32_derive::dllexport]
+pub fn IsProcessorFeaturePresent(_ctx: &mut Context, ProcessorFeature: u32) -> bool {
+    processor_feature_present(ProcessorFeature)
+}
+
 #[win32_derive::dllexport]
 pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -> bool {
     let name = b"THESEUS";
@@ -392,11 +401,19 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::SYSTEM_INFO;
+    use super::{SYSTEM_INFO, processor_feature_present};
 
     #[test]
     fn system_info_matches_win32_abi() {
         assert_eq!(std::mem::size_of::<SYSTEM_INFO>(), 36);
+    }
+
+    #[test]
+    fn processor_feature_model_matches_emulated_cpu() {
+        assert!(processor_feature_present(3));
+        assert!(processor_feature_present(8));
+        assert!(!processor_feature_present(6));
+        assert!(!processor_feature_present(u32::MAX));
     }
 }
 

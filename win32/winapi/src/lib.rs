@@ -33,6 +33,7 @@ pub mod winmm;
 /// Statically imported functions need no entry here; only add a name when a
 /// program is seen looking it up by hand.
 pub const DYNAMIC_EXPORTS: &[(&str, &[&str])] = &[
+    ("kernel32", &["IsProcessorFeaturePresent"]),
     // The Microsoft C runtime loads user32 on demand to report fatal errors.
     (
         "user32",
