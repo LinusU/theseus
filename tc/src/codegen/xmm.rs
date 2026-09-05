@@ -529,9 +529,11 @@ impl<'a> CodeGen<'a> {
 
             // Packed multiply and absolute-difference reductions. PSADBW sums
             // byte-lane absolute differences into the low word of each qword;
-            // PMULHW/PMULHUW keep the high word of signed/unsigned word products;
-            // PMULUDQ multiplies the low dword of each qword.
-            Psadbw | Pmulhw | Pmulhuw | Pmuludq => {
+            // PMULLW keeps the low word of each product; PMADDWD adds adjacent
+            // signed 16-bit products into 32-bit dwords; PMULHW/PMULHUW keep
+            // the high word of signed/unsigned word products; PMULUDQ multiplies
+            // the low dword of each qword.
+            Psadbw | Pmullw | Pmaddwd | Pmulhw | Pmulhuw | Pmuludq => {
                 let func = format!("{}_xmm", instr_name(instr));
                 self.line(self.xmm_set(
                     instr,

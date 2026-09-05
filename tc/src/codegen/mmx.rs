@@ -125,6 +125,8 @@ impl<'a> CodeGen<'a> {
                 | Packsswb
                 | Packssdw
                 | Packuswb
+                | Pmullw
+                | Pmaddwd
                 | Pmulhw
                 | Pmulhuw
                 | Pmuludq

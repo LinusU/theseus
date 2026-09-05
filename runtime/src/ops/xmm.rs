@@ -1145,6 +1145,24 @@ pub fn pmuludq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     from_qwords([low, high])
 }
 
+pub fn pmullw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    from_words(std::array::from_fn(|i| a[i].wrapping_mul(b[i])))
+}
+
+pub fn pmaddwd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u32; 4];
+    for n in 0..4 {
+        let lo = (a[n * 2] as i16 as i32).wrapping_mul(b[n * 2] as i16 as i32);
+        let hi = (a[n * 2 + 1] as i16 as i32).wrapping_mul(b[n * 2 + 1] as i16 as i32);
+        out[n] = lo.wrapping_add(hi) as u32;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,6 +1227,29 @@ mod tests {
         assert_eq!(
             pmuludq_xmm(u, v),
             [0x0004_0001, 0x0000_0004, 0x0004_0001, 0x0000_0004]
+        );
+    }
+
+    #[test]
+    fn pmullw_and_pmaddwd_combine_xmm_word_lanes() {
+        // 0x0002 * 0x0003 = 6; all low words produce 6, wrapping gives low u16 6.
+        let a = [0x0002_0002, 0x0002_0002, 0x0002_0002, 0x0002_0002];
+        let b = [0x0003_0003, 0x0003_0003, 0x0003_0003, 0x0003_0003];
+        assert_eq!(
+            pmullw_xmm(a, b),
+            [0x0006_0006, 0x0006_0006, 0x0006_0006, 0x0006_0006]
+        );
+
+        // PMADDWD: (1*3 + 2*3) = 9 in each dword. Words are [1,2,1,2,1,2,1,2].
+        let x = [0x0002_0001, 0x0002_0001, 0x0002_0001, 0x0002_0001];
+        let y = [0x0003_0003, 0x0003_0003, 0x0003_0003, 0x0003_0003];
+        assert_eq!(pmaddwd_xmm(x, y), [0x0009, 0x0009, 0x0009, 0x0009]);
+
+        // Negative signed words: (-2 * 3) + (-2 * 3) = -12 for each dword.
+        let neg = [0xfffe_fffe, 0xfffe_fffe, 0xfffe_fffe, 0xfffe_fffe];
+        assert_eq!(
+            pmaddwd_xmm(neg, y),
+            [0xffff_fff4, 0xffff_fff4, 0xffff_fff4, 0xffff_fff4]
         );
     }
 }
