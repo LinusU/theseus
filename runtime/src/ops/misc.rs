@@ -355,6 +355,14 @@ mod tests {
     }
 
     #[test]
+    fn bound_flags_out_of_range_indexes() {
+        assert!(crate::bound(-1, 0, 9));
+        assert!(crate::bound(10, 0, 9));
+        assert!(!crate::bound(0, 0, 9));
+        assert!(!crate::bound(9, 0, 9));
+    }
+
+    #[test]
     fn sgdt_and_sidt_store_a_null_descriptor_table() {
         let mut ctx = context();
         ctx.memory.write::<u64>(0x100, u64::MAX);

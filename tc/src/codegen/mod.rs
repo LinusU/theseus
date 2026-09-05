@@ -2549,6 +2549,12 @@ mod tests {
             (&[0x0f, 0x01, 0xe0], "ctx.cpu.regs.eax = 0;"), // smsw eax
             (&[0x0f, 0x01, 0x01], "ctx.sgdt(ctx.cpu.regs.ecx);"), // sgdt [ecx]
             (&[0x0f, 0x01, 0x09], "ctx.sidt(ctx.cpu.regs.ecx);"), // sidt [ecx]
+            (&[0x62, 0x08], "bound(bound_idx, bound_lo, bound_hi)"), // bound ecx, [eax]
+            (&[0x62, 0x08], "unhandled_interrupt(0x5, 0x0);"), // bound ecx, [eax] traps on #BR
+            (
+                &[0x66, 0x62, 0x08],
+                "ctx.memory.read::<u16>(ctx.cpu.regs.eax)",
+            ), // bound cx, [eax]
         ] {
             codegen.buf.clear();
             let mut decoder =

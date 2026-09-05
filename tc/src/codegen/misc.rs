@@ -399,6 +399,26 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // BOUND checks an index against the inclusive [lower, upper]
+            // bounds pair in memory and raises #BR when it is out of range.
+            Bound => {
+                let addr = self.gen_addr(instr);
+                let (mem_t, cast, step) = if op_size(instr, 0) == 16 {
+                    ("u16", "i16", 2)
+                } else {
+                    ("u32", "i32", 4)
+                };
+                self.line(format!(
+                    "let bound_lo = ctx.memory.read::<{mem_t}>({addr}) as {cast} as i32;"
+                ));
+                self.line(format!("let bound_hi = ctx.memory.read::<{mem_t}>({addr}.wrapping_add({step}u32)) as {cast} as i32;"));
+                self.line(format!(
+                    "let bound_idx = ({}) as {cast} as i32;",
+                    self.get_op(instr, 0)
+                ));
+                self.line(format!("if bound(bound_idx, bound_lo, bound_hi) {{ unhandled_interrupt(0x5, {:#x}); }}", instr.ip32()));
+            }
+
             // The remaining system instructions are privileged in Windows
             // usermode, and on DOS they would need protected-mode machinery
             // the machine cannot model. Emit an explicit #GP trap rather than

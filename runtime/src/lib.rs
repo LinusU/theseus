@@ -94,6 +94,12 @@ pub fn bswap(value: u32) -> u32 {
     value.swap_bytes()
 }
 
+/// BOUND raises #BR when `index` lies outside the inclusive [lower, upper]
+/// range loaded from memory.
+pub fn bound(index: i32, lower: i32, upper: i32) -> bool {
+    !(lower..=upper).contains(&index)
+}
+
 pub type ContFn = fn(&mut Context) -> Cont;
 
 #[derive(Clone, Copy)]
