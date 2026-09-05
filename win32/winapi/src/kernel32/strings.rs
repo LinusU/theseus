@@ -80,7 +80,7 @@ fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
     if count < 0 {
         read_c_string(ctx, addr)
     } else {
-        Some(ctx.memory[addr..][..count as usize].to_vec())
+        Some(ctx.memory[addr..].get(..count as usize)?.to_vec())
     }
 }
 
@@ -212,6 +212,18 @@ mod tests {
         ctx.memory[0x3ff0..].fill(0xff);
         assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x3ff0)), 0);
         assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
+    }
+
+    #[test]
+    fn compare_string_a_rejects_truncated_counted_input() {
+        let mut ctx = context();
+        ctx.memory.write::<u8>(0x3fff, b'A');
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+
+        assert_eq!(
+            CompareStringA(&mut ctx, 0, 0, Ptr::new(0x3fff), 2, Ptr::new(0x1000), 1,),
+            0
+        );
     }
 
     #[test]
