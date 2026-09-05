@@ -20,12 +20,20 @@ use crate::{
 };
 
 const S_OK: u32 = 0;
+const S_FALSE: u32 = 1;
 const E_POINTER: u32 = 0x8000_4003;
 const E_NOINTERFACE: u32 = 0x8000_4002;
 const E_FAIL: u32 = 0x8000_4005;
+const E_INVALIDARG: u32 = 0x8007_0057;
 
 pub const CLSID_DirectMusicPerformance: GUID = GUID::new(
     0xd2ac_2881,
+    0xb39b,
+    0x11d1,
+    [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
+pub const CLSID_DirectMusicComposer: GUID = GUID::new(
+    0xd2ac_2890,
     0xb39b,
     0x11d1,
     [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
@@ -67,6 +75,70 @@ const IID_IDirectMusicPort: GUID = GUID::new(
     0x11d2,
     [0xb9, 0xf9, 0x00, 0x00, 0xf8, 0x75, 0xac, 0x12],
 );
+const IID_IDirectMusicComposer: GUID = GUID::new(
+    0xd2ac_28bf,
+    0xb39b,
+    0x11d1,
+    [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
+
+/// The GUID the single emulated port reports through `EnumPort` and
+/// `GetDefaultPort`; callers pass it back to `IDirectMusic::CreatePort`.
+/// Using the Microsoft software synthesizer's CLSID covers games that
+/// match on it instead of on `DMUS_PC_SOFTWARESYNTH`.
+const GUID_PortSynth: GUID = GUID::new(
+    0x58c2_b4d0,
+    0x46e7,
+    0x11d1,
+    [0x89, 0xac, 0x00, 0xa0, 0xc9, 0x05, 0x41, 0x29],
+);
+
+/// DMUS_PORTCAPS: fixed fields end at offset 52, then a 128-WCHAR
+/// description, for a total of 308 bytes.
+const PORTCAPS_FIXED: u32 = 52;
+const PORTCAPS_SIZE: u32 = PORTCAPS_FIXED + 128 * 2;
+
+const DMUS_PC_DLS: u32 = 0x1;
+const DMUS_PC_SOFTWARESYNTH: u32 = 0x4;
+const DMUS_PC_SHAREABLE: u32 = 0x200;
+const DMUS_PC_OUTPUTCLASS: u32 = 1;
+const DMUS_PORT_USER_MODE_SYNTH: u32 = 1;
+
+/// Serialize the emulated port's DMUS_PORTCAPS. The caller initializes
+/// dwSize; fields past the caller's struct size are left alone.
+fn write_port_caps(ctx: &mut Context, caps: u32) -> u32 {
+    if caps == 0 {
+        return E_POINTER;
+    }
+    let size = ctx.memory.read::<u32>(caps);
+    if size < PORTCAPS_FIXED || caps as usize + size as usize > ctx.memory.bytes.len() {
+        return E_INVALIDARG;
+    }
+    let write = size.min(PORTCAPS_SIZE) as usize;
+    ctx.memory[caps..][..write].fill(0);
+    ctx.memory.write::<u32>(
+        caps + 4,
+        DMUS_PC_DLS | DMUS_PC_SOFTWARESYNTH | DMUS_PC_SHAREABLE,
+    );
+    ctx.memory.write::<GUID>(caps + 8, GUID_PortSynth);
+    ctx.memory.write::<u32>(caps + 24, DMUS_PC_OUTPUTCLASS);
+    ctx.memory
+        .write::<u32>(caps + 28, DMUS_PORT_USER_MODE_SYNTH);
+    ctx.memory.write::<u32>(caps + 32, 4 * 1024 * 1024); // dwMemorySize
+    ctx.memory.write::<u32>(caps + 36, 32); // dwMaxChannelGroups
+    ctx.memory.write::<u32>(caps + 40, 128); // dwMaxVoices
+    ctx.memory.write::<u32>(caps + 44, 32); // dwMaxAudioChannels
+    // dwEffectFlags at 48 stays zero: the emulated port has no effects.
+    if write >= PORTCAPS_SIZE as usize {
+        // MM2 matches on this exact name when looking for the software synth.
+        let desc = "Microsoft Synthesizer";
+        for (i, unit) in desc.encode_utf16().chain(std::iter::once(0)).enumerate() {
+            ctx.memory
+                .write::<u16>(caps + PORTCAPS_FIXED + i as u32 * 2, unit);
+        }
+    }
+    S_OK
+}
 
 /// A no-op COM method returning S_OK.
 macro_rules! stub {
@@ -411,7 +483,28 @@ pub mod directmusic {
     query_interface!(QueryInterface_stub, &[IID_IDirectMusic]);
     stub!(AddRef_stub, 1, 1);
     stub!(Release_stub, 1, 0);
-    stub_out!(EnumPort_stub, 3, 2, E_FAIL);
+    /// EnumPort(this, dwIndex, pPortCaps): report the one emulated
+    /// software-synth port at index 0 and S_FALSE past the end of the
+    /// list, which is how callers know enumeration is done.
+    #[allow(non_snake_case)]
+    pub fn EnumPort_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let index = ctx.memory.read::<u32>(esp + 8);
+        let caps = ctx.memory.read::<u32>(esp + 12);
+        let ret = if index == 0 {
+            write_port_caps(ctx, caps)
+        } else if caps == 0 {
+            E_POINTER
+        } else {
+            S_FALSE
+        };
+        log::debug!("dmusic EnumPort(index={index}) = {ret:#x} (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp += 4 * 4;
+        ctx.indirect(return_addr)
+    }
+
     stub_out!(CreateMusicBuffer_stub, 4, 2, E_FAIL);
 
     /// CreatePort(this, rclsidPort, pPortParams, ppPort, pUnkOuter).
@@ -437,7 +530,25 @@ pub mod directmusic {
     stub_out!(GetMasterClock_stub, 3, 2, E_FAIL);
     stub!(SetMasterClock_stub, 2);
     stub!(Activate_stub, 2);
-    stub_out!(GetDefaultPort_stub, 2, 1, E_FAIL);
+
+    /// GetDefaultPort(this, pguidDefaultPort): report the emulated
+    /// software-synth port's GUID.
+    #[allow(non_snake_case)]
+    pub fn GetDefaultPort_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let out = ctx.memory.read::<u32>(esp + 8);
+        let ret = if out == 0 || out as usize + 16 > ctx.memory.bytes.len() {
+            E_POINTER
+        } else {
+            ctx.memory.write::<GUID>(out, GUID_PortSynth);
+            S_OK
+        };
+        log::debug!("dmusic GetDefaultPort = {ret:#x} (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp += 3 * 4;
+        ctx.indirect(return_addr)
+    }
     stub!(SetDirectSound_stub, 3);
     stub!(SetExternalMasterClock_stub, 2);
 
@@ -477,7 +588,21 @@ pub mod port {
     stub_out!(GetLatencyClock_stub, 2, 1);
     stub_out!(GetRunningStats_stub, 2, 1);
     stub!(Compact_stub, 1);
-    stub_out!(GetCaps_stub, 2, 1);
+
+    /// GetCaps(this, pPortCaps): report the same DMUS_PORTCAPS the
+    /// enumerator does for the emulated port.
+    #[allow(non_snake_case)]
+    pub fn GetCaps_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let caps = ctx.memory.read::<u32>(esp + 8);
+        let ret = write_port_caps(ctx, caps);
+        log::debug!("dmusic port GetCaps = {ret:#x} (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp += 3 * 4;
+        ctx.indirect(return_addr)
+    }
+
     stub!(DeviceIoControl_stub, 8);
     stub!(SetNumChannelGroups_stub, 2);
     stub_out!(GetNumChannelGroups_stub, 2, 1);
@@ -576,6 +701,80 @@ pub mod loader {
             }
         };
         if !iid_matches(&iid, &[IID_IDirectMusicLoader]) {
+            ctx.memory.write::<u32>(ppv, 0);
+            return E_NOINTERFACE;
+        }
+        let vtable = get_vtable(ctx);
+        let obj = new_object(ctx, vtable);
+        ctx.memory.write::<u32>(ppv, obj);
+        S_OK
+    }
+}
+
+pub mod composer {
+    use super::*;
+
+    query_interface!(QueryInterface_stub, &[IID_IDirectMusicComposer]);
+    stub!(AddRef_stub, 1, 1);
+    stub!(Release_stub, 1, 0);
+
+    // Every composition method needs a real composition engine, so they
+    // fail explicitly after honoring the out-pointer contract.
+    stub_out!(ComposeSegmentFromTemplate_stub, 6, 5, E_FAIL);
+    stub_out!(ComposeSegmentFromShape_stub, 9, 8, E_FAIL);
+    stub_out!(ComposeTransition_stub, 9, 8, E_FAIL);
+
+    /// AutoTransition(this, pPerformance, pToSeg, wCommand, dwFlags,
+    /// pChordMap, ppTransSeg, ppTransPerf, ppToPerf): zero all three out
+    /// pointers, then fail.
+    #[allow(non_snake_case)]
+    pub fn AutoTransition_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        for k in 6..=8 {
+            let out = ctx.memory.read::<u32>(esp + (k + 1) * 4);
+            if out != 0 {
+                ctx.memory.write::<u32>(out, 0);
+            }
+        }
+        log::debug!("dmusic AutoTransition (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = E_FAIL;
+        ctx.cpu.regs.esp += 10 * 4;
+        ctx.indirect(return_addr)
+    }
+
+    stub_out!(ComposeTemplateFromShape_stub, 7, 6, E_FAIL);
+    stub!(ChangeChordMap_stub, 4, E_FAIL);
+
+    vtable!(
+        COMPOSER_VTABLE,
+        get_vtable,
+        0xfafc_4000,
+        [
+            QueryInterface_stub,
+            AddRef_stub,
+            Release_stub,
+            ComposeSegmentFromTemplate_stub,
+            ComposeSegmentFromShape_stub,
+            ComposeTransition_stub,
+            AutoTransition_stub,
+            ComposeTemplateFromShape_stub,
+            ChangeChordMap_stub,
+        ]
+    );
+
+    pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
+        if ppv == 0 {
+            return E_POINTER;
+        }
+        let iid = match read_guid(ctx, riid) {
+            Some(iid) => iid,
+            None => {
+                ctx.memory.write::<u32>(ppv, 0);
+                return E_NOINTERFACE;
+            }
+        };
+        if !iid_matches(&iid, &[IID_IDirectMusicComposer]) {
             ctx.memory.write::<u32>(ppv, 0);
             return E_NOINTERFACE;
         }

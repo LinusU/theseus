@@ -32,6 +32,10 @@ pub fn CoCreateInstance(
             if clsid == dmusic::CLSID_DirectMusicLoader {
                 return dmusic::loader::create(ctx, _riid, ppv.addr);
             }
+            if clsid == dmusic::CLSID_DirectMusicComposer {
+                return dmusic::composer::create(ctx, _riid, ppv.addr);
+            }
+            log::debug!("CoCreateInstance: unregistered class {clsid:?}");
         }
     }
 
