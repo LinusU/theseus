@@ -177,18 +177,26 @@ pub fn GetStockObject(_ctx: &mut Context, i: GetStockObjectArg) -> HGDIOBJ {
 }
 
 #[win32_derive::dllexport]
-pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
+pub fn SelectObject(ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
     if h.is_null_or_invalid() {
         log::warn!("SelectObject: ignoring null select, likely from a prior stub");
         return HGDIOBJ::null();
     }
+    let caller = {
+        let ret = ctx.memory.read::<u32>(ctx.cpu.regs.esp);
+        if ret == runtime::RETURN_FROM_X86_ADDR32 {
+            ctx.cpu.regs.eip_context
+        } else {
+            ret
+        }
+    };
     let state = &mut *gdi32::lock();
     let Some(dc) = state.dcs.get_mut(hdc) else {
-        log::warn!("SelectObject: unknown HDC {hdc:?}");
+        log::warn!("SelectObject: unknown HDC {hdc:?} (caller {caller:#x})");
         return HGDIOBJ::null();
     };
     let Some(object) = state.objects.get(h) else {
-        log::warn!("SelectObject: unknown object {h:?}");
+        log::warn!("SelectObject: unknown object {h:?} (caller {caller:#x})");
         return HGDIOBJ::null();
     };
     match object {
