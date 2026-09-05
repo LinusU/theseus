@@ -45,9 +45,41 @@ const fn make_dserror(code: u32) -> u32 {
 const DS_OK: u32 = 0;
 
 const WAVE_FORMAT_PCM: u16 = 1;
-#[allow(dead_code)]
 const DSERR_NODRIVER: u32 = make_dserror(120);
 const DSERR_INVALIDPARAM: u32 = 0x80070057;
+
+/// Whether `addr..addr + bytes` is a range a guest may supply: outside the
+/// null page and fully inside emulated memory.
+fn usable_range(ctx: &Context, addr: u32, bytes: u32) -> bool {
+    addr >= 0x1000
+        && (addr as usize)
+            .checked_add(bytes as usize)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
+/// Read a guest `T` from `addr`, or `None` when the range is null-page or
+/// outside emulated memory.
+fn guest_read<T: FromBytes>(ctx: &Context, addr: u32) -> Option<T> {
+    if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
+        return None;
+    }
+    <T>::read_from_prefix(&ctx.memory.bytes[addr as usize..])
+        .ok()
+        .map(|(value, _)| value)
+}
+
+/// Write a `T` out-param; `false` when the guest pointer is unusable.
+fn guest_write<T: zerocopy::IntoBytes + zerocopy::Immutable>(
+    ctx: &mut Context,
+    addr: u32,
+    value: T,
+) -> bool {
+    if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
+        return false;
+    }
+    ctx.memory.write(addr, value);
+    true
+}
 
 /// DSBVOLUME/DSBPAN are in hundredths of a decibel of attenuation, with 0 as
 /// full volume and -10000 as silence.
@@ -305,8 +337,16 @@ pub fn pump(ctx: &mut Context) {
 
 #[win32_derive::dllexport]
 pub fn DirectSoundCreate(ctx: &mut Context, lpGuid: u32, ppDS: u32, pUnkOuter: u32) -> u32 {
-    assert_eq!(lpGuid, 0);
-    assert_eq!(pUnkOuter, 0);
+    if lpGuid != 0 {
+        // The emulated device table holds only the default (null) device.
+        return DSERR_NODRIVER;
+    }
+    if pUnkOuter != 0 {
+        return DSERR_INVALIDPARAM; // COM aggregation is unsupported
+    }
+    if !usable_range(ctx, ppDS, 4) {
+        return DSERR_INVALIDPARAM;
+    }
 
     init();
 
@@ -374,10 +414,15 @@ pub mod IDirectSound {
         lplpDirectSoundBuffer: u32,
         pUnkOuter: u32,
     ) -> u32 {
-        assert_eq!(pUnkOuter, 0);
-        let desc = <DSBUFFERDESC>::read_from_prefix(&ctx.memory[lpcDSBufferDesc..])
-            .unwrap()
-            .0;
+        if pUnkOuter != 0 {
+            return DSERR_INVALIDPARAM; // COM aggregation is unsupported
+        }
+        if !usable_range(ctx, lplpDirectSoundBuffer, 4) {
+            return DSERR_INVALIDPARAM;
+        }
+        let Some(desc) = guest_read::<DSBUFFERDESC>(ctx, lpcDSBufferDesc) else {
+            return DSERR_INVALIDPARAM;
+        };
 
         let mut kernel32 = kernel32::lock();
         let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
@@ -385,9 +430,9 @@ pub mod IDirectSound {
 
         let primary = desc.dwFlags.contains(DSBCAPS_FLAGS::PRIMARYBUFFER);
         let format = if desc.lpwfxFormat != 0 {
-            let fmt = <WAVEFORMATEX>::read_from_prefix(&ctx.memory[desc.lpwfxFormat..])
-                .unwrap()
-                .0;
+            let Some(fmt) = guest_read::<WAVEFORMATEX>(ctx, desc.lpwfxFormat) else {
+                return DSERR_INVALIDPARAM;
+            };
             if fmt.wFormatTag != WAVE_FORMAT_PCM {
                 let tag = fmt.wFormatTag; // packed: copy before formatting
                 log::warn!("dsound: non-PCM format {tag}");
@@ -430,7 +475,7 @@ pub mod IDirectSound {
 
     #[win32_derive::dllexport]
     pub fn GetCaps(ctx: &mut Context, _this: u32, lpDSCaps: u32) -> u32 {
-        if lpDSCaps == 0 {
+        if !usable_range(ctx, lpDSCaps, 4) {
             return DSERR_INVALIDPARAM;
         }
         // DSCAPS: dwSize, dwFlags, then a long run of counters. Report a
@@ -439,6 +484,9 @@ pub mod IDirectSound {
         const DSCAPS_PRIMARY16BIT: u32 = 0x0000_0008;
         const DSCAPS_CONTINUOUSRATE: u32 = 0x0000_0010;
         let size = ctx.memory.read::<u32>(lpDSCaps);
+        if size < 4 || !usable_range(ctx, lpDSCaps, size) {
+            return DSERR_INVALIDPARAM;
+        }
         ctx.memory[lpDSCaps + 4..][..(size as usize).saturating_sub(4)].fill(0);
         ctx.memory.write::<u32>(
             lpDSCaps + 4,
@@ -456,6 +504,9 @@ pub mod IDirectSound {
         pDSBufferOriginal: u32,
         ppDSBufferDuplicate: u32,
     ) -> u32 {
+        if !usable_range(ctx, ppDSBufferDuplicate, 4) {
+            return DSERR_INVALIDPARAM;
+        }
         let mut kernel32 = kernel32::lock();
         let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
         drop(kernel32);
@@ -499,8 +550,8 @@ pub mod IDirectSound {
     #[win32_derive::dllexport]
     pub fn GetSpeakerConfig(ctx: &mut Context, _this: u32, lpdwSpeakerConfig: u32) -> u32 {
         const DSSPEAKER_STEREO: u32 = 2;
-        if lpdwSpeakerConfig != 0 {
-            ctx.memory.write::<u32>(lpdwSpeakerConfig, DSSPEAKER_STEREO);
+        if lpdwSpeakerConfig != 0 && !guest_write(ctx, lpdwSpeakerConfig, DSSPEAKER_STEREO) {
+            return DSERR_INVALIDPARAM;
         }
         DS_OK
     }
@@ -599,9 +650,14 @@ pub mod IDirectSoundBuffer {
         };
         let (flags, size) = (buffer.caps_flags, buffer.size);
         drop(state);
+        if !usable_range(ctx, lpDSBufferCaps, 4) {
+            return DSERR_INVALIDPARAM;
+        }
         // dwSize is the caller's, and it tells us how much it expects back.
         let dwSize = ctx.memory.read::<u32>(lpDSBufferCaps);
-        if (dwSize as usize) < std::mem::size_of::<DSBCAPS>() {
+        if (dwSize as usize) < std::mem::size_of::<DSBCAPS>()
+            || !usable_range(ctx, lpDSBufferCaps, dwSize)
+        {
             return DSERR_INVALIDPARAM;
         }
         ctx.memory.write(
@@ -636,8 +692,8 @@ pub mod IDirectSoundBuffer {
         let play = ((buffer.cursor as u32).saturating_mul(frame_bytes)).min(size.saturating_sub(1));
         drop(state);
 
-        if pdwCurrentPlayCursor != 0 {
-            ctx.memory.write(pdwCurrentPlayCursor, play);
+        if pdwCurrentPlayCursor != 0 && !guest_write(ctx, pdwCurrentPlayCursor, play) {
+            return DSERR_INVALIDPARAM;
         }
         if pdwCurrentWriteCursor != 0 {
             // Real hardware keeps the write cursor a little ahead of playback,
@@ -647,7 +703,9 @@ pub mod IDirectSoundBuffer {
             } else {
                 0
             };
-            ctx.memory.write(pdwCurrentWriteCursor, write);
+            if !guest_write(ctx, pdwCurrentWriteCursor, write) {
+                return DSERR_INVALIDPARAM;
+            }
         }
         DS_OK
     }
@@ -669,7 +727,7 @@ pub mod IDirectSoundBuffer {
 
         let size = std::mem::size_of::<WAVEFORMATEX>() as u32;
         if lpwfxFormat != 0 {
-            if dwSizeAllocated < size {
+            if dwSizeAllocated < size || !usable_range(ctx, lpwfxFormat, size) {
                 return DSERR_INVALIDPARAM;
             }
             let block_align = format.frame_bytes() as u16;
@@ -686,8 +744,8 @@ pub mod IDirectSoundBuffer {
                 },
             );
         }
-        if lpdwSizeWritten != 0 {
-            ctx.memory.write::<u32>(lpdwSizeWritten, size);
+        if lpdwSizeWritten != 0 && !guest_write(ctx, lpdwSizeWritten, size) {
+            return DSERR_INVALIDPARAM;
         }
         DS_OK
     }
@@ -700,7 +758,9 @@ pub mod IDirectSoundBuffer {
         };
         let volume = buffer.volume;
         drop(state);
-        ctx.memory.write::<i32>(lplVolume, volume);
+        if !guest_write(ctx, lplVolume, volume) {
+            return DSERR_INVALIDPARAM;
+        }
         DS_OK
     }
 
@@ -712,7 +772,9 @@ pub mod IDirectSoundBuffer {
         };
         let pan = buffer.pan;
         drop(state);
-        ctx.memory.write::<i32>(lplPan, pan);
+        if !guest_write(ctx, lplPan, pan) {
+            return DSERR_INVALIDPARAM;
+        }
         DS_OK
     }
 
@@ -724,7 +786,9 @@ pub mod IDirectSoundBuffer {
         };
         let rate = buffer.format.rate;
         drop(state);
-        ctx.memory.write::<u32>(lpdwFrequency, rate);
+        if !guest_write(ctx, lpdwFrequency, rate) {
+            return DSERR_INVALIDPARAM;
+        }
         DS_OK
     }
 
@@ -748,7 +812,9 @@ pub mod IDirectSoundBuffer {
             }
         }
         drop(state);
-        ctx.memory.write::<u32>(lpdwStatus, status);
+        if !guest_write(ctx, lpdwStatus, status) {
+            return DSERR_INVALIDPARAM;
+        }
         DS_OK
     }
 
@@ -792,14 +858,15 @@ pub mod IDirectSoundBuffer {
         let addr = if len == 0 { 0 } else { buffer.addr + offset };
         drop(state);
 
-        ctx.memory.write(ppvAudioPtr1, addr);
-        ctx.memory.write(pdwAudioBytes1, len);
-        // We never split a locked region, so the second one is always empty.
-        if ppvAudioPtr2 != 0 {
-            ctx.memory.write(ppvAudioPtr2, 0u32);
+        if !guest_write(ctx, ppvAudioPtr1, addr) || !guest_write(ctx, pdwAudioBytes1, len) {
+            return DSERR_INVALIDPARAM;
         }
-        if pdwAudioBytes2 != 0 {
-            ctx.memory.write(pdwAudioBytes2, 0u32);
+        // We never split a locked region, so the second one is always empty.
+        if ppvAudioPtr2 != 0 && !guest_write(ctx, ppvAudioPtr2, 0u32) {
+            return DSERR_INVALIDPARAM;
+        }
+        if pdwAudioBytes2 != 0 && !guest_write(ctx, pdwAudioBytes2, 0u32) {
+            return DSERR_INVALIDPARAM;
         }
         DS_OK
     }
@@ -869,9 +936,9 @@ pub mod IDirectSoundBuffer {
 
     #[win32_derive::dllexport]
     pub fn SetFormat(ctx: &mut Context, this: u32, pcfxFormat: u32) -> u32 {
-        let fmt = <WAVEFORMATEX>::read_from_prefix(&ctx.memory[pcfxFormat..])
-            .unwrap()
-            .0;
+        let Some(fmt) = guest_read::<WAVEFORMATEX>(ctx, pcfxFormat) else {
+            return DSERR_INVALIDPARAM;
+        };
         let mut state = lock();
         let Some(buffer) = state.buffers.get_mut(&this) else {
             return DSERR_INVALIDPARAM;
