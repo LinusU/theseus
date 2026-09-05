@@ -435,6 +435,20 @@ pub fn phaddw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     ])
 }
 
+/// PMULHRSW (SSSE3) multiplies corresponding 16-bit signed words and keeps
+/// the most-significant 16 bits with round-to-nearest.
+pub fn pmulhrsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a).map(|w| w as i16);
+    let b = to_words(b).map(|w| w as i16);
+    from_words(std::array::from_fn(|i| pmulhrsw_word(a[i], b[i])))
+}
+
+fn pmulhrsw_word(a: i16, b: i16) -> u16 {
+    let prod = (a as i32) * (b as i32);
+    let tmp = (prod >> 14) + 1;
+    (tmp >> 1) as u16
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally. The first
 /// two result dwords come from dest; the last two come from src.
 pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
@@ -1308,6 +1322,21 @@ mod tests {
         assert_eq!(
             phaddw_xmm(wa, wb),
             [0x0007_0003, 0x000f_000b, 0x8001_ffff, 0x0000_0000]
+        );
+    }
+
+    #[test]
+    fn pmulhrsw_xmm_rounds_and_scales_signed_word_products() {
+        // u32[0] = words [0x7fff, 0x4000]; u32[1] = [0x8000, 0x0000];
+        // u32[2] = [0xffff, 0x7fff]; u32[3] = [0x0001, 0x0001].
+        let a = [0x4000_7fff, 0x0000_8000, 0x7fff_ffff, 0x0001_0001];
+        let b = [0x4000_7fff, 0x0000_4000, 0x7fff_7fff, 0x0001_0001];
+        // 0x7fff*0x7fff=0x7ffe, 0x4000*0x4000=0x2000,
+        // 0x8000*0x4000=0xc000, 0xffff*0x7fff=0xffff, 0x7fff*0x7fff=0x7ffe,
+        // 0x0001*0x0001=0.
+        assert_eq!(
+            pmulhrsw_xmm(a, b),
+            [0x2000_7ffe, 0x0000_c000, 0x7ffe_ffff, 0x0000_0000]
         );
     }
 

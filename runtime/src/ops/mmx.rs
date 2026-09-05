@@ -646,6 +646,28 @@ pub fn phaddw(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
+/// PMULHRSW (SSSE3) multiplies corresponding 16-bit signed words and keeps
+/// the most-significant 16 bits with round-to-nearest. The product is shifted
+/// right by 14, incremented, then shifted right by one bit to produce the
+/// signed 16-bit result.
+pub fn pmulhrsw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    [
+        pmulhrsw_word(x[0], y[0]),
+        pmulhrsw_word(x[1], y[1]),
+        pmulhrsw_word(x[2], y[2]),
+        pmulhrsw_word(x[3], y[3]),
+    ]
+    .pack()
+}
+
+fn pmulhrsw_word(a: i16, b: i16) -> u16 {
+    let prod = (a as i32) * (b as i32);
+    let tmp = (prod >> 14) + 1;
+    (tmp >> 1) as u16
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally.
 /// The result dwords come from the dest (first pair) and src (second pair).
 pub fn phaddd(dest: u64, src: u64) -> u64 {
@@ -946,9 +968,9 @@ mod tests {
         pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt,
         pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub,
         pfsubr, phaddd, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub,
-        pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad,
-        psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq,
-        punpcklwd,
+        pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld,
+        psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw,
+        punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1131,6 +1153,15 @@ mod tests {
         let c = 0x0000_0002_0000_0001u64;
         let d = 0x0000_0001_8000_0000u64;
         assert_eq!(phaddd(c, d), 0x8000_0001_0000_0003);
+    }
+
+    #[test]
+    fn pmulhrsw_rounds_and_scales_signed_word_products() {
+        // words: 0x7fff*0x7fff=0x7ffe, 0x4000*0x4000=0x2000,
+        //        0x8000*0x4000=0xc000, 0xffff*0x0001=0.
+        let a = 0xffff_8000_4000_7fffu64;
+        let b = 0x0001_4000_4000_7fffu64;
+        assert_eq!(pmulhrsw(a, b), 0x0000_c000_2000_7ffe);
     }
 
     #[test]
