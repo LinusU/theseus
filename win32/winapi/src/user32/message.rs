@@ -27,6 +27,7 @@ pub enum WM {
     QUIT = 0x12,
     SHOWWINDOW = 0x18,
     ACTIVATEAPP = 0x1c,
+    TIMER = 0x113,
     KEYDOWN = 0x100,
     KEYUP = 0x101,
     CHAR = 0x102,
@@ -52,11 +53,28 @@ pub struct MSG {
     pt: POINT,
 }
 
+/// A SetTimer-registered timer: WM_TIMER messages are synthesized on demand
+/// rather than posted, so a due timer never queues more than one message.
+struct Timer {
+    hwnd: HWND,
+    id: u32,
+    /// The SetTimer lpTimerFunc callback, or 0 for window-proc delivery.
+    proc_addr: u32,
+    /// Milliseconds between firings.
+    elapse: u32,
+    /// Host-clock time of the next firing.
+    next_fire: u32,
+    /// A WM_TIMER was synthesized for this timer and is still pending.
+    queued: bool,
+}
+
 #[derive(Default)]
 pub struct MessageQueue {
     pub window: Option<Rc<RefCell<Window>>>,
     messages: VecDeque<MSG>,
     quit: Option<MSG>,
+    timers: Vec<Timer>,
+    next_timer_id: u32,
 }
 
 /// Which queued messages a GetMessage/PeekMessage `hWnd` argument selects.
@@ -243,8 +261,8 @@ pub fn post_message(hwnd: HWND, message: u32, wParam: WPARAM, lParam: LPARAM) {
 #[win32_derive::dllexport]
 pub fn WaitMessage(_ctx: &mut Context) -> bool {
     let mut queue = state().message_queue.borrow_mut();
-    if queue.peek().is_none() {
-        queue.wait_host();
+    if queue.peek(host::host().time()).is_none() {
+        queue.wait_or_poll();
     }
     true
 }
@@ -266,7 +284,50 @@ impl MessageQueue {
         })
     }
 
-    fn peek_filtered(&self, filter: &MsgFilter) -> Option<MSG> {
+    /// WM_TIMER, like WM_PAINT, is generated when the queue is otherwise
+    /// empty rather than posted: an already-synthesized timer message
+    /// (`queued`) or a newly due one matches here. Removing the message
+    /// reschedules the timer; peeking just marks it pending so a due timer
+    /// never reports more than one waiting message.
+    fn timer_msg(&mut self, remove: bool, now: u32, filter: &MsgFilter) -> Option<MSG> {
+        if self.timers.is_empty() {
+            return None;
+        }
+        let index = self.timers.iter().position(|timer| {
+            if !timer.queued && now.wrapping_sub(timer.next_fire) >= 0x8000_0000 {
+                return false;
+            }
+            let msg = MSG {
+                hwnd: timer.hwnd,
+                message: WM::TIMER as u32,
+                wParam: timer.id,
+                lParam: timer.proc_addr,
+                time: now,
+                pt: POINT::default(),
+            };
+            filter.matches(&msg)
+        })?;
+        let timer = &mut self.timers[index];
+        let msg = MSG {
+            hwnd: timer.hwnd,
+            message: WM::TIMER as u32,
+            wParam: timer.id,
+            lParam: timer.proc_addr,
+            time: now,
+            pt: POINT::default(),
+        };
+        if remove {
+            timer.queued = false;
+            timer.next_fire = now.wrapping_add(timer.elapse);
+        } else {
+            timer.queued = true;
+        }
+        Some(msg)
+    }
+
+    /// `now` is the host millisecond clock, supplied by the caller so the
+    /// queue itself never depends on the host and stays testable.
+    fn peek_filtered(&mut self, now: u32, filter: &MsgFilter) -> Option<MSG> {
         if let Some(msg) = self.messages.iter().find(|msg| filter.matches(msg)) {
             Some(*msg)
         } else if self.quit.is_some() {
@@ -274,21 +335,25 @@ impl MessageQueue {
             // delivered regardless of the hWnd or message-range filter.
             self.quit
         } else {
-            self.paint_msg().filter(|msg| filter.matches(msg))
+            self.paint_msg()
+                .filter(|msg| filter.matches(msg))
+                .or_else(|| self.timer_msg(false, now, filter))
         }
     }
 
-    fn peek(&self) -> Option<MSG> {
-        self.peek_filtered(&MsgFilter::new(HWND::null(), 0, 0))
+    fn peek(&mut self, now: u32) -> Option<MSG> {
+        self.peek_filtered(now, &MsgFilter::new(HWND::null(), 0, 0))
     }
 
-    fn pop_filtered(&mut self, filter: &MsgFilter) -> Option<MSG> {
+    fn pop_filtered(&mut self, now: u32, filter: &MsgFilter) -> Option<MSG> {
         if let Some(index) = self.messages.iter().position(|msg| filter.matches(msg)) {
             self.messages.remove(index)
         } else if self.quit.is_some() {
             self.quit.take()
         } else {
-            self.paint_msg().filter(|msg| filter.matches(msg))
+            self.paint_msg()
+                .filter(|msg| filter.matches(msg))
+                .or_else(|| self.timer_msg(true, now, filter))
         }
     }
 
@@ -296,10 +361,22 @@ impl MessageQueue {
     /// necessary.
     fn read(&mut self, filter: &MsgFilter) -> MSG {
         loop {
-            if let Some(msg) = self.pop_filtered(filter) {
+            if let Some(msg) = self.pop_filtered(host::host().time(), filter) {
                 return msg;
             }
+            self.wait_or_poll();
+        }
+    }
+
+    /// Block for a host event, or poll briefly when a timer could expire
+    /// during the wait — timers synthesize their own messages and must wake
+    /// the loop without a host event.
+    fn wait_or_poll(&mut self) {
+        if self.timers.is_empty() {
             self.wait_host();
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.poll_host();
         }
     }
 
@@ -364,6 +441,55 @@ impl MessageQueue {
         }
     }
 
+    /// SetTimer: install or replace a timer for `(hWnd, nIDEvent)`. With a
+    /// null hWnd the caller's id is ignored and a fresh one is returned.
+    pub fn set_timer(
+        &mut self,
+        hwnd: HWND,
+        id: u32,
+        elapse_ms: u32,
+        proc_addr: u32,
+        now: u32,
+    ) -> u32 {
+        let id = if hwnd.is_null() {
+            self.next_timer_id = self.next_timer_id.wrapping_add(1).max(1);
+            self.next_timer_id
+        } else {
+            id
+        };
+        // uElapse is clamped into [USER_TIMER_MINIMUM, USER_TIMER_MAXIMUM].
+        let elapse = elapse_ms.clamp(10, 0x7fff_ffff);
+        let next_fire = now.wrapping_add(elapse);
+        match self
+            .timers
+            .iter_mut()
+            .find(|timer| timer.hwnd == hwnd && timer.id == id)
+        {
+            Some(timer) => {
+                timer.proc_addr = proc_addr;
+                timer.elapse = elapse;
+                timer.next_fire = next_fire;
+            }
+            None => self.timers.push(Timer {
+                hwnd,
+                id,
+                proc_addr,
+                elapse,
+                next_fire,
+                queued: false,
+            }),
+        }
+        id
+    }
+
+    /// KillTimer: remove the `(hWnd, uIDEvent)` timer if one exists.
+    pub fn kill_timer(&mut self, hwnd: HWND, id: u32) -> bool {
+        let before = self.timers.len();
+        self.timers
+            .retain(|timer| !(timer.hwnd == hwnd && timer.id == id));
+        self.timers.len() != before
+    }
+
     fn msg_from_message(&self, message: host::Message) -> Option<MSG> {
         use host::Message::*;
         // WM_QUIT is a thread message like PostQuitMessage's, not a window
@@ -405,6 +531,20 @@ pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
     let Some(msg) = lpMsg.read(&ctx.memory) else {
         return 0;
     };
+    // A WM_TIMER whose lParam names a SetTimer callback goes to that
+    // TIMERPROC, not to the window procedure.
+    if msg.message == WM::TIMER as u32 && msg.lParam != 0 {
+        ctx.call32_x86(
+            ctx.indirect(msg.lParam),
+            vec![
+                msg.hwnd.to_raw(),
+                msg.message,
+                msg.wParam,
+                host::host().time(),
+            ],
+        );
+        return 0;
+    }
     let wndproc = {
         let window = state().window.borrow();
         let wndclass = state().wndclass.borrow();
@@ -459,13 +599,14 @@ pub fn PeekMessageA(
     let filter = MsgFilter::new(hWnd, wMsgFilterMin, wMsgFilterMax);
     let mut queue = state().message_queue.borrow_mut();
     queue.poll_host();
-    let Some(msg) = queue.peek_filtered(&filter) else {
+    let now = host::host().time();
+    let Some(msg) = queue.peek_filtered(now, &filter) else {
         return false;
     };
 
     lpMsg.write(&mut ctx.memory, msg).unwrap();
     if remove {
-        queue.pop_filtered(&filter);
+        queue.pop_filtered(now, &filter);
     }
     true
 }
@@ -624,35 +765,35 @@ mod tests {
         // sees everything in posted order.
         let window = MsgFilter::new(HWND::from_raw(7), 0, 0);
         assert_eq!(
-            queue.peek_filtered(&window).unwrap().message,
+            queue.peek_filtered(0, &window).unwrap().message,
             WM::KEYDOWN as u32
         );
         assert_eq!(
-            queue.pop_filtered(&window).unwrap().message,
+            queue.pop_filtered(0, &window).unwrap().message,
             WM::KEYDOWN as u32
         );
         assert_eq!(
-            queue.peek_filtered(&window).unwrap().message,
+            queue.peek_filtered(0, &window).unwrap().message,
             WM::LBUTTONDOWN as u32
         );
 
         // (HWND)-1 selects only thread messages: the null-hwnd WM_CHAR.
         let thread = MsgFilter::new(HWND::invalid(), 0, 0);
         assert_eq!(
-            queue.peek_filtered(&thread).unwrap().message,
+            queue.peek_filtered(0, &thread).unwrap().message,
             WM::CHAR as u32
         );
 
         // Message-range filtering applies on top of the hWnd selection.
         let keys = MsgFilter::new(HWND::from_raw(7), WM::KEYDOWN as u32, WM::KEYUP as u32);
-        assert!(queue.peek_filtered(&keys).is_none());
+        assert!(queue.peek_filtered(0, &keys).is_none());
         let mouse = MsgFilter::new(
             HWND::from_raw(7),
             WM::LBUTTONDOWN as u32,
             WM::LBUTTONUP as u32,
         );
         assert_eq!(
-            queue.pop_filtered(&mouse).unwrap().message,
+            queue.pop_filtered(0, &mouse).unwrap().message,
             WM::LBUTTONDOWN as u32
         );
     }
@@ -668,13 +809,62 @@ mod tests {
         // window-filtered read.
         let window = MsgFilter::new(HWND::from_raw(7), 0, 0);
         assert_eq!(
-            queue.pop_filtered(&window).unwrap().message,
+            queue.pop_filtered(0, &window).unwrap().message,
             WM::KEYDOWN as u32
         );
         assert_eq!(
-            queue.pop_filtered(&window).unwrap().message,
+            queue.pop_filtered(0, &window).unwrap().message,
             WM::QUIT as u32
         );
         assert!(queue.quit.is_none());
+    }
+
+    #[test]
+    fn timers_fire_once_and_reschedule_on_removal() {
+        let mut queue = MessageQueue::default();
+        let any = MsgFilter::new(HWND::null(), 0, 0);
+        let id = queue.set_timer(HWND::from_raw(7), 4, 50, 0x1234, 1000);
+        assert_eq!(id, 4);
+
+        // Not due yet, then due at next_fire.
+        assert!(queue.pop_filtered(1049, &any).is_none());
+        let timer = queue.timer_msg(false, 1051, &any).unwrap();
+        assert_eq!(timer.message, WM::TIMER as u32);
+        assert_eq!(timer.hwnd, HWND::from_raw(7));
+        assert_eq!(timer.wParam, 4);
+        assert_eq!(timer.lParam, 0x1234);
+
+        // A due timer coalesces: repeated peeks report the same pending
+        // message instead of queueing more.
+        let again = queue.timer_msg(false, 1060, &any).unwrap();
+        assert_eq!(again.wParam, 4);
+        // Removal reschedules; the timer is no longer pending or due.
+        let removed = queue.pop_filtered(1100, &any).unwrap();
+        assert_eq!(removed.message, WM::TIMER as u32);
+        assert!(queue.timer_msg(false, 1149, &any).is_none());
+        assert_eq!(
+            queue.timer_msg(true, 1150, &any).unwrap().message,
+            WM::TIMER as u32
+        );
+
+        // KillTimer drops the timer entirely.
+        assert!(queue.kill_timer(HWND::from_raw(7), 4));
+        assert!(!queue.kill_timer(HWND::from_raw(7), 4));
+    }
+
+    #[test]
+    fn null_hwnd_timers_get_allocated_ids() {
+        let mut queue = MessageQueue::default();
+        let first = queue.set_timer(HWND::null(), 0, 20, 0, 0);
+        let second = queue.set_timer(HWND::null(), 0, 20, 0, 0);
+        assert!(first != 0 && second != 0 && first != second);
+        // A window filter does not see a null-hwnd timer's message.
+        let window = MsgFilter::new(HWND::from_raw(7), 0, 0);
+        assert!(queue.timer_msg(false, 100, &window).is_none());
+        let any = MsgFilter::new(HWND::null(), 0, 0);
+        assert_eq!(
+            queue.timer_msg(false, 100, &any).unwrap().message,
+            WM::TIMER as u32
+        );
     }
 }

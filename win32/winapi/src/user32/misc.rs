@@ -253,9 +253,11 @@ pub fn GetMenuItemRect(
 }
 
 #[win32_derive::dllexport]
-pub fn KillTimer(_ctx: &mut Context, _hWnd: HWND, _uIDEvent: u32) -> bool {
-    // SetTimer always fails in this model, so no timers can exist to kill.
-    false
+pub fn KillTimer(_ctx: &mut Context, hWnd: HWND, uIDEvent: u32) -> bool {
+    state()
+        .message_queue
+        .borrow_mut()
+        .kill_timer(hWnd, uIDEvent)
 }
 
 #[win32_derive::dllexport]
@@ -338,12 +340,28 @@ pub fn SetMenu(_ctx: &mut Context, _hWnd: HWND, _hMenu: HMENU) -> bool {
 #[win32_derive::dllexport]
 pub fn SetTimer(
     _ctx: &mut Context,
-    _hWnd: HWND,
-    _nIDEvent: u32,
-    _uElapse: u32,
-    _lpTimerFunc: Ptr<()>, /* TIMERPROC */
+    hWnd: HWND,
+    nIDEvent: u32,
+    uElapse: u32,
+    lpTimerFunc: Ptr<()>, /* TIMERPROC */
 ) -> u32 {
-    stub!(0) // fail
+    // A non-null hWnd must name our window; anything else fails.
+    if !hWnd.is_null()
+        && state()
+            .window
+            .borrow()
+            .as_ref()
+            .is_none_or(|window| window.borrow().hwnd != hWnd)
+    {
+        return 0;
+    }
+    state().message_queue.borrow_mut().set_timer(
+        hWnd,
+        nIDEvent,
+        uElapse,
+        lpTimerFunc.addr,
+        host::host().time(),
+    )
 }
 
 /// Read a NUL-terminated byte string without the UTF-8 check.
