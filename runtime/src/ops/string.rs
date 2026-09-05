@@ -3,7 +3,7 @@ use crate::{
     Context, Flags, Regs,
     memory::{MemRead, MemWrite},
     ops::int::Int,
-    segofs,
+    port_in, port_out, segofs,
 };
 
 #[derive(Debug)]
@@ -112,6 +112,61 @@ impl Context {
     }
     pub fn lodsd(&mut self) {
         self.lods::<u32>()
+    }
+
+    /// INS reads a value from the port in DX into the implicit ES:(E)DI
+    /// destination, then advances (E)DI by the operand size.
+    fn ins<S: StringInt>(&mut self) {
+        let width = (std::mem::size_of::<S>() * 8) as u32;
+        let value = S::from_eax(port_in(self.cpu.regs.get_dx(), width));
+        self.memory
+            .write::<S>(self.addr(self.cpu.regs.es, self.cpu.regs.edi), value);
+        advance_index(
+            &mut self.cpu.regs.edi,
+            std::mem::size_of::<S>() as u32,
+            self.cpu.real_mode,
+            self.cpu.flags.contains(Flags::DF),
+        );
+    }
+
+    pub fn insb(&mut self) {
+        self.ins::<u8>()
+    }
+
+    pub fn insw(&mut self) {
+        self.ins::<u16>()
+    }
+
+    pub fn insd(&mut self) {
+        self.ins::<u32>()
+    }
+
+    /// OUTS reads a value from the implicit DS:(E)SI source, writes it to the
+    /// port in DX, then advances (E)SI by the operand size.
+    fn outs<S: StringInt>(&mut self) {
+        let value = self
+            .memory
+            .read::<S>(self.addr(self.cpu.regs.ds, self.cpu.regs.esi));
+        let width = (std::mem::size_of::<S>() * 8) as u32;
+        port_out(self.cpu.regs.get_dx(), value.to_u32().unwrap_or(0), width);
+        advance_index(
+            &mut self.cpu.regs.esi,
+            std::mem::size_of::<S>() as u32,
+            self.cpu.real_mode,
+            self.cpu.flags.contains(Flags::DF),
+        );
+    }
+
+    pub fn outsb(&mut self) {
+        self.outs::<u8>()
+    }
+
+    pub fn outsw(&mut self) {
+        self.outs::<u16>()
+    }
+
+    pub fn outsd(&mut self) {
+        self.outs::<u32>()
     }
 
     fn stos<S: StringInt>(&mut self) {
@@ -248,6 +303,31 @@ mod tests {
         ctx.rep(Rep::REP, |_| {});
 
         assert_eq!(ctx.cpu.regs.ecx, 0x0001_0000);
+    }
+
+    #[test]
+    fn ins_and_outs_move_values_between_ports_and_memory() {
+        let mut ctx = context();
+        ctx.cpu.regs.edi = 0x100;
+        ctx.cpu.regs.esi = 0x200;
+        ctx.cpu.regs.set_dx(0x3f8);
+        ctx.memory.write::<u32>(0x200, 0xaabb_ccdd);
+
+        // port_in reads zero on this host; INS still writes and advances EDI.
+        ctx.insd();
+        assert_eq!(ctx.memory.read::<u32>(0x100), 0);
+        assert_eq!(ctx.cpu.regs.edi, 0x104);
+
+        // port_out is a no-op; only (E)SI advances.
+        ctx.outsd();
+        assert_eq!(ctx.cpu.regs.esi, 0x204);
+
+        // DF reverses the direction.
+        ctx.cpu.flags.insert(Flags::DF);
+        ctx.insb();
+        assert_eq!(ctx.cpu.regs.edi, 0x103);
+        ctx.outsb();
+        assert_eq!(ctx.cpu.regs.esi, 0x203);
     }
 
     #[test]

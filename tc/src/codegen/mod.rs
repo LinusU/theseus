@@ -2494,6 +2494,40 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_ins_outs() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (&[0x6c][..], "ctx.insb();"),
+            (&[0x6d], "ctx.insd();"),
+            (&[0x66, 0x6d], "ctx.insw();"),
+            (&[0x6e], "ctx.outsb();"),
+            (&[0x6f], "ctx.outsd();"),
+            (&[0x66, 0x6f], "ctx.outsw();"),
+            (&[0xf3, 0x6c], "ctx.rep(Rep::REP, Context::insb);"),
+            (&[0xf3, 0x6e], "ctx.rep(Rep::REP, Context::outsb);"),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_fences_hints_and_mxcsr() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

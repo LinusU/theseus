@@ -124,9 +124,16 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
     /// This can happen when decoding randomly invalid data.
     fn check_instr(&self, instr: &iced_x86::Instruction) -> anyhow::Result<()> {
         match instr.mnemonic() {
-            iced_x86::Mnemonic::Out => {
+            iced_x86::Mnemonic::In
+            | iced_x86::Mnemonic::Out
+            | iced_x86::Mnemonic::Insb
+            | iced_x86::Mnemonic::Insw
+            | iced_x86::Mnemonic::Insd
+            | iced_x86::Mnemonic::Outsb
+            | iced_x86::Mnemonic::Outsw
+            | iced_x86::Mnemonic::Outsd => {
                 if !self.traverse.module.is_dos() {
-                    anyhow::bail!("'out' instruction in non-DOS code");
+                    anyhow::bail!("port I/O instruction in non-DOS code");
                 }
             }
             iced_x86::Mnemonic::INVALID => anyhow::bail!("invalid instruction"),

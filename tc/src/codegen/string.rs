@@ -6,6 +6,8 @@ impl<'a> CodeGen<'a> {
         match instr.mnemonic() {
             Movsb | Movsw | Movsd | // x
             Lodsb | Lodsw | Lodsd | // x
+            Insb | Insw | Insd | // x
+            Outsb | Outsw | Outsd | // x
             Stosb | Stosw | Stosd => {
                 let name = instr_name(instr);
                 // Note: repe/repne behaves the same as rep for these instructions,
