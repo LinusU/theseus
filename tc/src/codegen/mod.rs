@@ -4045,6 +4045,47 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_palignr() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // palignr mm0, mm1, 8 (0F 3A 0F C1 08)
+            (
+                &[0x0f, 0x3a, 0x0f, 0xc1, 0x08][..],
+                "ctx.cpu.mmx.mm0 = palignr(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1, 0x8);",
+            ),
+            // palignr mm0, [eax], 4 (0F 3A 0F 00 04)
+            (
+                &[0x0f, 0x3a, 0x0f, 0x00, 0x04],
+                "palignr(ctx.cpu.mmx.mm0, ctx.memory.read::<u64>(ctx.cpu.regs.eax), 0x4)",
+            ),
+            // palignr xmm0, xmm1, 16 (66 0F 3A 0F C1 10)
+            (
+                &[0x66, 0x0f, 0x3a, 0x0f, 0xc1, 0x10],
+                "ctx.cpu.xmm.xmm0 = palignr_xmm(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1, 0x10);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_sse2_packed_integer_arithmetic() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

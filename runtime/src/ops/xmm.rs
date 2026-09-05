@@ -449,6 +449,27 @@ fn pmulhrsw_word(a: i16, b: i16) -> u16 {
     (tmp >> 1) as u16
 }
 
+/// PALIGNR (SSSE3) concatenates dest (high) and src (low), shifts right by
+/// `count` bytes, and returns the low 128 bits. Counts of 32 or more return 0.
+pub fn palignr_xmm(dest: [u32; 4], src: [u32; 4], count: u8) -> [u32; 4] {
+    if count >= 32 {
+        return [0; 4];
+    }
+    let mut composite = [0u8; 32];
+    let s = to_bytes(src);
+    let d = to_bytes(dest);
+    composite[0..16].copy_from_slice(&s);
+    composite[16..32].copy_from_slice(&d);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        let idx = i + count as usize;
+        if idx < 32 {
+            out[i] = composite[idx];
+        }
+    }
+    from_bytes(out)
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally. The first
 /// two result dwords come from dest; the last two come from src.
 pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
@@ -1338,6 +1359,21 @@ mod tests {
             pmulhrsw_xmm(a, b),
             [0x2000_7ffe, 0x0000_c000, 0x7ffe_ffff, 0x0000_0000]
         );
+    }
+
+    #[test]
+    fn palignr_xmm_extracts_shifted_concatenation() {
+        let dest = [0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f];
+        let src = [0x10111213, 0x14151617, 0x18191a1b, 0x1c1d1e1f];
+        // count 4 drops 4 src bytes and appends 4 dest bytes.
+        assert_eq!(
+            palignr_xmm(dest, src, 4),
+            [0x14151617, 0x18191a1b, 0x1c1d1e1f, 0x00010203]
+        );
+        // count 16 returns the original dest.
+        assert_eq!(palignr_xmm(dest, src, 16), dest);
+        // count 32 (or more) zeroes.
+        assert_eq!(palignr_xmm(dest, src, 32), [0; 4]);
     }
 
     #[test]

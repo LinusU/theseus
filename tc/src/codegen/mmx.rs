@@ -138,6 +138,7 @@ impl<'a> CodeGen<'a> {
                 | Phaddw
                 | Phaddd
                 | Pmulhrsw
+                | Palignr
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
@@ -328,6 +329,20 @@ impl<'a> CodeGen<'a> {
                         "{func}({}, {})",
                         self.mmx_get_32(instr, 0),
                         self.mmx_get_32(instr, 1)
+                    ),
+                ));
+            }
+
+            Palignr => {
+                let imm = format!("{:#x}", instr.immediate8());
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!(
+                        "palignr({}, {}, {})",
+                        self.mmx_get(instr, 0),
+                        self.mmx_get(instr, 1),
+                        imm
                     ),
                 ));
             }

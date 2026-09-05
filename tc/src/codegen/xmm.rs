@@ -636,6 +636,21 @@ impl<'a> CodeGen<'a> {
                 }
             }
 
+            Palignr => {
+                let imm = format!("{:#x}", instr.immediate8());
+                let func = format!("{}_xmm", instr_name(instr));
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1),
+                        imm
+                    ),
+                ));
+            }
+
             _ => return false,
         }
         true

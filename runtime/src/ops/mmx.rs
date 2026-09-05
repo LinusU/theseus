@@ -668,6 +668,16 @@ fn pmulhrsw_word(a: i16, b: i16) -> u16 {
     (tmp >> 1) as u16
 }
 
+/// PALIGNR (SSSE3) concatenates dest (high) and src (low), shifts right by
+/// `count` bytes, and returns the low 64 bits. Counts of 16 or more return 0.
+pub fn palignr(dest: u64, src: u64, count: u8) -> u64 {
+    if count >= 16 {
+        return 0;
+    }
+    let combined = ((dest as u128) << 64) | (src as u128);
+    (combined >> (count as u32 * 8)) as u64
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally.
 /// The result dwords come from the dest (first pair) and src (second pair).
 pub fn phaddd(dest: u64, src: u64) -> u64 {
@@ -964,13 +974,13 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw,
-        pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt,
-        pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub,
-        pfsubr, phaddd, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub,
-        pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld,
-        psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw,
-        punpckhwd, punpckldq, punpcklwd,
+        pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, palignr, pavgb, pavgusb,
+        pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
+        pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
+        pfrsqrt, pfsub, pfsubr, phaddd, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub,
+        pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb,
+        pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd,
+        punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1162,6 +1172,18 @@ mod tests {
         let a = 0xffff_8000_4000_7fffu64;
         let b = 0x0001_4000_4000_7fffu64;
         assert_eq!(pmulhrsw(a, b), 0x0000_c000_2000_7ffe);
+    }
+
+    #[test]
+    fn palignr_extracts_shifted_concatenation() {
+        let dest = 0x0706_0504_0302_0100u64;
+        let src = 0x0f0e_0d0c_0b0a_0908u64;
+        // count 3 drops 3 src bytes and appends 3 dest bytes.
+        assert_eq!(palignr(dest, src, 3), 0x0201_000f_0e0d_0c0b);
+        // count 8 returns the original dest.
+        assert_eq!(palignr(dest, src, 8), dest);
+        // count 16 (or more) zeroes.
+        assert_eq!(palignr(dest, src, 16), 0);
     }
 
     #[test]
