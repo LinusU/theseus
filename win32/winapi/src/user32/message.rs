@@ -607,7 +607,9 @@ pub fn PeekMessageA(
         return false;
     };
 
-    lpMsg.write(&mut ctx.memory, msg).unwrap();
+    if lpMsg.write(&mut ctx.memory, msg).is_none() {
+        return false;
+    }
     if remove {
         queue.pop_filtered(now, &filter);
     }
@@ -650,7 +652,9 @@ pub fn GetMessageW(
         return -1;
     }
     let msg = state().message_queue.borrow_mut().read(&filter);
-    lpMsg.write(&mut ctx.memory, msg).unwrap();
+    if lpMsg.write(&mut ctx.memory, msg).is_none() {
+        return -1; // error
+    }
     if msg.message == WM::QUIT as u32 {
         return 0;
     }
