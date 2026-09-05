@@ -16,12 +16,23 @@ impl State {
     pub fn find_resource<'ctx>(
         &self,
         ctx: &'ctx Context,
+        hModule: HMODULE,
         typ: exe::ResourceName,
         name: exe::ResourceName,
     ) -> Option<&'ctx [u8]> {
-        let section = &ctx.memory[self.resources.clone()];
+        let hModule = if hModule == 0 {
+            self.image_base
+        } else {
+            hModule
+        };
+        let (image_base, resources) = if hModule == self.image_base {
+            (self.image_base, self.resources.clone())
+        } else {
+            let module = self.loaded_modules.get(&hModule)?;
+            (module.image_base, module.resources.clone())
+        };
+        let section = &ctx.memory[resources];
         let span = exe::find_resource(section, typ, name)?;
-        let image_base = self.image_base;
         Some(&ctx.memory[image_base + span.start..image_base + span.end])
     }
 }
@@ -43,7 +54,9 @@ pub fn FindResourceW(
     } else {
         exe::ResourceName::Name(&ctx.memory.read_wstr(lpType.addr))
     };
-    let buf = kernel32::lock().find_resource(ctx, typ, name).unwrap();
+    let buf = kernel32::lock()
+        .find_resource(ctx, _hModule, typ, name)
+        .unwrap();
     unsafe { buf.as_ptr().byte_offset_from(ctx.memory.as_ptr()) as u32 }
 }
 

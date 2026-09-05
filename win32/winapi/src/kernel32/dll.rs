@@ -2,7 +2,19 @@ use runtime::Context;
 
 use crate::{Ptr, kernel32::lock, stub};
 
+use super::state::LoadedModule;
+
 pub type HMODULE = u32;
+
+fn parse_pe(buf: &[u8]) -> Option<exe::PE> {
+    // PE files may have a DOS stub; skip it when present.
+    if buf.starts_with(b"MZ") {
+        let dos = exe::DOS::parse(buf).ok()?;
+        let offset = dos.header.e_lfanew as usize;
+        return exe::PE::parse(&buf[offset..]).ok();
+    }
+    exe::PE::parse(buf).ok()
+}
 
 /// DLLs provides LoadLibrary and GetProcAddress implementations.
 /// It's a trait so it can be hooked by unpackers that want to implement custom logic.
@@ -141,11 +153,54 @@ pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
 #[win32_derive::dllexport]
 pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
     let filename = ctx.memory.read_str(lpLibFileName.addr).to_owned();
-    let addr = lock().dlls.load_library(&filename);
-    if addr == 0 {
-        log::warn!("LoadLibrary({filename}): not supported, returning null");
+    if let Some(hmodule) = lock().dlls.module_handle(&filename) {
+        return hmodule;
     }
-    addr
+
+    // Try to load a resource-only DLL from the current working directory.
+    let path = std::env::current_dir().unwrap_or_default().join(&filename);
+    let Ok(buf) = std::fs::read(&path) else {
+        log::warn!("LoadLibrary({filename}): not supported, returning null");
+        return 0;
+    };
+    let pe = match parse_pe(&buf) {
+        Some(pe) => pe,
+        None => {
+            log::warn!("LoadLibrary({filename}): not a valid PE, returning null");
+            return 0;
+        }
+    };
+    let Some(rsrc) = pe.sections.iter().find(|s| s.name() == Ok(".rsrc")) else {
+        log::warn!("LoadLibrary({filename}): no .rsrc section, returning null");
+        return 0;
+    };
+
+    let rsrc_rva = rsrc.VirtualAddress;
+    let rsrc_vsize = rsrc.VirtualSize;
+    let rsrc_off = rsrc.PointerToRawData as usize;
+    let rsrc_len = rsrc_vsize as usize;
+    let rsrc_end = (rsrc_off + rsrc_len).min(buf.len());
+    let rsrc_data = &buf[rsrc_off..rsrc_end];
+    let copy_len_u32 = rsrc_data.len().min(rsrc_len) as u32;
+
+    let mut state = lock();
+    let image_base = state
+        .mappings
+        .alloc(format!("{} .rsrc", filename), rsrc_rva + rsrc_vsize);
+    let rsrc_addr = image_base + rsrc_rva;
+    ctx.memory[rsrc_addr..rsrc_addr + copy_len_u32]
+        .copy_from_slice(&rsrc_data[..copy_len_u32 as usize]);
+
+    state.dlls.register_module(&filename);
+    let hmodule = state.dlls.module_handle(&filename).unwrap();
+    state.loaded_modules.insert(
+        hmodule,
+        LoadedModule {
+            image_base,
+            resources: rsrc_addr..rsrc_addr + rsrc_vsize,
+        },
+    );
+    hmodule
 }
 
 #[win32_derive::dllexport]

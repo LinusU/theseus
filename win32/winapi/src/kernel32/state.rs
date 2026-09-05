@@ -9,12 +9,18 @@ use crate::{
     locked_state::LockedState,
 };
 
+pub struct LoadedModule {
+    pub image_base: u32,
+    pub resources: std::ops::Range<u32>,
+}
+
 pub struct State {
     pub mappings: Mappings,
     pub heaps: HashMap<u32, Heap>,
     pub process_heap: Heap,
     pub image_base: u32,
     pub resources: std::ops::Range<u32>,
+    pub loaded_modules: HashMap<u32, LoadedModule>,
     pub command_line: CommandLine,
     pub environ: Cell<u32>,
     pub next_thread_id: u32,
@@ -36,6 +42,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
     *state = Some(State {
         image_base,
         resources,
+        loaded_modules: HashMap::new(),
         heaps: HashMap::new(),
         mappings: Default::default(),
         process_heap: Default::default(),

@@ -40,8 +40,6 @@ pub fn LoadImageA(
     cy: u32,
     fuLoad: LR,
 ) -> HANDLE {
-    assert!(hInst == 0 || hInst == kernel32::lock().image_base);
-
     assert!(is_intresource(name.addr));
     let name = exe::ResourceName::Id(name.addr);
 
@@ -56,7 +54,7 @@ pub fn LoadImageA(
     // assert!(cy == 0);
     assert!(fuLoad.is_empty());
 
-    let Some(buf) = kernel32::lock().find_resource(ctx, typ, name) else {
+    let Some(buf) = kernel32::lock().find_resource(ctx, hInst, typ, name) else {
         log::warn!("LoadImage: resource not found");
         return HANDLE::null();
     };
@@ -110,12 +108,13 @@ pub fn LoadMenuW(
     stub!(0)
 }
 
-fn find_string(ctx: &Context, uID: u32) -> Option<&[u8]> {
+fn find_string(ctx: &Context, hInstance: HINSTANCE, uID: u32) -> Option<&[u8]> {
     // Strings are stored as blocks of 16 consecutive strings.
     let (resource_id, index) = ((uID >> 4) + 1, uID & 0xF);
 
     let mut block = kernel32::lock().find_resource(
         ctx,
+        hInstance,
         exe::ResourceName::Id(exe::RT::STRING as u32),
         exe::ResourceName::Id(resource_id),
     )?;
@@ -159,11 +158,10 @@ pub fn LoadStringA(
     lpBuffer: Ptr<u8>,
     cchBufferMax: i32,
 ) -> i32 {
-    assert!(hInstance == 0 || hInstance == kernel32::lock().image_base);
     if cchBufferMax <= 0 || lpBuffer.addr < 0x1000 {
         return 0;
     }
-    let Some(bytes) = find_string(ctx, uID) else {
+    let Some(bytes) = find_string(ctx, hInstance, uID) else {
         return 0;
     };
     let bytes = ansi_string(bytes);
@@ -189,9 +187,8 @@ pub fn LoadStringW(
 ) -> i32 {
     // GetModuleHandle(null) hands back the image base, so a program asking for
     // its own resources passes either that or null.
-    assert!(hInstance == 0 || hInstance == kernel32::lock().image_base);
     assert!(cchBufferMax > 0);
-    let Some(bytes) = find_string(ctx, uID) else {
+    let Some(bytes) = find_string(ctx, hInstance, uID) else {
         panic!();
     };
     let buf = Vec::from(bytes);
