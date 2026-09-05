@@ -213,24 +213,21 @@ pub fn LCMapStringA(
     if cchSrc < -1 || cchDest < 0 {
         return 0;
     }
-    let len = if cchSrc < 0 {
-        let Some(src) = read_string_type_a(ctx, lpSrcStr.addr, -1) else {
-            return 0;
-        };
-        src.len() as u32
-    } else {
-        cchSrc as u32
+    let Some(src) = read_string_type_a(ctx, lpSrcStr.addr, cchSrc) else {
+        return 0;
     };
+    let len = src.len() as u32;
     if cchDest == 0 {
         return len as i32;
     }
     if (cchDest as u32) < len {
         return 0;
     }
-    for i in 0..len {
-        let c = ctx.memory.read::<u8>(lpSrcStr.addr + i);
-        ctx.memory
-            .write::<u8>(lpDestStr.addr + i, lcmap_char(c as u32, dwMapFlags) as u8);
+    for (i, c) in src.into_iter().enumerate() {
+        ctx.memory.write::<u8>(
+            lpDestStr.addr + i as u32,
+            lcmap_char(c as u32, dwMapFlags) as u8,
+        );
     }
     len as i32
 }
@@ -248,24 +245,19 @@ pub fn LCMapStringW(
     if cchSrc < -1 || cchDest < 0 {
         return 0;
     }
-    let len = if cchSrc < 0 {
-        let Some(src) = read_string_type_w(ctx, lpSrcStr.addr, -1) else {
-            return 0;
-        };
-        src.len() as u32
-    } else {
-        cchSrc as u32
+    let Some(src) = read_string_type_w(ctx, lpSrcStr.addr, cchSrc) else {
+        return 0;
     };
+    let len = src.len() as u32;
     if cchDest == 0 {
         return len as i32;
     }
     if (cchDest as u32) < len {
         return 0;
     }
-    for i in 0..len {
-        let c = ctx.memory.read::<u16>(lpSrcStr.addr + i * 2);
+    for (i, c) in src.into_iter().enumerate() {
         ctx.memory.write::<u16>(
-            lpDestStr.addr + i * 2,
+            lpDestStr.addr + (i * 2) as u32,
             lcmap_char(c as u32, dwMapFlags) as u16,
         );
     }
@@ -504,6 +496,23 @@ mod tests {
                 Ptr::new(0x1200),
                 1,
             ),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
+    }
+
+    #[test]
+    fn lcmap_rejects_truncated_counted_input() {
+        let mut ctx = context();
+        ctx.memory.write::<u8>(0x3fff, b'A');
+        ctx.memory.write::<u16>(0x1200, 0xffff);
+
+        assert_eq!(
+            LCMapStringA(&mut ctx, 0, 0x200, Ptr::new(0x3fff), 2, Ptr::new(0x1200), 2,),
+            0
+        );
+        assert_eq!(
+            LCMapStringW(&mut ctx, 0, 0x200, Ptr::new(0x3fff), 1, Ptr::new(0x1200), 1,),
             0
         );
         assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
