@@ -206,6 +206,17 @@ impl Context {
         self.cpu.flags.set(Flags::CF, adjust);
     }
 
+    pub fn aad(&mut self, base: u8) {
+        let value = (self.cpu.regs.get_ah() as u16)
+            .wrapping_mul(base as u16)
+            .wrapping_add(self.cpu.regs.get_al() as u16) as u8;
+        self.cpu.regs.set_ah(0);
+        self.cpu.regs.set_al(value);
+        self.cpu.flags.set(Flags::SF, value & 0x80 != 0);
+        self.cpu.flags.set(Flags::ZF, value == 0);
+        self.cpu.flags.set(Flags::PF, value.count_ones() % 2 == 0);
+    }
+
     pub fn daa(&mut self) {
         let al = self.cpu.regs.get_al();
         let old_cf = self.cpu.flags.contains(Flags::CF);
@@ -323,6 +334,35 @@ mod tests {
 
         assert_eq!(ctx.cpu.regs.get_ax(), 0x1204);
         assert!(!ctx.cpu.flags.intersects(Flags::AF | Flags::CF));
+    }
+
+    #[test]
+    fn aad_converts_ascii_digits_to_binary() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_ax(0x0203);
+        ctx.cpu.flags.insert(Flags::CF | Flags::AF | Flags::OF);
+
+        ctx.aad(10);
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 23);
+        assert!(!ctx.cpu.flags.intersects(Flags::SF | Flags::ZF));
+        assert!(
+            ctx.cpu
+                .flags
+                .contains(Flags::PF | Flags::CF | Flags::AF | Flags::OF)
+        );
+    }
+
+    #[test]
+    fn aad_wraps_the_binary_result_to_al() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_ax(0xffff);
+
+        ctx.aad(0xff);
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 0);
+        assert!(ctx.cpu.flags.contains(Flags::ZF | Flags::PF));
+        assert!(!ctx.cpu.flags.contains(Flags::SF));
     }
 
     #[test]
