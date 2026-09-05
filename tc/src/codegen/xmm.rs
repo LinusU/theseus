@@ -139,6 +139,12 @@ impl<'a> CodeGen<'a> {
                     ));
                 }
             }
+            // MOVQ2DQ zero-extends the low qword of an MMX register into an
+            // XMM register.
+            Movq2dq => {
+                let src = self.mmx_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("movq2dq({src})")));
+            }
 
             // Packed single/double-precision arithmetic and bitwise operations.
             Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps | Addpd | Subpd

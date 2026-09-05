@@ -4228,6 +4228,42 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_qword_xmm_mmx_moves() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // movdq2q mm0, xmm0 (F2 0F D6 /r)
+            (
+                &[0xf2, 0x0f, 0xd6, 0xc0][..],
+                "ctx.cpu.mmx.mm0 = movq_from_xmm(ctx.cpu.xmm.xmm0);",
+            ),
+            // movq2dq xmm0, mm0 (F3 0F D6 /r)
+            (
+                &[0xf3, 0x0f, 0xd6, 0xc0],
+                "ctx.cpu.xmm.xmm0 = movq2dq(ctx.cpu.mmx.mm0);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

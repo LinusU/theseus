@@ -1157,6 +1157,10 @@ pub fn movq_from_xmm(src: [u32; 4]) -> u64 {
     (src[0] as u64) | ((src[1] as u64) << 32)
 }
 
+pub fn movq2dq(src: u64) -> [u32; 4] {
+    [src as u32, (src >> 32) as u32, 0, 0]
+}
+
 pub fn pmullw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_words(a);
     let b = to_words(b);
@@ -1250,6 +1254,7 @@ mod tests {
             movq_from_xmm([0x9abcdef0, 0x12345678, 0, 0]),
             0x123456789abcdef0
         );
+        assert_eq!(movq2dq(0x123456789abcdef0), [0x9abcdef0, 0x12345678, 0, 0]);
     }
 
     #[test]

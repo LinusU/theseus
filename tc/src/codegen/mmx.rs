@@ -159,6 +159,13 @@ impl<'a> CodeGen<'a> {
             // MOVNTQ is a non-temporal MMX store; in the flat memory model it
             // is identical to a regular 64-bit MMX store.
             Movq | Movntq => self.line(self.mmx_set(instr, 0, self.mmx_get(instr, 1))),
+            // MOVDQ2Q copies the low qword of an XMM register into an MMX
+            // register; the source is an XMM, so the guard did not kick in.
+            Movdq2q => self.line(self.mmx_set(
+                instr,
+                0,
+                format!("movq_from_xmm({})", self.get_op(instr, 1)),
+            )),
 
             Pxor => {
                 self.line(self.mmx_set(
