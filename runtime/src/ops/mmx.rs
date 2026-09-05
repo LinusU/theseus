@@ -8,6 +8,13 @@ impl Unpack<[u32; 2]> for u64 {
     }
 }
 
+impl Unpack<[f32; 2]> for u64 {
+    fn unpack(self) -> [f32; 2] {
+        let u: [u32; 2] = self.unpack();
+        [f32::from_bits(u[0]), f32::from_bits(u[1])]
+    }
+}
+
 impl Unpack<[i32; 2]> for u64 {
     fn unpack(self) -> [i32; 2] {
         [(self >> 0) as i32, (self >> 32) as i32]
@@ -66,6 +73,13 @@ impl Pack for [u32; 2] {
     type Target = u64;
     fn pack(self) -> u64 {
         (self[0] as u64) | ((self[1] as u64) << 32)
+    }
+}
+
+impl Pack for [f32; 2] {
+    type Target = u64;
+    fn pack(self) -> u64 {
+        [self[0].to_bits(), self[1].to_bits()].pack()
     }
 }
 
@@ -565,6 +579,51 @@ pub fn pi2fd(x: u64) -> u64 {
     ((high.to_bits() as u64) << 32) | (low.to_bits() as u64)
 }
 
+/// PFADD (3DNow!) adds the two packed single-precision floats.
+pub fn pfadd(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] + y[0], x[1] + y[1]].pack()
+}
+
+/// PFSUB (3DNow!) subtracts the two packed single-precision floats.
+pub fn pfsub(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] - y[0], x[1] - y[1]].pack()
+}
+
+/// PFSUBR (3DNow!) reverses and subtracts the two packed single-precision floats.
+pub fn pfsubr(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [y[0] - x[0], y[1] - x[1]].pack()
+}
+
+/// PFACC (3DNow!) accumulates within each qword: low = x.low + x.high,
+/// high = y.low + y.high.
+pub fn pfacc(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] + x[1], y[0] + y[1]].pack()
+}
+
+/// PFNACC (3DNow!) negative accumulate: low = x.low - x.high,
+/// high = y.low - y.high.
+pub fn pfnacc(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] - x[1], y[0] - y[1]].pack()
+}
+
+/// PFPNACC (3DNow!) mixed accumulate: low = x.low + x.high,
+/// high = y.low - y.high.
+pub fn pfpnacc(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] + x[1], y[0] - y[1]].pack()
+}
+
 pub fn psrlw(x: u64, y: u64) -> u64 {
     if y > 15 {
         return 0;
@@ -684,9 +743,10 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pf2id, pi2fd, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
-        pmulhuw, pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
-        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pextrw, pf2id, pfacc, pfadd, pfnacc, pfpnacc, pfsub, pfsubr, pi2fd, pinsrw, pmaddwd,
+        pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw,
+        pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd,
+        punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -847,6 +907,36 @@ mod tests {
         let ints = ((-7i32 as u64) << 32) | (42u64);
         let expected = ((f32::to_bits(-7.0) as u64) << 32) | (f32::to_bits(42.0) as u64);
         assert_eq!(pi2fd(ints), expected);
+    }
+
+    #[test]
+    fn pf_add_sub_and_accumulate_arithmetic() {
+        let a = (f32::to_bits(4.0) as u64) << 32 | f32::to_bits(1.5) as u64;
+        let b = (f32::to_bits(3.0) as u64) << 32 | f32::to_bits(2.0) as u64;
+
+        // PFADD: elementwise.
+        let expected_add = (f32::to_bits(7.0) as u64) << 32 | f32::to_bits(3.5) as u64;
+        assert_eq!(pfadd(a, b), expected_add);
+
+        // PFSUB: 1.5 - 2.0 and 4.0 - 3.0.
+        let expected_sub = (f32::to_bits(1.0) as u64) << 32 | f32::to_bits(-0.5) as u64;
+        assert_eq!(pfsub(a, b), expected_sub);
+
+        // PFSUBR: reversed, 2.0 - 1.5 and 3.0 - 4.0.
+        let expected_subr = (f32::to_bits(-1.0) as u64) << 32 | f32::to_bits(0.5) as u64;
+        assert_eq!(pfsubr(a, b), expected_subr);
+
+        // PFACC: low = 1.5+4.0, high = 2.0+3.0.
+        let expected_acc = (f32::to_bits(5.0) as u64) << 32 | f32::to_bits(5.5) as u64;
+        assert_eq!(pfacc(a, b), expected_acc);
+
+        // PFNACC: low = 1.5-4.0, high = 2.0-3.0.
+        let expected_nacc = (f32::to_bits(-1.0) as u64) << 32 | f32::to_bits(-2.5) as u64;
+        assert_eq!(pfnacc(a, b), expected_nacc);
+
+        // PFPNACC: low = 1.5+4.0, high = 2.0-3.0.
+        let expected_pnacc = (f32::to_bits(-1.0) as u64) << 32 | f32::to_bits(5.5) as u64;
+        assert_eq!(pfpnacc(a, b), expected_pnacc);
     }
 
     #[test]

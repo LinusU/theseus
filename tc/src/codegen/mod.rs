@@ -4326,6 +4326,62 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_3dnow_float_arithmetic() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pfadd mm0, mm1 (0F 0F /r 9E)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x9e][..],
+                "ctx.cpu.mmx.mm0 = pfadd(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfsub mm0, mm1 (0F 0F /r 9A)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x9a],
+                "ctx.cpu.mmx.mm0 = pfsub(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfsubr mm0, mm1 (0F 0F /r AA)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xaa],
+                "ctx.cpu.mmx.mm0 = pfsubr(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfacc mm0, mm1 (0F 0F /r AE)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xae],
+                "ctx.cpu.mmx.mm0 = pfacc(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfnacc mm0, mm1 (0F 0F /r 8A)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x8a],
+                "ctx.cpu.mmx.mm0 = pfnacc(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfpnacc mm0, mm1 (0F 0F /r 8E)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x8e],
+                "ctx.cpu.mmx.mm0 = pfpnacc(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_3dnow_integer_ops() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
