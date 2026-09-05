@@ -2,8 +2,14 @@ use crate::{Context, Flags, segofs};
 
 impl Context {
     pub fn push32(&mut self, x: u32) {
-        self.cpu.regs.esp -= 4;
-        self.memory.write::<u32>(self.cpu.regs.esp, x);
+        if self.cpu.real_mode {
+            let sp = self.cpu.regs.get_sp().wrapping_sub(4);
+            self.cpu.regs.set_sp(sp);
+            self.memory.write::<u32>(segofs(self.cpu.regs.ss, sp), x);
+        } else {
+            self.cpu.regs.esp -= 4;
+            self.memory.write::<u32>(self.cpu.regs.esp, x);
+        }
     }
 
     pub fn push16(&mut self, x: u16) {
@@ -13,9 +19,16 @@ impl Context {
     }
 
     pub fn pop32(&mut self) -> u32 {
-        let x = self.memory.read::<u32>(self.cpu.regs.esp);
-        self.cpu.regs.esp += 4;
-        x
+        if self.cpu.real_mode {
+            let sp = self.cpu.regs.get_sp();
+            let x = self.memory.read::<u32>(segofs(self.cpu.regs.ss, sp));
+            self.cpu.regs.set_sp(sp.wrapping_add(4));
+            x
+        } else {
+            let x = self.memory.read::<u32>(self.cpu.regs.esp);
+            self.cpu.regs.esp += 4;
+            x
+        }
     }
 
     pub fn pop16(&mut self) -> u16 {
@@ -471,6 +484,20 @@ mod tests {
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_fffe);
         assert_eq!(ctx.pop16(), 0x1234);
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0000);
+    }
+
+    #[test]
+    fn real_mode_push32_pop32_use_16_bit_stack_pointer() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0xabcd_0100;
+
+        ctx.push32(0x1234_5678);
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_00fc);
+        assert_eq!(ctx.memory.read::<u32>(segofs(0x1000, 0x00fc)), 0x1234_5678);
+        assert_eq!(ctx.pop32(), 0x1234_5678);
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
     }
 
     #[test]
