@@ -9,6 +9,7 @@ pub mod dinput;
 mod dllexport;
 pub mod dplayx;
 pub mod dsound;
+pub mod ebueula;
 pub mod gdi32;
 mod handle;
 mod heap;
@@ -45,11 +46,14 @@ pub const DYNAMIC_EXPORTS: &[(&str, &[&str])] = &[
 /// snapshot did not reserve and register a synthetic address for them. Each
 /// entry is appended to the runtime block table so `GetProcAddress` can return
 /// a callable pointer.
-pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[(
-    "kernel32",
-    "IsProcessorFeaturePresent",
-    kernel32::IsProcessorFeaturePresent_stdcall,
-)];
+pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[
+    (
+        "kernel32",
+        "IsProcessorFeaturePresent",
+        kernel32::IsProcessorFeaturePresent_stdcall,
+    ),
+    ("EBUEULA", "EBUEula", ebueula::EBUEula_stdcall),
+];
 
 pub use dllexport::{ABIReturn, FromABIParam};
 pub use handle::{HANDLE, Handles};
