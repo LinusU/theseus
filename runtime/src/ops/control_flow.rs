@@ -183,6 +183,15 @@ impl Context {
         self.indirect(segofs(cs, ip))
     }
 
+    pub fn iret32(&mut self) -> Cont {
+        let ip = self.pop32();
+        let cs = self.pop32();
+        self.cpu.regs.set_cs(cs as u16);
+        let flags = self.pop32();
+        self.cpu.flags = Flags::from_bits_truncate(flags & !2);
+        self.indirect(ip)
+    }
+
     pub fn retf16(&mut self, n: u16) -> Cont {
         let ip = self.pop16();
         let cs = self.pop16();
@@ -314,6 +323,24 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
+    }
+
+    #[test]
+    fn iret32_restores_flat_return_state() {
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0x100;
+        ctx.memory.write::<u32>(0x100, 0x1234);
+        ctx.memory.write::<u32>(0x104, 0x001b);
+        ctx.memory.write::<u32>(0x108, 0x0202);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.iret32();
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.cs, 0x001b);
+        assert_eq!(ctx.cpu.regs.esp, 0x10c);
+        assert_eq!(ctx.cpu.flags.bits(), Flags::IF.bits());
     }
 
     #[test]
