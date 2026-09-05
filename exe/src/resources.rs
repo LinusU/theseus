@@ -63,10 +63,10 @@ impl<'a> PartialEq for ResourceName<'a> {
     // Case insensitive comparison is used for string names
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Name(name), Self::Name(name_other)) => {
-                name.to_string().unwrap().to_ascii_lowercase()
-                    == name_other.to_string().unwrap().to_ascii_lowercase()
-            }
+            (Self::Name(name), Self::Name(name_other)) => name
+                .to_string()
+                .unwrap()
+                .eq_ignore_ascii_case(&name_other.to_string().unwrap()),
             (Self::Id(id), Self::Id(id_other)) => id == id_other,
             _ => false,
         }

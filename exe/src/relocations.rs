@@ -15,7 +15,7 @@ struct IMAGE_BASE_RELOCATION {
 /// Iterates IMAGE_BASE_RELOCATION+body blocks.
 fn block_iter(mut buf: &[u8]) -> impl Iterator<Item = (u32, &[u8])> {
     std::iter::from_fn(move || {
-        if buf.len() == 0 {
+        if buf.is_empty() {
             return None;
         }
         let reloc = <IMAGE_BASE_RELOCATION>::read_from_prefix(buf).unwrap().0;

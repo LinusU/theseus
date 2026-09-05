@@ -46,8 +46,10 @@ mod tests {
 
     #[test]
     fn kkrunchy_header() {
-        let mut header = IMAGE_SECTION_HEADER::default();
-        header.Name = *b"kkrunchy";
+        let header = IMAGE_SECTION_HEADER {
+            Name: *b"kkrunchy",
+            ..Default::default()
+        };
         assert_eq!(header.name().unwrap(), "kkrunchy");
     }
 
@@ -56,9 +58,9 @@ mod tests {
     #[test]
     fn dos_header() {
         let mut buf: Vec<u8> = Vec::new();
-        buf.write(b"MZ").unwrap();
-        buf.write(&[0; 0x3a]).unwrap();
-        buf.write(&0xFFFFFFFFu32.to_le_bytes()).unwrap();
+        buf.write_all(b"MZ").unwrap();
+        buf.write_all(&[0; 0x3a]).unwrap();
+        buf.write_all(&0xFFFFFFFFu32.to_le_bytes()).unwrap();
         assert!(parse(&buf).is_ok()); // no crash
     }
 }

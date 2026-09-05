@@ -18,7 +18,7 @@ impl<'m, T: zerocopy::FromBytes> std::iter::Iterator for PodIterator<'m, T> {
 
 pub fn iter_pod<'a, T: zerocopy::FromBytes>(memory: &'a [u8]) -> PodIterator<'a, T> {
     PodIterator {
-        buf: &memory,
+        buf: memory,
         _marker: std::marker::PhantomData,
     }
 }
