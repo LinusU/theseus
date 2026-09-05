@@ -196,6 +196,22 @@ impl Context {
         self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
     }
 
+    pub fn das(&mut self) {
+        let al = self.cpu.regs.get_al();
+        let old_cf = self.cpu.flags.contains(Flags::CF);
+        let low_adjust = (al & 0x0f) > 9 || self.cpu.flags.contains(Flags::AF);
+        let high_adjust = al > 0x99 || old_cf;
+        let adjustment = if low_adjust { 0x06 } else { 0 } | if high_adjust { 0x60 } else { 0 };
+        let result = al.wrapping_sub(adjustment);
+
+        self.cpu.regs.set_al(result);
+        self.cpu.flags.set(Flags::AF, low_adjust);
+        self.cpu.flags.set(Flags::CF, high_adjust);
+        self.cpu.flags.set(Flags::SF, result & 0x80 != 0);
+        self.cpu.flags.set(Flags::ZF, result == 0);
+        self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
+    }
+
     pub fn xlat(&mut self) {
         let offset = if self.cpu.real_mode {
             self.cpu.regs.get_bx() as u32
@@ -260,6 +276,30 @@ mod tests {
         assert_eq!(ctx.cpu.regs.get_al(), 0x07);
         assert!(ctx.cpu.flags.contains(Flags::AF));
         assert!(!ctx.cpu.flags.contains(Flags::CF));
+    }
+
+    #[test]
+    fn das_adjusts_bcd_digits_and_flags() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_al(0x9f);
+
+        ctx.das();
+
+        assert_eq!(ctx.cpu.regs.get_al(), 0x39);
+        assert!(ctx.cpu.flags.contains(Flags::AF | Flags::CF));
+    }
+
+    #[test]
+    fn das_honors_existing_carry() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_al(0x01);
+        ctx.cpu.flags.insert(Flags::CF);
+
+        ctx.das();
+
+        assert_eq!(ctx.cpu.regs.get_al(), 0xa1);
+        assert!(ctx.cpu.flags.contains(Flags::CF));
+        assert!(!ctx.cpu.flags.contains(Flags::AF));
     }
 
     #[test]
