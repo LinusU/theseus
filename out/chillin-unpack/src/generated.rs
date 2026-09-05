@@ -534,9 +534,7 @@ pub fn x4cbdb2(ctx: &mut Context) -> Cont {
 
 pub fn x4cbdc8(ctx: &mut Context) -> Cont {
     // 004cbdc8 xchg ebp,eax
-    let t = ctx.cpu.regs.ebp;
-    ctx.cpu.regs.ebp = ctx.cpu.regs.eax;
-    ctx.cpu.regs.eax = t;
+    std::mem::swap(&mut ctx.cpu.regs.ebp, &mut ctx.cpu.regs.eax);
     Cont(x4cbdc9)
 }
 

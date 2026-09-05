@@ -44,7 +44,7 @@ impl kernel32::DLLs for Loader {
     fn get_proc_address(&mut self, hmodule: kernel32::HMODULE, proc_name: &str) -> u32 {
         let mut state = STATE.lock().unwrap();
         let dll = state.modules[hmodule as usize - 1].clone();
-        assert!(proc_name.len() > 0);
+        assert!(!proc_name.is_empty());
         let func_addr = state.next_addr;
         state.next_addr += 1;
         state.syms.push(tc::Import {
@@ -118,7 +118,7 @@ pub fn do_unpack(ctx: &mut runtime::Context) {
             .collect::<Vec<_>>(),
     );
 
-    find_iat(&mut syms, &tc.mem.mappings.vec(), &ctx.memory.bytes);
+    find_iat(&mut syms, tc.mem.mappings.vec(), ctx.memory.bytes);
 
     tc.mem.bytes.resize(ctx.memory.bytes.len(), 0);
     tc.mem.bytes.copy_from_slice(ctx.memory.bytes);

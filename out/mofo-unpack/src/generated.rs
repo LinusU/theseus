@@ -542,9 +542,7 @@ pub fn x44d951(ctx: &mut Context) -> Cont {
 
 pub fn x44d967(ctx: &mut Context) -> Cont {
     // 0044d967 xchg edx,eax
-    let t = ctx.cpu.regs.edx;
-    ctx.cpu.regs.edx = ctx.cpu.regs.eax;
-    ctx.cpu.regs.eax = t;
+    std::mem::swap(&mut ctx.cpu.regs.edx, &mut ctx.cpu.regs.eax);
     Cont(x44d968)
 }
 
