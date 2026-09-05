@@ -7,11 +7,13 @@ use crate::{
     gdi32::{self, Bitmap, COLORREF, HBRUSH, HDC, HFONT, HGDIOBJ, HPEN},
 };
 
+/// A `None` color is a NULL_BRUSH: it draws nothing when selected.
 #[derive(Debug, Clone)]
-pub struct Brush(pub COLORREF);
+pub struct Brush(pub Option<COLORREF>);
 
+/// A `None` color is a NULL_PEN: it draws nothing when selected.
 #[derive(Debug, Clone)]
-pub struct Pen(pub COLORREF);
+pub struct Pen(pub Option<COLORREF>);
 
 #[derive(Debug, Clone, Default)]
 pub struct Font {
@@ -30,13 +32,13 @@ pub fn CreatePen(
 ) -> HPEN {
     assert_eq!(iStyle, 0); // PS_SOLID
     assert_eq!(cWidth, 1);
-    let pen = Pen(color);
+    let pen = Pen(Some(color));
     gdi32::lock().objects.add(Object::Pen(pen))
 }
 
 #[win32_derive::dllexport]
 pub fn CreateSolidBrush(_ctx: &mut Context, color: COLORREF) -> HBRUSH {
-    gdi32::lock().objects.add(Object::Brush(Brush(color)))
+    gdi32::lock().objects.add(Object::Brush(Brush(Some(color))))
 }
 
 #[win32_derive::dllexport]
@@ -143,10 +145,27 @@ pub enum GetStockObjectArg {
 #[win32_derive::dllexport]
 pub fn GetStockObject(_ctx: &mut Context, i: GetStockObjectArg) -> HGDIOBJ {
     use GetStockObjectArg::*;
+    let rgb = |r, g, b| Some(COLORREF::from_rgb(r, g, b));
     let object = match i {
-        LTGRAY_BRUSH => Object::Brush(Brush(COLORREF::from_rgb(0xc0, 0xc0, 0xc0))),
-        BLACK_BRUSH => Object::Brush(Brush(COLORREF::from_rgb(0x00, 0x00, 0x00))),
-        _ => todo!("{:?}", i),
+        WHITE_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
+        LTGRAY_BRUSH => Object::Brush(Brush(rgb(0xc0, 0xc0, 0xc0))),
+        GRAY_BRUSH => Object::Brush(Brush(rgb(0x80, 0x80, 0x80))),
+        DKGRAY_BRUSH => Object::Brush(Brush(rgb(0x40, 0x40, 0x40))),
+        BLACK_BRUSH => Object::Brush(Brush(rgb(0x00, 0x00, 0x00))),
+        NULL_BRUSH => Object::Brush(Brush(None)),
+        WHITE_PEN => Object::Pen(Pen(rgb(0xff, 0xff, 0xff))),
+        BLACK_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
+        NULL_PEN => Object::Pen(Pen(None)),
+        // The emulated font model does not distinguish stock faces; they all
+        // share the default metrics used by the text path.
+        OEM_FIXED_FONT | ANSI_FIXED_FONT | ANSI_VAR_FONT | SYSTEM_FONT | DEVICE_DEFAULT_FONT
+        | SYSTEM_FIXED_FONT | DEFAULT_GUI_FONT => Object::Font(Font::default()),
+        // DC_BRUSH/DC_PEN are stock objects whose colors come from
+        // SetDCBrushColor/SetDCPenColor; neither is implemented, so report the
+        // documented defaults (white brush, black pen).
+        DC_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
+        DC_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
+        DEFAULT_PALETTE => todo!("palette objects are not modeled"),
     };
     gdi32::lock().objects.add(object)
 }
@@ -181,5 +200,69 @@ pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
             dc.font = (h, font.clone());
             prev
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GetStockObject, GetStockObjectArg, Object};
+    use crate::gdi32;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn stock_objects_cover_every_non_palette_variant() {
+        use GetStockObjectArg::*;
+        let mut ctx = context();
+        for i in [
+            WHITE_BRUSH,
+            LTGRAY_BRUSH,
+            GRAY_BRUSH,
+            DKGRAY_BRUSH,
+            BLACK_BRUSH,
+            NULL_BRUSH,
+            WHITE_PEN,
+            BLACK_PEN,
+            NULL_PEN,
+            OEM_FIXED_FONT,
+            ANSI_FIXED_FONT,
+            ANSI_VAR_FONT,
+            SYSTEM_FONT,
+            DEVICE_DEFAULT_FONT,
+            SYSTEM_FIXED_FONT,
+            DEFAULT_GUI_FONT,
+            DC_BRUSH,
+            DC_PEN,
+        ] {
+            assert!(!GetStockObject(&mut ctx, i).is_null());
+        }
+    }
+
+    #[test]
+    fn null_stock_objects_are_hollow() {
+        let mut ctx = context();
+        let null_brush = GetStockObject(&mut ctx, GetStockObjectArg::NULL_BRUSH);
+        let null_pen = GetStockObject(&mut ctx, GetStockObjectArg::NULL_PEN);
+
+        let state = gdi32::lock();
+        let Object::Brush(brush) = state.objects.get(null_brush).unwrap() else {
+            panic!()
+        };
+        assert!(brush.0.is_none());
+        let Object::Pen(pen) = state.objects.get(null_pen).unwrap() else {
+            panic!()
+        };
+        assert!(pen.0.is_none());
     }
 }

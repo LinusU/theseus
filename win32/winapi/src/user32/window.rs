@@ -429,7 +429,7 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {
         let color = COLOR::from_abi(wndclass.hbrBackground.to_raw());
-        Some(Brush(color.to_colorref()))
+        Some(Brush(Some(color.to_colorref())))
     } else {
         Some(
             gdi32::lock()
@@ -477,7 +477,9 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
             pixel_count,
         )
         .unwrap();
-        pixels.fill(background.0.to_pixel());
+        if let Some(color) = background.0 {
+            pixels.fill(color.to_pixel());
+        }
     };
     let rcPaint = window.rect();
     drop(window);

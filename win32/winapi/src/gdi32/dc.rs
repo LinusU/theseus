@@ -46,8 +46,11 @@ impl DC {
     pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>) -> Self {
         DC {
             bitmap: (hbitmap, bitmap),
-            pen: (HPEN::null(), Pen(COLORREF::default())),
-            brush: (HBRUSH::null(), Brush(COLORREF::from_rgb(0xff, 0xff, 0xff))),
+            pen: (HPEN::null(), Pen(Some(COLORREF::default()))),
+            brush: (
+                HBRUSH::null(),
+                Brush(Some(COLORREF::from_rgb(0xff, 0xff, 0xff))),
+            ),
             font: (HGDIOBJ::null(), Font::default()),
             rop2: R2::COPYPEN,
             bk_mode: 2,
@@ -298,17 +301,21 @@ pub fn Rectangle(
     if width == 0 || height == 0 {
         return true;
     }
-    let fill = dc.brush.1.0.to_pixel();
-    let border = dc.pen.1.0.to_pixel();
+    let fill = dc.brush.1.0.map(|c| c.to_pixel());
+    let border = dc.pen.1.0.map(|c| c.to_pixel());
     let pixels = bitmap.pixels_mut(&mut ctx.memory);
-    fill_pixels(pixels, &bitmap, left, top, width, height, fill);
-    for x in left..right {
-        draw_pixel(pixels, &bitmap, x, top, border);
-        draw_pixel(pixels, &bitmap, x, bottom - 1, border);
+    if let Some(fill) = fill {
+        fill_pixels(pixels, &bitmap, left, top, width, height, fill);
     }
-    for y in top..bottom {
-        draw_pixel(pixels, &bitmap, left, y, border);
-        draw_pixel(pixels, &bitmap, right - 1, y, border);
+    if let Some(border) = border {
+        for x in left..right {
+            draw_pixel(pixels, &bitmap, x, top, border);
+            draw_pixel(pixels, &bitmap, x, bottom - 1, border);
+        }
+        for y in top..bottom {
+            draw_pixel(pixels, &bitmap, left, y, border);
+            draw_pixel(pixels, &bitmap, right - 1, y, border);
+        }
     }
     true
 }
@@ -379,23 +386,25 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
 
     let color = match dc.rop2 {
         R2::COPYPEN => dc.pen.1.0,
-        R2::WHITE => COLORREF::from_rgb(0xff, 0xff, 0xff),
+        R2::WHITE => Some(COLORREF::from_rgb(0xff, 0xff, 0xff)),
         _ => todo!("{:?}", dc.rop2),
     };
 
     let pixels = bitmap.pixels_mut(&mut ctx.memory);
-    if x == dc.pos.x {
-        for y in ascending(dc.pos.y, y) {
-            let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
-            pixels[i..][..4].copy_from_slice(&color.to_pixel());
+    if let Some(color) = color {
+        if x == dc.pos.x {
+            for y in ascending(dc.pos.y, y) {
+                let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
+                pixels[i..][..4].copy_from_slice(&color.to_pixel());
+            }
+        } else if y == dc.pos.y {
+            for x in ascending(dc.pos.x, x) {
+                let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
+                pixels[i..][..4].copy_from_slice(&color.to_pixel());
+            }
+        } else {
+            todo!(); // only axis-aligned supported for now
         }
-    } else if y == dc.pos.y {
-        for x in ascending(dc.pos.x, x) {
-            let i = ((y as u32 * bitmap.stride()) + (x as u32 * 4)) as usize;
-            pixels[i..][..4].copy_from_slice(&color.to_pixel());
-        }
-    } else {
-        todo!(); // only axis-aligned supported for now
     }
 
     dc.pos = POINT { x, y };
