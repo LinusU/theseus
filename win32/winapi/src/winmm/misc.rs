@@ -14,5 +14,6 @@ pub fn PlaySoundW(
     _hmod: HMODULE,
     _fdwSound: u32, /* SND_FLAGS */
 ) -> bool {
-    todo!()
+    // No audio backend is modeled; report failure rather than panic.
+    false
 }
