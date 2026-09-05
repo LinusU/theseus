@@ -5,7 +5,7 @@ use runtime::Mappings;
 use crate::{
     HANDLE, Handles,
     heap::Heap,
-    kernel32::{self, CommandLine, Object},
+    kernel32::{self, CommandLine, DLLs, Object},
     locked_state::LockedState,
 };
 
@@ -31,6 +31,8 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
     let mut state = STATE.lock().unwrap();
+    let mut dlls = Box::new(kernel32::Exports::default());
+    dlls.register_module("kernel32");
     *state = Some(State {
         image_base,
         resources,
@@ -45,7 +47,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         console_ctrl_handlers: Vec::new(),
         thread_priorities: HashMap::new(),
         process_priority_class: 0x20,
-        dlls: Box::new(kernel32::Exports::default()),
+        dlls,
         objects: Handles::new(0x1000),
     });
 }
@@ -53,4 +55,15 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
 pub type Lock = LockedState<State>;
 pub fn lock() -> Lock {
     LockedState::from(&STATE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{init_state, lock};
+
+    #[test]
+    fn kernel32_is_loaded_at_process_initialization() {
+        init_state(0x400000, 0..0);
+        assert!(lock().dlls.module_handle("KERNEL32.DLL").is_some());
+    }
 }
