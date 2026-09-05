@@ -21,7 +21,7 @@ use crate::{
 };
 
 fn log_vertex_start(ctx: &mut Context, v: u32, vcount: u32, fvf: u32) {
-    if v == 0 || vcount == 0 || fvf == 0 {
+    if !log::log_enabled!(log::Level::Debug) || v == 0 || vcount == 0 || fvf == 0 {
         return;
     }
     let size = vertex_size(fvf);
@@ -30,7 +30,7 @@ fn log_vertex_start(ctx: &mut Context, v: u32, vcount: u32, fvf: u32) {
     for i in 0..max as u32 {
         bytes.push(ctx.memory.read::<u8>(v + i));
     }
-    log::warn!("  vertex data: {:02x?}", bytes);
+    log::debug!("  vertex data: {:02x?}", bytes);
 }
 
 pub const IID_IDirect3D7: GUID = GUID::new(
@@ -1168,7 +1168,7 @@ pub mod IDirect3DDevice7 {
         dwVertexCount: u32,
         _dwFlags: u32,
     ) -> DD {
-        log::warn!(
+        log::debug!(
             "DrawPrimitive: prim={} fvf={:#x} vaddr={:#x} vcount={}",
             dptPrimitiveType,
             dwVertexTypeDesc,
@@ -1201,7 +1201,7 @@ pub mod IDirect3DDevice7 {
         dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
-        log::warn!(
+        log::debug!(
             "DrawIndexedPrimitive: prim={} fvf={:#x} vaddr={:#x} vcount={} icount={}",
             dptPrimitiveType,
             dwVertexTypeDesc,
@@ -1261,7 +1261,7 @@ pub mod IDirect3DDevice7 {
         dwVertexCount: u32,
         _dwFlags: u32,
     ) -> DD {
-        log::warn!(
+        log::debug!(
             "DrawPrimitiveStrided: prim={} fvf={:#x} arr={:#x} vcount={}",
             dptPrimitiveType,
             dwVertexTypeDesc,
@@ -1283,7 +1283,7 @@ pub mod IDirect3DDevice7 {
         dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
-        log::warn!(
+        log::debug!(
             "DrawIndexedPrimitiveStrided: prim={} fvf={:#x} arr={:#x} vcount={} icount={}",
             dptPrimitiveType,
             dwVertexTypeDesc,
@@ -1310,7 +1310,7 @@ pub mod IDirect3DDevice7 {
             .get(&lpd3dVertexBuffer)
             .map(|vb| (vb.data, vb.desc.dwFVF))
             .unwrap_or((0, 0));
-        log::warn!(
+        log::debug!(
             "DrawPrimitiveVB: prim={} vb={:#x} start={} fvf={:#x} vcount={} data={:#x}",
             dptPrimitiveType,
             lpd3dVertexBuffer,
@@ -1346,7 +1346,7 @@ pub mod IDirect3DDevice7 {
             .get(&lpd3dVertexBuffer)
             .map(|vb| (vb.data, vb.desc.dwFVF))
             .unwrap_or((0, 0));
-        log::warn!(
+        log::debug!(
             "DrawIndexedPrimitiveVB: prim={} vb={:#x} start={} fvf={:#x} vcount={} icount={} data={:#x}",
             dptPrimitiveType,
             lpd3dVertexBuffer,
@@ -1977,7 +1977,7 @@ fn rasterize(
             let (w, h, bpp) = (s_borrow.width, s_borrow.height, s_borrow.bytes_per_pixel);
             if s_borrow.pixels.is_none() && d3d_state().unwritten_textures.borrow_mut().insert(tex)
             {
-                log::warn!("rasterize: texture {tex:#x} ({w}x{h}) was never locked or blitted");
+                log::debug!("rasterize: texture {tex:#x} ({w}x{h}) was never locked or blitted");
             }
             let pixels_addr = s_borrow.pixels;
             drop(s_borrow);

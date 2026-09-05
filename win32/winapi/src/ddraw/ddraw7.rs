@@ -169,7 +169,7 @@ pub mod IDirectDraw7 {
             IDirectDrawSurface7::new(ctx, &mut lock.process_heap)
         });
         let s = surface.borrow();
-        log::warn!(
+        log::debug!(
             "CreateSurface: {:#x} {}x{} {}bpp caps={:#x} flags={:#x} mips={} lpSurface={:#x}",
             s.addr,
             s.width,
@@ -575,7 +575,7 @@ pub mod IDirectDraw7 {
         _refresh: u32,
         _flags: u32,
     ) -> DD {
-        log::warn!("SetDisplayMode: {width}x{height} {bpp}bpp");
+        log::debug!("SetDisplayMode: {width}x{height} {bpp}bpp");
         let mut ddraw = state().get_ddraw(this);
         if let Some(window) = &ddraw.window {
             window.borrow_mut().resize(ctx, width, height);
