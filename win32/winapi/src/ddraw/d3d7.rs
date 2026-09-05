@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 
 use runtime::*;
-use zerocopy::FromBytes;
 
 use super::types::{DD, DDPIXELFORMAT, DDSCAPS};
 use crate::{
@@ -27,6 +26,7 @@ fn log_vertex_start(ctx: &mut Context, v: u32, vcount: u32, fvf: u32) {
     }
     let size = vertex_size(fvf);
     let max = (size * vcount.min(2)).min(64) as usize;
+    let max = max.min(ctx.memory.bytes.len().saturating_sub(v as usize));
     let mut bytes = Vec::with_capacity(max);
     for i in 0..max as u32 {
         bytes.push(ctx.memory.read::<u8>(v + i));
@@ -489,13 +489,24 @@ pub mod IDirect3D7 {
         if ppv == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        let iid = ctx.memory.read::<GUID>(riid);
-        if iid == IID_IUNKNOWN || iid == IID_IDirect3D7 {
-            ctx.memory.write::<u32>(ppv, this);
-            return DD::OK;
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let out = if iid == IID_IUNKNOWN || iid == IID_IDirect3D7 {
+            this
+        } else {
+            0
+        };
+        if crate::Ptr::<u32>::new(ppv)
+            .write(&mut ctx.memory, out)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write::<u32>(ppv, 0);
-        DD::E_NOINTERFACE
+        if out == 0 {
+            return DD::E_NOINTERFACE;
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -564,7 +575,7 @@ pub mod IDirect3D7 {
         lpDDS: u32,
         lplpD3DDevice: u32,
     ) -> DD {
-        if lplpD3DDevice == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lplpD3DDevice, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         ctx.memory.write::<u32>(lplpD3DDevice, 0);
@@ -590,19 +601,21 @@ pub mod IDirect3D7 {
         lplpD3DVertBuffer: u32,
         _dwFlags: u32,
     ) -> DD {
-        if lplpD3DVertBuffer == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lplpD3DVertBuffer, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         ctx.memory.write::<u32>(lplpD3DVertBuffer, 0);
-        let Ok((desc, _)) =
-            <D3DVERTEXBUFFERDESC>::read_from_prefix(&ctx.memory[lpD3DVertBufferDesc..])
+        let Some(desc) =
+            crate::Ptr::<D3DVERTEXBUFFERDESC>::new(lpD3DVertBufferDesc).read(&ctx.memory)
         else {
             return DD::ERR_INVALIDPARAMS;
         };
         if desc.dwSize != std::mem::size_of::<D3DVERTEXBUFFERDESC>() as u32 {
             return DD::ERR_INVALIDPARAMS;
         }
-        let data_len = desc.dwNumVertices * vertex_size(desc.dwFVF);
+        let Some(data_len) = desc.dwNumVertices.checked_mul(vertex_size(desc.dwFVF)) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         let mut kernel32 = kernel32::lock();
         let data = kernel32
             .process_heap
@@ -776,13 +789,24 @@ pub mod IDirect3DDevice7 {
         if ppv == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        let iid = ctx.memory.read::<GUID>(riid);
-        if iid == IID_IUNKNOWN || iid == IID_IDIRECT3DDEVICE7 {
-            ctx.memory.write::<u32>(ppv, this);
-            return DD::OK;
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let out = if iid == IID_IUNKNOWN || iid == IID_IDIRECT3DDEVICE7 {
+            this
+        } else {
+            0
+        };
+        if crate::Ptr::<u32>::new(ppv)
+            .write(&mut ctx.memory, out)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write::<u32>(ppv, 0);
-        DD::E_NOINTERFACE
+        if out == 0 {
+            return DD::E_NOINTERFACE;
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -1055,7 +1079,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn SetTransform(ctx: &mut Context, this: u32, dwState: u32, lpMatrix: u32) -> DD {
-        if lpMatrix == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lpMatrix, 64) {
             return DD::ERR_INVALIDPARAMS;
         }
         let matrix = read_matrix(&ctx.memory, lpMatrix);
@@ -1069,7 +1093,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn GetTransform(ctx: &mut Context, this: u32, dwState: u32, lpMatrix: u32) -> DD {
-        if lpMatrix == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lpMatrix, 64) {
             return DD::ERR_INVALIDPARAMS;
         }
         let devices = d3d_state().devices.borrow();
@@ -1102,7 +1126,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn MultiplyTransform(ctx: &mut Context, this: u32, dwState: u32, lpMatrix: u32) -> DD {
-        if lpMatrix == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lpMatrix, 64) {
             return DD::ERR_INVALIDPARAMS;
         }
         let rhs = read_matrix(&ctx.memory, lpMatrix);
@@ -1123,7 +1147,11 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn GetViewport(ctx: &mut Context, this: u32, lpViewport: u32) -> DD {
-        if lpViewport == 0 {
+        if !crate::ddraw::ddraw::guest_range(
+            ctx,
+            lpViewport,
+            std::mem::size_of::<D3DVIEWPORT7>() as u32,
+        ) {
             return DD::ERR_INVALIDPARAMS;
         }
         let devices = d3d_state().devices.borrow();
@@ -1165,13 +1193,21 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let material = device.material.unwrap_or_default();
-        ctx.memory.write(lpMaterial, material);
+        if crate::Ptr::<D3DMATERIAL7>::new(lpMaterial)
+            .write(&mut ctx.memory, material)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn SetLight(ctx: &mut Context, this: u32, dwLightIndex: u32, lpLight: u32) -> DD {
         if lpLight == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        if !crate::ddraw::ddraw::guest_range(ctx, lpLight, D3DLIGHT7_SIZE as u32) {
             return DD::ERR_INVALIDPARAMS;
         }
         let mut light = [0u8; D3DLIGHT7_SIZE];
@@ -1196,6 +1232,9 @@ pub mod IDirect3DDevice7 {
         let Some(light) = device.lights.get(&dwLightIndex) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if !crate::ddraw::ddraw::guest_range(ctx, lpLight, D3DLIGHT7_SIZE as u32) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ctx.memory[lpLight..][..D3DLIGHT7_SIZE].copy_from_slice(light);
         DD::OK
     }
@@ -1469,7 +1508,8 @@ pub mod IDirect3DDevice7 {
         _dwFlags: u32,
         lpdwReturnValues: u32,
     ) -> DD {
-        if lpdwReturnValues == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, lpdwReturnValues, dwNumSpheres.saturating_mul(4))
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         for i in 0..dwNumSpheres {
@@ -1489,8 +1529,13 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lplpTexture, *device.textures.get(&dwStage).unwrap_or(&0));
+        let texture = *device.textures.get(&dwStage).unwrap_or(&0);
+        if crate::Ptr::<u32>::new(lplpTexture)
+            .write(&mut ctx.memory, texture)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1563,7 +1608,12 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         }
         // The modelled device imposes no texture-stage conflicts; one pass.
-        ctx.memory.write::<u32>(lpdwPasses, 1);
+        if crate::Ptr::<u32>::new(lpdwPasses)
+            .write(&mut ctx.memory, 1)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1641,6 +1691,9 @@ pub mod IDirect3DDevice7 {
         // lpDestPoint is a POINT; null is the origin. A null rect means the
         // whole source level.
         let (mut dx, mut dy) = if lpDestPoint != 0 {
+            if !crate::ddraw::ddraw::guest_range(ctx, lpDestPoint, 8) {
+                return DD::ERR_INVALIDPARAMS;
+            }
             (
                 ctx.memory.read::<i32>(lpDestPoint),
                 ctx.memory.read::<i32>(lpDestPoint + 4),
@@ -1715,16 +1768,19 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory.write::<u32>(
-            pbEnable,
-            *device.lights_enabled.get(&dwLightIndex).unwrap_or(&false) as u32,
-        );
+        let enabled = *device.lights_enabled.get(&dwLightIndex).unwrap_or(&false) as u32;
+        if crate::Ptr::<u32>::new(pbEnable)
+            .write(&mut ctx.memory, enabled)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn SetClipPlane(ctx: &mut Context, this: u32, dwIndex: u32, pPlaneEquation: u32) -> DD {
-        if pPlaneEquation == 0 {
+        if !crate::ddraw::ddraw::guest_range(ctx, pPlaneEquation, 16) {
             return DD::ERR_INVALIDPARAMS;
         }
         let plane = ctx.memory.read::<[f32; 4]>(pPlaneEquation);
@@ -1748,6 +1804,9 @@ pub mod IDirect3DDevice7 {
         let Some(plane) = device.clip_planes.get(&dwIndex) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if !crate::ddraw::ddraw::guest_range(ctx, pPlaneEquation, 16) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ctx.memory.write::<[f32; 4]>(pPlaneEquation, *plane);
         DD::OK
     }
@@ -1806,13 +1865,24 @@ pub mod IDirect3DVertexBuffer7 {
         if ppv == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        let iid = ctx.memory.read::<GUID>(riid);
-        if iid == IID_IUNKNOWN || iid == IID_IDIRECT3DVERTEXBUFFER7 {
-            ctx.memory.write::<u32>(ppv, this);
-            return DD::OK;
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let out = if iid == IID_IUNKNOWN || iid == IID_IDIRECT3DVERTEXBUFFER7 {
+            this
+        } else {
+            0
+        };
+        if crate::Ptr::<u32>::new(ppv)
+            .write(&mut ctx.memory, out)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write::<u32>(ppv, 0);
-        DD::E_NOINTERFACE
+        if out == 0 {
+            return DD::E_NOINTERFACE;
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -1831,6 +1901,12 @@ pub mod IDirect3DVertexBuffer7 {
         let Some(vb) = buffers.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if lplpData != 0 && !crate::ddraw::ddraw::guest_range(ctx, lplpData, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        if lpdwSize != 0 && !crate::ddraw::ddraw::guest_range(ctx, lpdwSize, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         if lplpData != 0 {
             ctx.memory.write::<u32>(lplpData, vb.data);
         }
