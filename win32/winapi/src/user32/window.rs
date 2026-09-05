@@ -407,12 +407,20 @@ pub enum COLOR {
 }
 
 impl COLOR {
+    /// The standard Windows default color scheme; the window-frame family
+    /// keeps the existing silver choice used for class backgrounds.
     fn to_colorref(&self) -> COLORREF {
         use COLOR::*;
         match self {
-            WINDOW | WINDOWFRAME | MENU | BTNFACE => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
-            APPWORKSPACE => COLORREF::from_rgb(0x80, 0x80, 0x80),
-            _ => todo!("{:?}", self),
+            SCROLLBAR | MENU | WINDOW | WINDOWFRAME | ACTIVEBORDER | INACTIVEBORDER | BTNFACE
+            | INACTIVECAPTIONTEXT => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
+            BACKGROUND => COLORREF::from_rgb(0x00, 0x80, 0x80),
+            ACTIVECAPTION | HIGHLIGHT => COLORREF::from_rgb(0x00, 0x00, 0x80),
+            INACTIVECAPTION | APPWORKSPACE | BTNSHADOW | GRAYTEXT => {
+                COLORREF::from_rgb(0x80, 0x80, 0x80)
+            }
+            MENUTEXT | WINDOWTEXT | BTNTEXT => COLORREF::from_rgb(0x00, 0x00, 0x00),
+            CAPTIONTEXT | HIGHLIGHTTEXT | BTNHIGHLIGHT => COLORREF::from_rgb(0xff, 0xff, 0xff),
         }
     }
 }
@@ -428,8 +436,11 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
     let background = if wndclass.hbrBackground.is_null() {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {
-        let color = COLOR::from_abi(wndclass.hbrBackground.to_raw());
-        Some(Brush(Some(color.to_colorref())))
+        // An out-of-range system color index can't be mapped to a brush;
+        // treat it like a null background rather than rejecting the class.
+        COLOR::try_from(wndclass.hbrBackground.to_raw())
+            .ok()
+            .map(|color| Brush(Some(color.to_colorref())))
     } else {
         Some(
             gdi32::lock()
