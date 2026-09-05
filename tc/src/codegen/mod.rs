@@ -5014,6 +5014,84 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_routes_string_and_sse_movsd() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want, avoid) in [
+            // movsd (string): A5 has implicit DS:(E)SI / ES:(E)DI operands.
+            (&[0xa5][..], "ctx.movsd();", "ctx.cpu.xmm"),
+            // movsd xmm0, xmm1: F2 0F 10 /r, registers only.
+            (
+                &[0xf2, 0x0f, 0x10, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = movsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
+                "ctx.movsd();",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+            assert!(
+                !codegen.buf.contains(avoid),
+                "did not expect {avoid:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
+    fn codegen_routes_string_and_sse_cmpsd() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want, avoid) in [
+            // cmpsd (string): A7 has implicit DS:(E)SI / ES:(E)DI operands.
+            (&[0xa7][..], "ctx.cmpsd();", "ctx.cpu.xmm"),
+            // cmpsd xmm0, xmm1, 0: F2 0F C2 /r ib.
+            (
+                &[0xf2, 0x0f, 0xc2, 0xc1, 0x00][..],
+                "ctx.cpu.xmm.xmm0 = cmpsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1), 0x0);",
+                "ctx.cmpsd();",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+            assert!(
+                !codegen.buf.contains(avoid),
+                "did not expect {avoid:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
