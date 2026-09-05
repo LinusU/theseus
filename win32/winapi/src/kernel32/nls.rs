@@ -249,11 +249,10 @@ pub fn LCMapStringW(
         return 0;
     }
     let len = if cchSrc < 0 {
-        let mut n = 0;
-        while ctx.memory.read::<u16>(lpSrcStr.addr + n * 2) != 0 {
-            n += 1;
-        }
-        n + 1
+        let Some(src) = read_string_type_w(ctx, lpSrcStr.addr, -1) else {
+            return 0;
+        };
+        src.len() as u32
     } else {
         cchSrc as u32
     };
@@ -487,6 +486,27 @@ mod tests {
             3
         );
         assert_eq!(&ctx.memory[0x1200..][..3], &[b'A', 0x80, 0]);
+    }
+
+    #[test]
+    fn lcmap_w_rejects_unterminated_input() {
+        let mut ctx = context();
+        ctx.memory[0x3ffe..].copy_from_slice(&[b'A', 0]);
+        ctx.memory.write::<u16>(0x1200, 0xffff);
+
+        assert_eq!(
+            LCMapStringW(
+                &mut ctx,
+                0,
+                0x200,
+                Ptr::new(0x3ffe),
+                -1,
+                Ptr::new(0x1200),
+                1,
+            ),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
     }
 
     #[test]
