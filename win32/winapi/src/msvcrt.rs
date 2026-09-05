@@ -43,14 +43,16 @@ pub fn __getmainargs(
     ctx.memory.write::<u32>(argv_buf + 4, 0);
     let envp_buf = kernel32.process_heap.alloc(&mut ctx.memory, 4);
     ctx.memory.write::<u32>(envp_buf, 0);
+    // A caller that passes out-of-range out-pointers gets a truncated result
+    // rather than a host panic.
     if argc.addr != 0 {
-        ctx.memory.write::<i32>(argc.addr, 1);
+        argc.write(&mut ctx.memory, 1);
     }
     if argv.addr != 0 {
-        ctx.memory.write::<u32>(argv.addr, argv_buf);
+        argv.write(&mut ctx.memory, argv_buf);
     }
     if envp.addr != 0 {
-        ctx.memory.write::<u32>(envp.addr, envp_buf);
+        envp.write(&mut ctx.memory, envp_buf);
     }
     0
 }
@@ -180,9 +182,12 @@ pub fn _exit(_ctx: &mut Context, status: i32) {
 pub fn _initterm(ctx: &mut Context, begin: Ptr<u32>, end: Ptr<u32>) {
     // The CRT runs each function pointer in [begin, end); they are
     // parameterless, so the stdcall/cdecl distinction cannot matter.
+    // A bad `end` walks off emulated memory, so reads are bounds-checked.
     let mut entry = begin.addr;
     while entry < end.addr {
-        let f = ctx.memory.read::<u32>(entry);
+        let Some(f) = Ptr::<u32>::new(entry).read(&ctx.memory) else {
+            break;
+        };
         if f != 0 {
             let cont = ctx.indirect(f);
             ctx.call32_x86(cont, vec![]);
