@@ -85,6 +85,45 @@ fn ctype1(c: u32) -> C1 {
     t
 }
 
+fn read_string_type_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
+    if count < -1 {
+        return None;
+    }
+    let bytes = &ctx.memory[addr..];
+    let len = if count == -1 {
+        bytes.iter().position(|&byte| byte == 0)? + 1
+    } else {
+        count as usize
+    };
+    Some(bytes.get(..len)?.to_vec())
+}
+
+fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
+    if count < -1 {
+        return None;
+    }
+    let bytes = &ctx.memory[addr..];
+    if count == -1 {
+        let mut out = Vec::new();
+        for chunk in bytes.chunks_exact(2) {
+            let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+            out.push(value);
+            if value == 0 {
+                return Some(out);
+            }
+        }
+        return None;
+    }
+    let byte_len = count as usize * 2;
+    let bytes = bytes.get(..byte_len)?;
+    Some(
+        bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect(),
+    )
+}
+
 #[win32_derive::dllexport]
 pub fn GetStringTypeA(
     ctx: &mut Context,
@@ -98,18 +137,14 @@ pub fn GetStringTypeA(
         log::warn!("GetStringTypeA: unimplemented type {dwInfoType}");
         return false;
     }
-    if cchSrc < -1 {
+    let Some(src) = read_string_type_a(ctx, lpSrcStr.addr, cchSrc) else {
         return false;
-    }
-    let len = if cchSrc < 0 {
-        ctx.memory.read_str(lpSrcStr.addr).len() + 1
-    } else {
-        cchSrc as usize
     };
-    for i in 0..len as u32 {
-        let c = ctx.memory.read::<u8>(lpSrcStr.addr + i);
-        ctx.memory
-            .write::<u16>(lpCharType.addr + i * 2, ctype1(c as u32).bits() as u16);
+    for (i, c) in src.into_iter().enumerate() {
+        ctx.memory.write::<u16>(
+            lpCharType.addr + (i * 2) as u32,
+            ctype1(c as u32).bits() as u16,
+        );
     }
     true
 }
@@ -138,22 +173,14 @@ pub fn GetStringTypeW(
         log::warn!("GetStringTypeW: unimplemented type {dwInfoType}");
         return false;
     }
-    if cchSrc < -1 {
+    let Some(src) = read_string_type_w(ctx, lpSrcStr.addr, cchSrc) else {
         return false;
-    }
-    let len = if cchSrc < 0 {
-        let mut n = 0;
-        while ctx.memory.read::<u16>(lpSrcStr.addr + n * 2) != 0 {
-            n += 1;
-        }
-        n + 1
-    } else {
-        cchSrc as u32
     };
-    for i in 0..len {
-        let c = ctx.memory.read::<u16>(lpSrcStr.addr + i * 2);
-        ctx.memory
-            .write::<u16>(lpCharType.addr + i * 2, ctype1(c as u32).bits() as u16);
+    for (i, c) in src.into_iter().enumerate() {
+        ctx.memory.write::<u16>(
+            lpCharType.addr + (i * 2) as u32,
+            ctype1(c as u32).bits() as u16,
+        );
     }
     true
 }
@@ -458,6 +485,38 @@ mod tests {
             1,
             Ptr::new(0x1000),
             -2,
+            Ptr::new(0x1200),
+        ));
+        assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
+    }
+
+    #[test]
+    fn string_type_reports_unterminated_or_truncated_input() {
+        let mut ctx = context();
+        ctx.memory[0x3ff0..].fill(0xff);
+        ctx.memory.write::<u16>(0x1200, 0xffff);
+
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            1,
+            Ptr::new(0x3ff0),
+            -1,
+            Ptr::new(0x1200),
+        ));
+        assert!(!GetStringTypeW(
+            &mut ctx,
+            1,
+            Ptr::new(0x3ff0),
+            -1,
+            Ptr::new(0x1200),
+        ));
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            1,
+            Ptr::new(0x3fff),
+            2,
             Ptr::new(0x1200),
         ));
         assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
