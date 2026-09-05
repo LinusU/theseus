@@ -18,6 +18,8 @@ pub type LPARAM = u32;
 
 #[derive(win32_derive::ABIEnum, Debug)]
 pub enum WM {
+    MOVE = 0x3,
+    SIZE = 0x5,
     ACTIVATE = 0x6,
     SETFOCUS = 0x7,
     KILLFOCUS = 0x8,

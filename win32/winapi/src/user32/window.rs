@@ -625,9 +625,17 @@ pub fn ReleaseDC(ctx: &mut Context, hWnd: HWND, hDC: HDC) -> i32 {
 
 #[win32_derive::dllexport]
 pub fn InvalidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>, _bErase: bool) -> bool {
-    assert!(!hWnd.is_null()); // todo
     let window = user32::state().window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
+    let Some(window) = window.as_ref() else {
+        // No window exists yet; only the whole-screen null form succeeds.
+        return hWnd.is_null();
+    };
+    let mut window = window.borrow_mut();
+    // A null hWnd invalidates the whole screen; otherwise it must name the
+    // one emulated window.
+    if !hWnd.is_null() && window.hwnd != hWnd {
+        return false;
+    }
     window.dirty = true;
     true
 }
@@ -638,10 +646,16 @@ pub fn GetDesktopWindow(_ctx: &mut Context) -> HWND {
 }
 
 #[win32_derive::dllexport]
-pub fn GetClientRect(ctx: &mut Context, _hWnd: HWND, lpRect: Ptr<RECT>) -> bool {
+pub fn GetClientRect(ctx: &mut Context, hWnd: HWND, lpRect: Ptr<RECT>) -> bool {
     let rect = {
         let window = state().window.borrow();
-        let window = window.as_ref().unwrap().borrow();
+        let Some(window) = window.as_ref() else {
+            return false;
+        };
+        let window = window.borrow();
+        if window.hwnd != hWnd {
+            return false;
+        }
         window.rect()
     };
     lpRect.write(&mut ctx.memory, rect).is_some()
@@ -668,16 +682,53 @@ pub fn GetWindowRect(ctx: &mut Context, hWnd: HWND, lpRect: Ptr<RECT>) -> bool {
 
 #[win32_derive::dllexport]
 pub fn SetWindowPos(
-    _ctx: &mut Context,
-    _hWnd: HWND,
+    ctx: &mut Context,
+    hWnd: HWND,
     _hWndInsertAfter: u32,
-    _X: i32,
-    _Y: i32,
-    _cx: i32,
-    _cy: i32,
-    _uFlags: u32,
+    X: i32,
+    Y: i32,
+    cx: i32,
+    cy: i32,
+    uFlags: u32,
 ) -> bool {
-    stub!(true)
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    // SWP_NOZORDER/SWP_NOACTIVATE/SWP_SHOWWINDOW and friends change nothing
+    // in a single-window model.
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    let moved = uFlags & SWP_NOMOVE == 0 && (window.x != X || window.y != Y);
+    if moved {
+        window.x = X;
+        window.y = Y;
+    }
+    let (cx, cy) = (cx.max(0) as u32, cy.max(0) as u32);
+    let resized = uFlags & SWP_NOSIZE == 0 && (window.width != cx || window.height != cy);
+    if resized {
+        window.resize(ctx, cx, cy);
+        window.dirty = true;
+    }
+    use super::message::post_message;
+    if moved {
+        // WM_MOVE lParam packs the new client origin.
+        post_message(
+            hWnd,
+            WM::MOVE as u32,
+            0,
+            ((Y as u16 as u32) << 16) | X as u16 as u32,
+        );
+    }
+    if resized {
+        // WM_SIZE: SIZE_RESTORED wParam, client dimensions in lParam.
+        post_message(hWnd, WM::SIZE as u32, 0, (cy << 16) | cx);
+    }
+    true
 }
 
 #[win32_derive::dllexport]
