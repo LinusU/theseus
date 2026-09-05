@@ -158,11 +158,11 @@ pub fn sar<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
 }
 
 pub fn rol<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
-    let y = y % 32;
-    if y == 0 {
+    let count = usize::from(y) % I::bits();
+    if count == 0 {
         return x;
     }
-    let result = x.rotate_left(y as u32);
+    let result = x.rotate_left(count as u32);
     let carry = (result & I::one()).is_one();
     flags.set(Flags::CF, carry);
     // Note: OF only defined for 1-bit rotates.
@@ -171,11 +171,11 @@ pub fn rol<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
 }
 
 pub fn ror<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
-    let y = y % 32;
-    if y == 0 {
+    let count = usize::from(y) % I::bits();
+    if count == 0 {
         return x;
     }
-    let result = x.rotate_right(y as u32);
+    let result = x.rotate_right(count as u32);
     flags.set(Flags::CF, result.high_bit().is_one());
     // Note: OF only defined for 1-bit rotates.
     flags.set(
@@ -307,6 +307,17 @@ mod tests {
 
         let mut flags = Flags::CF | Flags::OF;
         assert_eq!(super::ror(0x1234_5678u32, 32, &mut flags), 0x1234_5678);
+        assert_eq!("CF OF", flags.to_string());
+    }
+
+    #[test]
+    fn rotates_by_operand_width_preserve_flags() {
+        let mut flags = Flags::CF | Flags::OF;
+        assert_eq!(super::rol(0x81u8, 8, &mut flags), 0x81);
+        assert_eq!("CF OF", flags.to_string());
+
+        let mut flags = Flags::CF | Flags::OF;
+        assert_eq!(super::ror(0x8001u16, 16, &mut flags), 0x8001);
         assert_eq!("CF OF", flags.to_string());
     }
 
