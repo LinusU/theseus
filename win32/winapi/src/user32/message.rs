@@ -395,14 +395,25 @@ pub fn DispatchMessageA(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
-    let wndproc = state().wndclass.borrow().as_ref().unwrap().wndproc;
-    let msg = lpMsg.read(&ctx.memory).unwrap();
+    let Some(msg) = lpMsg.read(&ctx.memory) else {
+        return 0;
+    };
+    let wndproc = {
+        let window = state().window.borrow();
+        let wndclass = state().wndclass.borrow();
+        match (window.as_ref(), wndclass.as_ref()) {
+            (Some(window), Some(wndclass)) if window.borrow().hwnd == msg.hwnd => wndclass.wndproc,
+            // Thread messages and messages for windows we do not model have
+            // no window procedure to dispatch to.
+            _ => return 0,
+        }
+    };
     // WNDPROC
     ctx.call32_x86(
         wndproc,
         vec![msg.hwnd.to_raw(), msg.message, msg.wParam, msg.lParam],
     );
-    0
+    ctx.cpu.regs.eax
 }
 
 #[win32_derive::dllexport]
