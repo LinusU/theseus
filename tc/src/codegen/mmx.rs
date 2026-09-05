@@ -73,7 +73,9 @@ impl<'a> CodeGen<'a> {
         use iced_x86::Mnemonic::*;
         match instr.mnemonic() {
             Movd => self.line(self.mmx_set_32(instr, 0, self.mmx_get_32(instr, 1))),
-            Movq => self.line(self.mmx_set(instr, 0, self.mmx_get(instr, 1))),
+            // MOVNTQ is a non-temporal MMX store; in the flat memory model it
+            // is identical to a regular 64-bit MMX store.
+            Movq | Movntq => self.line(self.mmx_set(instr, 0, self.mmx_get(instr, 1))),
 
             Pxor => {
                 self.line(self.mmx_set(
@@ -163,9 +165,6 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
-            // MOVNTQ is a memory-destination store; the non-temporal hint is
-            // a no-op on the emulated host.
-            Movntq => self.line(self.set_op(instr, 0, self.mmx_get(instr, 1))),
             // MASKMOVQ's destination is the implicit DS:(E)DI operand; the
             // first register carries the data and the second the byte mask.
             Maskmovq => self.line(format!(

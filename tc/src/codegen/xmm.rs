@@ -95,7 +95,8 @@ impl<'a> CodeGen<'a> {
         match instr.mnemonic() {
             // Aligned and unaligned 128-bit moves are identical in the emulated
             // flat memory model; both copy 16 bytes without any alignment check.
-            Movups | Movaps => self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1))),
+            // MOVNTPS is also a pure store in this model.
+            Movups | Movaps | Movntps => self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1))),
 
             // Packed single-precision arithmetic and bitwise operations.
             Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps => {
@@ -173,9 +174,10 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
-            // Scalar and cross-lane partial-width moves. MOVSS only touches the
-            // low 32 bits; MOVHLPS/MOVLHPS move 64 bits between high/low qwords.
-            Movss => {
+            // Scalar and cross-lane partial-width moves. MOVSS/MOVNTSS only
+            // touch the low 32 bits; MOVHLPS/MOVLHPS move 64 bits between
+            // high/low qwords.
+            Movss | Movntss => {
                 let src = self.xmm_get_32(instr, 1);
                 use iced_x86::OpKind::*;
                 match instr.op_kind(0) {
