@@ -920,7 +920,9 @@ pub mod IDirect3DDevice7 {
             // consistent reading is that this clear is meant to refresh just
             // the depth buffer for the HUD pass. Skip the color fill once
             // geometry has landed since the last clear.
-            let skip = device.in_scene && device.drew_since_clear;
+            let skip = device.in_scene
+                && device.drew_since_clear
+                && std::env::var("THESEUS_NO_CLEAR_SKIP").is_err();
             (device.render_target, skip)
         };
         log::debug!(
@@ -990,12 +992,27 @@ pub mod IDirect3DDevice7 {
             };
             if let Some(zbuf) = zbuf {
                 let z = z_to_u16(f32::from_bits(dvZ));
+                {
+                    let zsurf = zbuf.borrow();
+                    log::debug!(
+                        "Clear zbuf: surf={:#x} {}x{} bpp={} pixels={:#x} z={z:#x} rt={}x{}",
+                        zsurf.addr,
+                        zsurf.width,
+                        zsurf.height,
+                        zsurf.bytes_per_pixel,
+                        zsurf.pixels.unwrap_or(0),
+                        surf.borrow().width,
+                        surf.borrow().height,
+                    );
+                }
                 fill(ctx, &zbuf, &|ctx, at, len| {
                     let bytes = z.to_le_bytes();
                     for chunk in ctx.memory[at..][..len].chunks_exact_mut(2) {
                         chunk.copy_from_slice(&bytes);
                     }
                 });
+            } else {
+                log::debug!("Clear zbuf: no z-buffer attached to {surface_addr:#x}");
             }
         }
         if dwFlags & D3DCLEAR_TARGET == 0 || skip_target {
@@ -1928,8 +1945,11 @@ fn read_vertex(mem: &Memory, addr: u32) -> RhwVertex {
 // D3DRENDERSTATETYPE values the rasterizer acts on.
 const D3DRENDERSTATE_ZENABLE: u32 = 7;
 const D3DRENDERSTATE_ZWRITEENABLE: u32 = 14;
+const D3DRENDERSTATE_SRCBLEND: u32 = 19;
+const D3DRENDERSTATE_DESTBLEND: u32 = 20;
 const D3DRENDERSTATE_CULLMODE: u32 = 22;
 const D3DRENDERSTATE_ZFUNC: u32 = 23;
+const D3DRENDERSTATE_ALPHABLENDENABLE: u32 = 27;
 const D3DCULL_CW: u32 = 2;
 const D3DCULL_CCW: u32 = 3;
 
@@ -1956,6 +1976,42 @@ fn argb_to_565(c: u32) -> u16 {
     let g = ((c >> 8) & 0xff) as u16;
     let b = (c & 0xff) as u16;
     ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+}
+
+/// D3DBLEND factor applied per channel; s/d are the source and destination
+/// channel values in 0..1, sa/da the source and destination alpha in 0..1.
+fn blend_factor(blend: u32, s: f32, d: f32, sa: f32, da: f32) -> f32 {
+    match blend {
+        1 => 0.0,               // D3DBLEND_ZERO
+        2 => 1.0,               // D3DBLEND_ONE
+        3 => s,                 // D3DBLEND_SRCCOLOR
+        4 => 1.0 - s,           // D3DBLEND_INVSRCCOLOR
+        5 => sa,                // D3DBLEND_SRCALPHA
+        6 => 1.0 - sa,          // D3DBLEND_INVSRCALPHA
+        7 => da,                // D3DBLEND_DESTALPHA
+        8 => 1.0 - da,          // D3DBLEND_INVDESTALPHA
+        9 => d,                 // D3DBLEND_DESTCOLOR
+        10 => 1.0 - d,          // D3DBLEND_INVDESTCOLOR
+        11 => sa.min(1.0 - sa), // D3DBLEND_SRCALPHASAT
+        _ => 1.0,
+    }
+}
+
+/// Blend `src` onto `dst`, both RGB565. `sa` is the interpolated source
+/// alpha in 0..255; a 565 render target carries no alpha so da is 1.
+fn blend_565(dst: u16, src: u16, sa: f32, sblend: u32, dblend: u32) -> u16 {
+    let sa = sa / 255.0;
+    let da = 1.0;
+    let mut out = 0u16;
+    let mut shift = 0;
+    for (bits, max) in [(5u32, 31.0f32), (6, 63.0), (5, 31.0)] {
+        let s = ((src >> shift) & ((1 << bits) - 1)) as f32 / max;
+        let d = ((dst >> shift) & ((1 << bits) - 1)) as f32 / max;
+        let v = s * blend_factor(sblend, s, d, sa, da) + d * blend_factor(dblend, s, d, sa, da);
+        out |= ((v.clamp(0.0, 1.0) * max) as u16) << shift;
+        shift += bits;
+    }
+    out
 }
 
 fn sample_565(mem: &Memory, addr: u32, width: u32, height: u32, u: f32, v: f32) -> Option<u16> {
@@ -2008,6 +2064,9 @@ fn rasterize(
         zenable: u32,
         zwrite: u32,
         zfunc: u32,
+        alpha_blend: u32,
+        src_blend: u32,
+        dst_blend: u32,
     }
 
     let t = 'targets: {
@@ -2034,6 +2093,19 @@ fn rasterize(
             .render_states
             .get(&D3DRENDERSTATE_ZFUNC)
             .unwrap_or(&4);
+        // D3D7 defaults: no blending, src=ONE dst=ZERO.
+        let alpha_blend = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ALPHABLENDENABLE)
+            .unwrap_or(&0);
+        let src_blend = *device
+            .render_states
+            .get(&D3DRENDERSTATE_SRCBLEND)
+            .unwrap_or(&2);
+        let dst_blend = *device
+            .render_states
+            .get(&D3DRENDERSTATE_DESTBLEND)
+            .unwrap_or(&1);
 
         let surfs = state().surf.borrow();
         let rt_surf = surfs.get(&rt_surface_key).cloned();
@@ -2109,6 +2181,9 @@ fn rasterize(
             zenable,
             zwrite,
             zfunc,
+            alpha_blend,
+            src_blend,
+            dst_blend,
         };
     };
 
@@ -2322,6 +2397,18 @@ fn rasterize(
                 };
 
                 let pixel_addr = t.rt_addr + py as u32 * stride + px as u32 * 2;
+                let color = if t.alpha_blend != 0 {
+                    // 565 textures have no alpha channel, so under the
+                    // default MODULATE texture stage the pixel alpha is the
+                    // interpolated vertex diffuse alpha.
+                    let sa = alpha * ((a.diffuse >> 24) & 0xff) as f32
+                        + beta * ((b.diffuse >> 24) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 24) & 0xff) as f32;
+                    let dst = ctx.memory.read::<u16>(pixel_addr);
+                    blend_565(dst, color, sa, t.src_blend, t.dst_blend)
+                } else {
+                    color
+                };
                 ctx.memory.write::<u16>(pixel_addr, color);
                 pixels_written += 1;
                 last_color = color;

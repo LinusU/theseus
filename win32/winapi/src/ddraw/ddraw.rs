@@ -379,24 +379,26 @@ impl Surface {
         // Refresh the back buffer's texture every flip, not just in
         // palettized modes — a palette is only needed to expand indexed
         // pixels, while 16/32bpp buffers convert without one.
+        static FLIP_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let flip_n = FLIP_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         log::debug!(
-            "flip: front={:#x} back={:#x} back.pixels={:#x}",
+            "flip[{flip_n}]: front={:#x} back={:#x} back.pixels={:#x} {}x{}",
             self.addr,
             back.addr,
-            back.pixels.unwrap_or(0)
+            back.pixels.unwrap_or(0),
+            back.width,
+            back.height,
         );
         back.update_texture(mem, &self.palette);
         // THESEUS_FLIP_DUMP=<path> writes the back buffer's raw guest pixels
         // as a PPM once (on the Nth flip, N from THESEUS_FLIP_DUMP_AT),
         // so we can compare against what the texture shows.
         if std::env::var("THESEUS_FLIP_DUMP").is_ok() {
-            static FLIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let at: u64 = std::env::var("THESEUS_FLIP_DUMP_AT")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
-            let n = FLIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if n == at
+            if flip_n == at
                 && let (Some(addr), true) = (back.pixels, back.bytes_per_pixel == 2)
             {
                 let path = std::env::var("THESEUS_FLIP_DUMP").unwrap();
@@ -729,6 +731,7 @@ pub fn blt(
     if dwFlags & DDBLT_COLORFILL != 0 {
         // DDBLTFX.dwFillColor is at offset 80.
         let color = ctx.memory.read::<u32>(lpDDBLTFX + 80);
+        log::debug!("Blt colorfill: dst={this:#x} rect={dst_rect:?} color={color:#x}");
         let dst_rc = state().surf.borrow_mut().get(&this).unwrap().clone();
         let mut dst = dst_rc.borrow_mut();
         let bpp = dst.bytes_per_pixel;
@@ -867,6 +870,7 @@ pub fn set_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
     } else {
         surface.src_color_key = key;
     }
+    log::debug!("SetColorKey: this={this:#x} flags={dwFlags:#x} key={key:?}");
     DD::OK
 }
 
