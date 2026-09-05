@@ -41,6 +41,12 @@ impl Host {
     }
 }
 
+impl Default for Host {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn mouse_buttons_from_sdl(state: sdl::mouse::SDL_MouseButtonFlags) -> host::MouseButton {
     let mut buttons = host::MouseButton::empty();
     if state.0 & sdl::mouse::SDL_BUTTON_LMASK.0 != 0 {
