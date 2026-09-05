@@ -529,8 +529,54 @@ impl AudioStream {
     }
 }
 
+/// Windows VK_* code -> (PC set-1 scan code, extended flag) for the keys a
+/// menu needs: escape, enter, space, backspace, tab, and the arrows.
+fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
+    let (scancode, extended) = match vkey {
+        0x1b => (0x01, false), // VK_ESCAPE
+        0x0d => (0x1c, false), // VK_RETURN
+        0x20 => (0x39, false), // VK_SPACE
+        0x08 => (0x0e, false), // VK_BACK
+        0x09 => (0x0f, false), // VK_TAB
+        0x26 => (0x48, true),  // VK_UP
+        0x28 => (0x50, true),  // VK_DOWN
+        0x25 => (0x4b, true),  // VK_LEFT
+        0x27 => (0x4d, true),  // VK_RIGHT
+        _ => return None,
+    };
+    Some(host::KeyMessage {
+        scancode,
+        vkey,
+        extended,
+        repeat: false,
+    })
+}
+
 impl Host {
     pub fn poll(&self) -> Option<host::Message> {
+        // Debug aid: synthesize one key press so scripted or headless runs can
+        // exercise the target's input path. THESEUS_INJECT_VKEY is a hex VK_*
+        // code, THESEUS_INJECT_AT_MS the delay before the press.
+        static INJECT: std::sync::OnceLock<Option<(u8, u32)>> = std::sync::OnceLock::new();
+        static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        if let Some((vkey, at_ms)) = *INJECT.get_or_init(|| {
+            let vkey = std::env::var("THESEUS_INJECT_VKEY").ok()?;
+            let vkey = u8::from_str_radix(vkey.trim_start_matches("0x"), 16).ok()?;
+            inject_vkey(vkey)?; // unsupported keys inject nothing
+            let at_ms = std::env::var("THESEUS_INJECT_AT_MS").ok()?.parse().ok()?;
+            Some((vkey, at_ms))
+        }) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let phase = PHASE.load(Relaxed);
+            if phase == 0 && self.time() >= at_ms {
+                PHASE.store(1, Relaxed);
+                return Some(host::Message::KeyDown(inject_vkey(vkey).unwrap()));
+            }
+            if phase == 1 && self.time() >= at_ms + 100 {
+                PHASE.store(2, Relaxed);
+                return Some(host::Message::KeyUp(inject_vkey(vkey).unwrap()));
+            }
+        }
         self.main_thread.get().poll()
     }
     pub fn wait(&self) -> host::Message {
