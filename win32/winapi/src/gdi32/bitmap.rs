@@ -48,7 +48,9 @@ pub fn StretchBlt(
     hSrc: i32,
     rop: u32, /* ROP_CODE */
 ) -> bool {
-    assert_eq!(rop, 0xcc0020);
+    if rop != 0xcc0020 {
+        return false;
+    }
 
     let state = gdi32::lock();
     let Some(dc_src) = state.dcs.get(hdcSrc) else {
@@ -60,17 +62,22 @@ pub fn StretchBlt(
         return false;
     };
     let bmp_dst = &dc_dst.bitmap.1;
-    assert!(bmp_dst.is_simple());
+    if !bmp_dst.is_simple() {
+        return false;
+    }
 
-    let [pixels_src, pixels_dst] = ctx
+    let Ok([pixels_src, pixels_dst]) = ctx
         .memory
         .bytes
         .get_disjoint_mut([bmp_src.pixels_range(), bmp_dst.pixels_range()])
-        .unwrap();
+    else {
+        return false;
+    };
 
     // stretching not implemented yet
-    assert_eq!(wDest, wSrc);
-    assert_eq!(hDest, hSrc);
+    if wDest != wSrc || hDest != hSrc {
+        return false;
+    }
 
     let xSrc = xSrc as u32;
     let ySrc = ySrc as u32;
@@ -79,6 +86,14 @@ pub fn StretchBlt(
     let wSrc = wSrc as u32;
     let hSrc = hSrc as u32;
     let wDst = wDest as u32;
+    if xSrc + wSrc > bmp_src.width
+        || ySrc + hSrc > bmp_src.height
+        || xDst + wDst > bmp_dst.width
+        || yDst + hSrc > bmp_dst.height
+    {
+        return false;
+    }
+
     for y in 0..hDest as u32 {
         let dst = &mut pixels_dst[(((yDst + y) * bmp_dst.stride()) + (xDst * 4)) as usize..]
             [..wDst as usize * 4];
@@ -100,6 +115,34 @@ pub fn StretchBlt(
 }
 
 pub type HBITMAP = HANDLE;
+
+#[cfg(test)]
+mod tests {
+    use super::StretchBlt;
+    use crate::gdi32;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn stretch_blt_rejects_out_of_bounds_bitmap() {
+        let mut ctx = context();
+        // A 2x2 32bpp bitmap at 0x3FFC needs 16 bytes, extending past 0x4000.
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3FFC);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        assert!(!StretchBlt(&mut ctx, hdc, 0, 0, 1, 1, hdc, 0, 0, 1, 1, 0xcc0020));
+    }
+}
 
 #[win32_derive::dllexport]
 pub fn CreateCompatibleBitmap(ctx: &mut Context, _hdc: HDC, cx: i32, cy: i32) -> HBITMAP {
