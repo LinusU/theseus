@@ -20,6 +20,12 @@ fn read_c_string(ctx: &Context, addr: u32) -> Option<Vec<u8>> {
     Some(buf[..len].to_vec())
 }
 
+fn range_fits(ctx: &Context, addr: u32, len: usize) -> bool {
+    (addr as usize)
+        .checked_add(len)
+        .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
 #[win32_derive::dllexport]
 pub fn lstrlenA(ctx: &mut Context, lpString: Ptr<u8>) -> i32 {
     let Some(string) = read_c_string(ctx, lpString.addr) else {
@@ -35,6 +41,12 @@ pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
         log::error!("lstrcpyA: unterminated source string");
         return 0;
     };
+    let Some(output_len) = src.len().checked_add(1) else {
+        return 0;
+    };
+    if !range_fits(ctx, lpString1.addr, output_len) {
+        return 0;
+    }
     ctx.memory[lpString1.addr..][..src.len()].copy_from_slice(&src);
     ctx.memory.write::<u8>(lpString1.addr + src.len() as u32, 0);
     lpString1.addr
@@ -50,7 +62,19 @@ pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
         log::error!("lstrcatA: unterminated source string");
         return 0;
     };
-    let dst_addr = lpString1.addr + dst.len() as u32;
+    let Some(dst_addr) = lpString1.addr.checked_add(dst.len() as u32) else {
+        return 0;
+    };
+    let Some(output_len) = dst
+        .len()
+        .checked_add(src.len())
+        .and_then(|len| len.checked_add(1))
+    else {
+        return 0;
+    };
+    if !range_fits(ctx, lpString1.addr, output_len) {
+        return 0;
+    }
     ctx.memory[dst_addr..][..src.len()].copy_from_slice(&src);
     ctx.memory.write::<u8>(dst_addr + src.len() as u32, 0);
     lpString1.addr
@@ -212,6 +236,17 @@ mod tests {
         ctx.memory[0x3ff0..].fill(0xff);
         assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x3ff0)), 0);
         assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
+    }
+
+    #[test]
+    fn ansi_string_helpers_reject_truncated_output() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+        ctx.memory[0x1100..][..2].copy_from_slice(b"X\0");
+        ctx.memory[0x3ffe..].copy_from_slice(b"X\0");
+
+        assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0x3fff), Ptr::new(0x1000)), 0);
+        assert_eq!(lstrcatA(&mut ctx, Ptr::new(0x3ffe), Ptr::new(0x1100)), 0);
     }
 
     #[test]
