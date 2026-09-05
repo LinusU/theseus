@@ -159,7 +159,11 @@ impl Context {
 
     pub fn ret32(&mut self, n: u16) -> Cont {
         let ret = self.pop32();
-        self.cpu.regs.esp += n as u32;
+        if self.cpu.real_mode {
+            self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        } else {
+            self.cpu.regs.esp += n as u32;
+        }
         self.indirect(ret)
     }
 
@@ -240,11 +244,27 @@ mod tests {
             cpu: CPU::default(),
             thread_handle: 0,
             thread_id: 0,
-            memory: Memory::leak_new(0x2000),
+            memory: Memory::leak_new(0x20_000),
             blocks: &[],
             cache: BlockCache::default(),
             recent: [from; 4],
         }
+    }
+
+    #[test]
+    fn real_mode_ret32_preserves_esp_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0;
+        ctx.cpu.regs.esp = 0xabcd_fffa;
+        ctx.memory.write::<u32>(0xfffa, 0x1234);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.ret32(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0002);
     }
 
     #[test]
