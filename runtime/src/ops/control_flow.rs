@@ -176,7 +176,11 @@ impl Context {
 
     pub fn ret16(&mut self, n: u16) -> Cont {
         let ret = self.pop16();
-        self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        if self.cpu.real_mode {
+            self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        } else {
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+        }
         self.indirect16((self.cpu.regs.cs, ret).into())
     }
 
@@ -202,7 +206,11 @@ impl Context {
     pub fn retf16(&mut self, n: u16) -> Cont {
         let ip = self.pop16();
         let cs = self.pop16();
-        self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        if self.cpu.real_mode {
+            self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        } else {
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+        }
         self.jmpf16(cs, ip)
     }
 
@@ -289,6 +297,36 @@ mod tests {
             cache: BlockCache::default(),
             recent: [from; 4],
         }
+    }
+
+    #[test]
+    fn flat_mode_ret16_uses_full_stack_pointer_cleanup() {
+        let mut ctx = context();
+        ctx.cpu.regs.cs = 0;
+        ctx.cpu.regs.esp = 0xfffc;
+        ctx.memory.write::<u16>(0xfffc, 0x1234);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.ret16(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0x10002);
+    }
+
+    #[test]
+    fn flat_mode_retf16_uses_full_stack_pointer_cleanup() {
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0xfff8;
+        ctx.memory.write::<u16>(0xfff8, 0x1234);
+        ctx.memory.write::<u16>(0xfffa, 0);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.retf16(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0x10000);
     }
 
     #[test]
