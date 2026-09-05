@@ -1990,6 +1990,9 @@ const HANDLED_RENDER_STATES: &[u32] = &[
     // has replaced; their default values match what the rasterizer already does.
     4,   // D3DRENDERSTATE_TEXTUREPERSPECTIVE
     137, // D3DRENDERSTATE_TEXTUREMAG
+    // Ambient feeds the D3D lighting pipeline, which never runs for the
+    // pre-transformed, pre-lit D3DFVF_XYZRHW geometry this rasterizer draws.
+    139, // D3DRENDERSTATE_AMBIENT
 ];
 
 // States the rasterizer consults (filter/mip) or whose D3D7 defaults match the
