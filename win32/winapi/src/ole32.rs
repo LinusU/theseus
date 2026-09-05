@@ -1,6 +1,6 @@
 use runtime::Context;
 
-use crate::Ptr;
+use crate::{Ptr, ddraw::GUID, dplayx};
 
 #[win32_derive::dllexport]
 pub fn CoInitialize(_ctx: &mut Context, _pvReserved: u32) -> u32 /* HRESULT */ {
@@ -20,6 +20,15 @@ pub fn CoCreateInstance(
     ppv: Ptr<u32>,
 ) -> u32 /* HRESULT */ {
     const REGDB_E_CLASSNOTREG: u32 = 0x8004_0154;
+
+    if _rclsid != 0 {
+        if let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory) {
+            if clsid == dplayx::CLSID_DirectPlayLobby {
+                return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
+            }
+        }
+    }
+
     // There is no COM class registry or interface model; report the class as
     // unregistered and null the caller's out pointer as the contract requires.
     ppv.write(&mut ctx.memory, 0);
