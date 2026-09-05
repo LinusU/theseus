@@ -635,6 +635,24 @@ mod tests {
     }
 
     #[test]
+    fn codegen_uses_16_bit_segmented_addresses() {
+        let state = crate::State::default();
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x8b, 0x44, 0x10];
+        let mut decoder = iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Seg((0, 0).into()),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(codegen.buf.contains(
+            "ctx.memory.read::<u16>(segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_si().wrapping_add(0x10u16)))"
+        ));
+    }
+
+    #[test]
     fn codegen_handles_segptr32_indirect_calls() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
