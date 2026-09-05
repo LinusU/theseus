@@ -90,13 +90,13 @@ pub fn abi_enum(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // If one of the values is negative, match using i32 instead of u32.
     let has_negative = enum_.variants.iter().any(|variant| {
         let num = &variant.discriminant.as_ref().unwrap().1;
-        match num {
+        matches!(
+            num,
             syn::Expr::Unary(syn::ExprUnary {
                 op: syn::UnOp::Neg(_),
                 ..
-            }) => true,
-            _ => false,
-        }
+            })
+        )
     });
 
     let matches = enum_.variants.iter().map(|variant| {
