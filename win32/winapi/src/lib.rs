@@ -53,6 +53,22 @@ pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[
         kernel32::IsProcessorFeaturePresent_stdcall,
     ),
     ("EBUEULA", "EBUEula", ebueula::EBUEula_stdcall),
+    ("DDRAW", "DirectDrawCreate", ddraw::DirectDrawCreate_stdcall),
+    (
+        "DDRAW",
+        "DirectDrawCreateEx",
+        ddraw::DirectDrawCreateEx_stdcall,
+    ),
+    (
+        "DDRAW",
+        "DirectDrawEnumerateA",
+        ddraw::DirectDrawEnumerateA_stdcall,
+    ),
+    (
+        "DDRAW",
+        "DirectDrawEnumerateExA",
+        ddraw::DirectDrawEnumerateExA_stdcall,
+    ),
 ];
 
 pub use dllexport::{ABIReturn, FromABIParam};
