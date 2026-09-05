@@ -335,44 +335,35 @@ pub fn SetTimer(
     stub!(0) // fail
 }
 
-// XXX: cdecl
-#[win32_derive::dllexport]
-pub fn wsprintfW(
-    _ctx: &mut Context,
-    _param0: Ptr<u16>, /* WSTR */
-    _param1: Ptr<u16>, /* WSTR */
-) -> i32 {
-    todo!()
+/// Read a NUL-terminated byte string without the UTF-8 check.
+fn read_bytes0(ctx: &Context, addr: u32) -> Vec<u8> {
+    let buf = &ctx.memory[addr..];
+    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    buf[..nul].to_vec()
 }
 
-#[win32_derive::dllexport]
-pub fn wsprintfA(ctx: &mut Context) -> i32 {
+/// Shared cdecl-varargs formatter for wsprintfA/W, operating on u16
+/// character units so both char widths share the format-string parser.
+/// `wide` selects whether %s arguments are read as UTF-16.
+fn wsprintf_impl(ctx: &mut Context, fmt: &[u16], mut arg_addr: u32, wide: bool) -> Vec<u16> {
     /// Documented maximum output of wsprintf, including the nul.
     const MAX_LEN: usize = 1024;
 
-    // Cdecl varargs: declared with no args so the wrapper leaves the caller's
-    // stack alone; read everything manually.
-    // [esp] = return addr, [esp+4] = dst, [esp+8] = fmt, [esp+12...] = args.
-    let esp = ctx.cpu.regs.esp;
-    let dst = ctx.memory.read::<u32>(esp + 4);
-    let fmt_addr = ctx.memory.read::<u32>(esp + 8);
-    let fmt = ctx.memory.read_str(fmt_addr).to_owned();
-    let mut arg_addr = esp + 12;
-
-    let bytes = fmt.as_bytes();
-    let mut out: Vec<u8> = Vec::new();
+    // The parser only speaks ASCII; non-ASCII units read as None here.
+    let at = |i: usize| fmt.get(i).copied().and_then(|c| u8::try_from(c).ok());
+    let mut out: Vec<u16> = Vec::new();
     let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
+    while i < fmt.len() {
+        let c = fmt[i];
         i += 1;
-        if c != b'%' {
+        if c != b'%' as u16 {
             out.push(c);
             continue;
         }
         let mut left = false;
         let mut zero = false;
         loop {
-            match bytes.get(i) {
+            match at(i) {
                 Some(b'-') => {
                     left = true;
                     i += 1;
@@ -386,53 +377,61 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
             }
         }
         let mut width = 0usize;
-        while let Some(&d @ b'1'..=b'9') = bytes.get(i) {
+        while let Some(d @ b'1'..=b'9') = at(i) {
             width = width * 10 + (d - b'0') as usize;
             i += 1;
-            while let Some(&d @ b'0'..=b'9') = bytes.get(i) {
+            while let Some(d @ b'0'..=b'9') = at(i) {
                 // Clamped because the width sizes an allocation here, and a
                 // format string can ask for gigabytes of padding.
                 width = (width * 10 + (d - b'0') as usize).min(MAX_LEN);
                 i += 1;
             }
         }
-        if bytes.get(i) == Some(&b'.') {
+        if at(i) == Some(b'.') {
             i += 1;
-            while matches!(bytes.get(i), Some(b'0'..=b'9')) {
+            while matches!(at(i), Some(b'0'..=b'9')) {
                 i += 1;
             }
         }
-        while matches!(bytes.get(i), Some(b'l') | Some(b'h')) {
+        while matches!(at(i), Some(b'l') | Some(b'h')) {
             i += 1;
         }
-        let spec = *bytes.get(i).unwrap_or(&b'%');
+        let spec = at(i).unwrap_or(b'%');
         i += 1;
         let mut next_arg = || {
             let value = ctx.memory.read::<u32>(arg_addr);
             arg_addr += 4;
             value
         };
-        let formatted: Vec<u8> = match spec {
-            b'%' => vec![b'%'],
-            b'd' | b'i' => format!("{}", next_arg() as i32).into_bytes(),
-            b'u' => format!("{}", next_arg()).into_bytes(),
-            b'x' => format!("{:x}", next_arg()).into_bytes(),
-            b'X' => format!("{:X}", next_arg()).into_bytes(),
-            b'c' => vec![next_arg() as u8],
+        let formatted: Vec<u16> = match spec {
+            b'%' => vec![b'%' as u16],
+            b'd' | b'i' => format!("{}", next_arg() as i32).encode_utf16().collect(),
+            b'u' => format!("{}", next_arg()).encode_utf16().collect(),
+            b'x' => format!("{:x}", next_arg()).encode_utf16().collect(),
+            b'X' => format!("{:X}", next_arg()).encode_utf16().collect(),
+            b'c' => vec![next_arg() as u16],
             b's' => {
                 let addr = next_arg();
-                ctx.memory.read_str(addr).as_bytes().to_vec()
+                if wide {
+                    ctx.memory.read_wstr(addr).as_slice().to_vec()
+                } else {
+                    read_bytes0(ctx, addr).iter().map(|&b| b as u16).collect()
+                }
             }
             _ => {
                 // Consume the arg anyway: skipping it would shift every
                 // argument after this one.
                 next_arg();
-                log::warn!("wsprintfA: unhandled %{}", spec as char);
-                vec![b'%', spec]
+                log::warn!("wsprintf: unhandled %{}", spec as char);
+                vec![b'%' as u16, spec as u16]
             }
         };
         if formatted.len() < width {
-            let pad = if zero && !left { b'0' } else { b' ' };
+            let pad = if zero && !left {
+                b'0' as u16
+            } else {
+                b' ' as u16
+            };
             let padding = std::iter::repeat(pad).take(width - formatted.len());
             if left {
                 out.extend(formatted);
@@ -446,10 +445,117 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
         }
     }
 
-    // The real wsprintfA writes at most 1024 characters including the nul, and
+    // The real wsprintf writes at most 1024 characters including the nul, and
     // callers size their buffers for that.
     out.truncate(MAX_LEN - 1);
-    ctx.memory[dst..][..out.len()].copy_from_slice(&out);
-    ctx.memory.write::<u8>(dst + out.len() as u32, 0);
+    out
+}
+
+// XXX: cdecl
+#[win32_derive::dllexport]
+pub fn wsprintfW(ctx: &mut Context) -> i32 {
+    // Cdecl varargs, see wsprintfA.
+    let esp = ctx.cpu.regs.esp;
+    let dst = ctx.memory.read::<u32>(esp + 4);
+    let fmt_addr = ctx.memory.read::<u32>(esp + 8);
+    let fmt = ctx.memory.read_wstr(fmt_addr).as_slice().to_vec();
+    let out = wsprintf_impl(ctx, &fmt, esp + 12, true);
+    for (j, unit) in out.iter().enumerate() {
+        ctx.memory.write::<u16>(dst + j as u32 * 2, *unit);
+    }
+    ctx.memory.write::<u16>(dst + out.len() as u32 * 2, 0);
     out.len() as i32
+}
+
+// XXX: cdecl
+#[win32_derive::dllexport]
+pub fn wsprintfA(ctx: &mut Context) -> i32 {
+    // Cdecl varargs: declared with no args so the wrapper leaves the caller's
+    // stack alone; read everything manually.
+    // [esp] = return addr, [esp+4] = dst, [esp+8] = fmt, [esp+12...] = args.
+    let esp = ctx.cpu.regs.esp;
+    let dst = ctx.memory.read::<u32>(esp + 4);
+    let fmt_addr = ctx.memory.read::<u32>(esp + 8);
+    let fmt = read_bytes0(ctx, fmt_addr)
+        .iter()
+        .map(|&b| b as u16)
+        .collect::<Vec<_>>();
+    let out = wsprintf_impl(ctx, &fmt, esp + 12, false);
+
+    let bytes: Vec<u8> = out.iter().map(|&c| c as u8).collect();
+    ctx.memory[dst..][..bytes.len()].copy_from_slice(&bytes);
+    ctx.memory.write::<u8>(dst + bytes.len() as u32, 0);
+    bytes.len() as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{wsprintfA, wsprintfW};
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    fn read_cstr(ctx: &Context, addr: u32) -> String {
+        let buf = &ctx.memory[addr..];
+        let nul = buf.iter().position(|&b| b == 0).unwrap();
+        std::str::from_utf8(&buf[..nul]).unwrap().to_string()
+    }
+
+    fn read_wstr(ctx: &Context, addr: u32) -> Vec<u16> {
+        let mut out = Vec::new();
+        let mut i = addr;
+        loop {
+            let unit = ctx.memory.read::<u16>(i);
+            if unit == 0 {
+                return out;
+            }
+            out.push(unit);
+            i += 2;
+        }
+    }
+
+    #[test]
+    fn wsprintf_formats_args_for_both_char_widths() {
+        let mut ctx = context();
+        // [esp]=ret, [esp+4]=dst, [esp+8]=fmt, [esp+12...]=args.
+        ctx.cpu.regs.esp = 0x200;
+        ctx.memory.write::<u32>(0x200, 0); // return addr
+        ctx.memory.write::<u32>(0x204, 0x300); // dst
+        ctx.memory.write::<u32>(0x208, 0x400); // fmt
+        ctx.memory.write::<u32>(0x20c, 42); // %d arg
+        ctx.memory.write::<u32>(0x210, 0x500); // %s arg
+        ctx.memory[0x400..][..12].copy_from_slice(b"val=%d %s\0\0\0");
+        ctx.memory[0x500..][..4].copy_from_slice(b"hey\0");
+        assert_eq!(wsprintfA(&mut ctx), 10);
+        assert_eq!(read_cstr(&ctx, 0x300), "val=42 hey");
+
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0x200;
+        ctx.memory.write::<u32>(0x200, 0);
+        ctx.memory.write::<u32>(0x204, 0x300);
+        ctx.memory.write::<u32>(0x208, 0x400);
+        ctx.memory.write::<u32>(0x20c, 42);
+        ctx.memory.write::<u32>(0x210, 0x500);
+        for (i, unit) in "val=%d %s\0".encode_utf16().enumerate() {
+            ctx.memory.write::<u16>(0x400 + i as u32 * 2, unit);
+        }
+        for (i, unit) in "hey\0".encode_utf16().enumerate() {
+            ctx.memory.write::<u16>(0x500 + i as u32 * 2, unit);
+        }
+        assert_eq!(wsprintfW(&mut ctx), 10);
+        assert_eq!(
+            read_wstr(&ctx, 0x300),
+            "val=42 hey".encode_utf16().collect::<Vec<_>>()
+        );
+    }
 }
