@@ -183,6 +183,9 @@ pub fn LCMapStringA(
     lpDestStr: Ptr<u8>,
     cchDest: i32,
 ) -> i32 {
+    if cchSrc < -1 || cchDest < 0 {
+        return 0;
+    }
     let len = if cchSrc < 0 {
         ctx.memory.read_str(lpSrcStr.addr).len() as u32 + 1
     } else {
@@ -212,6 +215,9 @@ pub fn LCMapStringW(
     lpDestStr: Ptr<u16>,
     cchDest: i32,
 ) -> i32 {
+    if cchSrc < -1 || cchDest < 0 {
+        return 0;
+    }
     let len = if cchSrc < 0 {
         let mut n = 0;
         while ctx.memory.read::<u16>(lpSrcStr.addr + n * 2) != 0 {
@@ -400,6 +406,37 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn lcmap_rejects_invalid_source_and_destination_counts() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+
+        assert_eq!(
+            LCMapStringA(
+                &mut ctx,
+                0,
+                0x100,
+                Ptr::new(0x1000),
+                -2,
+                Ptr::new(0x1200),
+                2,
+            ),
+            0
+        );
+        assert_eq!(
+            LCMapStringW(
+                &mut ctx,
+                0,
+                0x100,
+                Ptr::new(0x1000),
+                1,
+                Ptr::new(0x1200),
+                -1,
+            ),
+            0
+        );
     }
 
     #[test]
