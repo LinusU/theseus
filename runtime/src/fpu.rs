@@ -354,6 +354,54 @@ impl FPU {
         }
     }
 
+    /// Abridged tag word used by FXSAVE: one bit per physical register, set
+    /// where the register is non-empty.
+    fn abridged_tag(&self) -> u8 {
+        if self.st_top >= 8 {
+            0
+        } else {
+            (0xff_u16 << self.st_top) as u8
+        }
+    }
+
+    /// FXSAVE writes a 512-byte image. Fields this model does not track
+    /// (FOP, the exception pointers, MXCSR, and the XMM registers) are zeroed,
+    /// matching the pointer fields in the 28-byte environment image.
+    pub fn fxsave(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        memory[addr..addr.wrapping_add(512)].fill(0);
+        memory.write(addr, self.control);
+        memory.write(addr.wrapping_add(2), self.status());
+        memory.write(addr.wrapping_add(4), self.abridged_tag());
+        for (index, value) in self.st.iter().enumerate() {
+            memory.write(
+                addr.wrapping_add(32 + index as u32 * 16),
+                F80::from_f64(*value),
+            );
+        }
+    }
+
+    /// FXRSTOR restores the fields this model tracks from the 512-byte image.
+    /// The unmodeled XMM registers and MXCSR are ignored.
+    pub fn fxrstor(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.control = memory.read(addr);
+        let status: u16 = memory.read(addr.wrapping_add(2));
+        let abridged: u8 = memory.read(addr.wrapping_add(4));
+        // Expand the abridged tag bits into the full tag word's empty/valid
+        // encoding so load_status can detect an all-empty stack.
+        let mut tag = u16::MAX;
+        for i in 0..8 {
+            if abridged & (1 << i) != 0 {
+                tag &= !(3 << (i * 2));
+            }
+        }
+        self.load_status(status, tag);
+        for (index, value) in self.st.iter_mut().enumerate() {
+            *value = memory
+                .read::<F80>(addr.wrapping_add(32 + index as u32 * 16))
+                .to_f64();
+        }
+    }
+
     pub fn round(&self, val: f64) -> f64 {
         match (self.control >> 10) & 0b11 {
             0 => val.round_ties_even(),
@@ -491,6 +539,45 @@ mod tests {
         assert_eq!(fpu.get(0), -2.5);
         assert_eq!(fpu.get(1), 1.25);
         assert_eq!(fpu.condition, Status::C0.bits());
+    }
+
+    #[test]
+    fn fxsave_and_fxrstor_round_trip_state() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.control = 0x027f;
+        fpu.push(1.25);
+        fpu.push(-2.5);
+        fpu.set_cmp(std::cmp::Ordering::Less);
+        fpu.fxsave(&mut memory, 0x1000);
+
+        // FXSAVE does not reset the unit, and untracked fields stay zero.
+        assert_eq!(fpu.control, 0x027f);
+        assert_eq!(memory.read::<u16>(0x1000), 0x027f);
+        assert_eq!(memory.read::<u16>(0x1002), 6 << 11 | Status::C0.bits());
+        assert_eq!(memory.read::<u8>(0x1004), 0b1100_0000);
+        assert_eq!(memory.read::<u32>(0x1008), 0);
+        assert_eq!(memory.read::<u32>(0x1018), 0);
+
+        let mut other = FPU::default();
+        other.fxrstor(&memory, 0x1000);
+        assert_eq!(other.control, 0x027f);
+        assert_eq!(other.st_top, 6);
+        assert_eq!(other.get(0), -2.5);
+        assert_eq!(other.get(1), 1.25);
+        assert_eq!(other.condition, Status::C0.bits());
+    }
+
+    #[test]
+    fn fxrstor_marks_an_all_zero_tag_word_empty() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.fxsave(&mut memory, 0x1000);
+
+        let mut other = FPU::default();
+        other.push(1.0);
+        other.fxrstor(&memory, 0x1000);
+        assert_eq!(other.st_top, 8);
     }
 
     #[test]

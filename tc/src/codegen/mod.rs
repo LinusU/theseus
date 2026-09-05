@@ -2441,6 +2441,35 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fxsave_fxrstor() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x0f, 0xae, 0x01][..],
+                "ctx.cpu.fpu.fxsave(&mut ctx.memory, ctx.cpu.regs.ecx);",
+            ),
+            (
+                &[0x0f, 0xae, 0x09][..],
+                "ctx.cpu.fpu.fxrstor(&ctx.memory, ctx.cpu.regs.ecx);",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
     fn codegen_handles_pextrw_pinsrw_pshufw() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
