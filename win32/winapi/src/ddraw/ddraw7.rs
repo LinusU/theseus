@@ -996,12 +996,31 @@ pub mod IDirectDrawSurface7 {
     pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
         let surfaces = state().surf.borrow_mut();
         let mut surface = surfaces.get(&this).unwrap().borrow_mut();
-        let pixels = surface.lock(&mut ctx.memory);
-        let dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(
-            surface.width,
-            surface.height,
-            pixels,
-        ));
+        let (width, height, bpp) = (surface.width, surface.height, surface.bytes_per_pixel);
+        let bitmap = if bpp == 4 {
+            gdi32::Bitmap::new_simple(width, height, surface.lock(&mut ctx.memory))
+        } else {
+            // GDI draws 32-bit, so a DC over a narrower surface gets a scratch
+            // RGBA buffer that ReleaseDC converts back.
+            let rgba = surface
+                .to_rgba(&ctx.memory, &surface.palette)
+                .map(|px| px.into_owned());
+            let scratch = kernel32::lock()
+                .process_heap
+                .alloc(&mut ctx.memory, width * height * 4);
+            if let Some(rgba) = rgba {
+                ctx.memory[scratch..][..rgba.len()].copy_from_slice(&rgba);
+            }
+            gdi32::Bitmap::new_simple(width, height, scratch)
+        };
+        let scratch = (bpp != 4).then_some(bitmap.pixels);
+        let dc = gdi32::lock().new_memory_dc(bitmap);
+        if let Some(scratch) = scratch {
+            state()
+                .surface_dcs
+                .borrow_mut()
+                .insert(dc.to_raw(), scratch);
+        }
         ctx.memory.write(lphDC, dc.to_raw());
         DD::OK
     }
@@ -1126,9 +1145,19 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn ReleaseDC(ctx: &mut Context, this: u32, hDC: HDC) -> DD {
+        let scratch = state().surface_dcs.borrow_mut().remove(&hDC.to_raw());
         let surfaces = state().surf.borrow_mut();
         let mut surface = surfaces.get(&this).unwrap().borrow_mut();
         gdi32::lock().release_dc(hDC);
+        if let Some(scratch) = scratch {
+            // GetDC gave the game a 32-bit scratch buffer; convert it back to
+            // the surface's depth now.
+            let (width, height) = (surface.width, surface.height);
+            let rgba = ctx.memory[scratch..][..(width * height * 4) as usize].to_vec();
+            kernel32::lock().process_heap.free(&mut ctx.memory, scratch);
+            let dst = surface.lock(&mut ctx.memory);
+            surface.write_rgba(&mut ctx.memory, &rgba, dst);
+        }
         surface.unlock(&mut ctx.memory);
         DD::OK
     }

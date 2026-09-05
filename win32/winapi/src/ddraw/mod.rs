@@ -229,6 +229,9 @@ pub struct State {
     pub ddraw: RefCell<Option<DirectDraw>>,
     pub surf: RefCell<HashMap<u32, Rc<RefCell<Surface>>>>,
     pub palette: RefCell<HashMap<u32, Rc<RefCell<Palette>>>>,
+    /// Surface GetDC on a non-32bpp surface hands out a scratch RGBA buffer
+    /// that ReleaseDC converts back: DC handle -> scratch address.
+    pub surface_dcs: RefCell<HashMap<u32, u32>>,
 }
 
 impl State {

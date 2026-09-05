@@ -223,7 +223,7 @@ impl Surface {
     /// `palette` for palettized formats. Borrows the pixels directly when they
     /// are already RGBA. Returns None when there is nothing to show, e.g. an
     /// 8-bit surface with no palette attached yet.
-    fn to_rgba<'a>(
+    pub(crate) fn to_rgba<'a>(
         &self,
         mem: &'a Memory,
         palette: &Option<Rc<RefCell<Palette>>>,
@@ -267,6 +267,25 @@ impl Surface {
                 return None;
             }
         })
+    }
+
+    /// Convert the RGBA scratch buffer a DC draws in back to this surface's
+    /// own depth. Only 16bpp RGB565 is supported; other depths warn and leave
+    /// the surface unchanged.
+    pub fn write_rgba(&mut self, mem: &mut Memory, rgba: &[u8], dst: u32) {
+        match self.bytes_per_pixel {
+            2 => {
+                for (i, px) in rgba.chunks_exact(4).enumerate() {
+                    let v = ((px[0] as u32 >> 3) << 11)
+                        | ((px[1] as u32 >> 2) << 5)
+                        | (px[2] as u32 >> 3);
+                    mem.write::<u16>(dst + i as u32 * 2, v as u16);
+                }
+            }
+            bpp => {
+                log::warn!("ReleaseDC: no RGBA->{}bpp conversion", bpp * 8);
+            }
+        }
     }
 
     // App can write pixels to back buffer but attach palette to front buffer,
@@ -573,8 +592,7 @@ pub fn blt(
                 }
                 3 => {
                     for x in 0..(rect.right - rect.left).max(0) as u32 {
-                        ctx.memory[start + x * 3..][..3]
-                            .copy_from_slice(&color.to_le_bytes()[..3]);
+                        ctx.memory[start + x * 3..][..3].copy_from_slice(&color.to_le_bytes()[..3]);
                     }
                 }
                 4 => {
