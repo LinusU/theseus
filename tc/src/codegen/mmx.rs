@@ -144,6 +144,16 @@ impl<'a> CodeGen<'a> {
         if matches!(instr.mnemonic(), Pinsrw) && !is_mmx_reg(instr.op_register(0)) {
             return false;
         }
+        // MOVD and MOVQ have both MMX and SSE2 forms; let the XMM code generator
+        // handle any encoding that touches an XMM register.
+        if matches!(instr.mnemonic(), Movd | Movq)
+            && (0..=1).any(|i| {
+                matches!(instr.op_kind(i), iced_x86::OpKind::Register)
+                    && codegen::xmm::is_xmm_reg(instr.op_register(i))
+            })
+        {
+            return false;
+        }
         match instr.mnemonic() {
             Movd => self.line(self.mmx_set_32(instr, 0, self.mmx_get_32(instr, 1))),
             // MOVNTQ is a non-temporal MMX store; in the flat memory model it

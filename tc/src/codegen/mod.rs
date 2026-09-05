@@ -4172,6 +4172,62 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_movd_and_movq() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // movd xmm0, eax
+            (
+                &[0x66, 0x0f, 0x6e, 0xc0][..],
+                "ctx.cpu.xmm.xmm0 = movd_to_xmm(ctx.cpu.regs.eax);",
+            ),
+            // movd eax, xmm0
+            (
+                &[0x66, 0x0f, 0x7e, 0xc0],
+                "ctx.cpu.regs.eax = ctx.cpu.xmm.xmm0[0];",
+            ),
+            // movd [eax], xmm0
+            (
+                &[0x66, 0x0f, 0x7e, 0x00],
+                "ctx.memory.write::<u32>(ctx.cpu.regs.eax, ctx.cpu.xmm.xmm0[0]);",
+            ),
+            // movq xmm0, [eax]
+            (
+                &[0xf3, 0x0f, 0x7e, 0x00],
+                "ctx.cpu.xmm.xmm0 = movq_to_xmm(ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movq [eax], xmm0
+            (
+                &[0x66, 0x0f, 0xd6, 0x00],
+                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, movq_from_xmm(ctx.cpu.xmm.xmm0));",
+            ),
+            // movq xmm1, xmm0
+            (
+                &[0xf3, 0x0f, 0x7e, 0xc8],
+                "ctx.cpu.xmm.xmm1 = movq_to_xmm(low_qword(ctx.cpu.xmm.xmm0));",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

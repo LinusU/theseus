@@ -1,6 +1,6 @@
 use crate::codegen::{self, CodeGen, instr_name};
 
-fn is_xmm_reg(reg: iced_x86::Register) -> bool {
+pub(crate) fn is_xmm_reg(reg: iced_x86::Register) -> bool {
     use iced_x86::Register::*;
     matches!(reg, XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7)
 }
@@ -113,6 +113,31 @@ impl<'a> CodeGen<'a> {
             // MOVNTPS/MOVNTPD/MOVNTDQ are also pure stores in this model.
             Movups | Movaps | Movntps | Movupd | Movapd | Movntpd | Movdqu | Movdqa | Movntdq => {
                 self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1)))
+            }
+
+            // 32-bit/64-bit scalar moves between GPRs, memory, and XMM registers.
+            // MOVD clears the upper 96 bits of the destination; MOVQ clears the
+            // upper 64 bits.
+            Movd => {
+                if is_xmm_reg(instr.op_register(0)) {
+                    let src = self.get_op(instr, 1);
+                    self.line(self.xmm_set(instr, 0, format!("movd_to_xmm({src})")));
+                } else {
+                    self.line(self.set_op(instr, 0, self.xmm_get_32(instr, 1)));
+                }
+            }
+            Movq => {
+                if is_xmm_reg(instr.op_register(0)) {
+                    let src = self.xmm_get_64(instr, 1);
+                    self.line(self.xmm_set(instr, 0, format!("movq_to_xmm({src})")));
+                } else {
+                    let src = self.xmm_get(instr, 1);
+                    self.line(codegen::set_mem(
+                        "u64".into(),
+                        self.gen_addr(instr),
+                        format!("movq_from_xmm({src})"),
+                    ));
+                }
             }
 
             // Packed single/double-precision arithmetic and bitwise operations.

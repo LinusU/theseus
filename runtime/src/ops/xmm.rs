@@ -1145,6 +1145,18 @@ pub fn pmuludq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     from_qwords([low, high])
 }
 
+pub fn movd_to_xmm(src: u32) -> [u32; 4] {
+    [src, 0, 0, 0]
+}
+
+pub fn movq_to_xmm(src: [u32; 2]) -> [u32; 4] {
+    [src[0], src[1], 0, 0]
+}
+
+pub fn movq_from_xmm(src: [u32; 4]) -> u64 {
+    (src[0] as u64) | ((src[1] as u64) << 32)
+}
+
 pub fn pmullw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_words(a);
     let b = to_words(b);
@@ -1227,6 +1239,16 @@ mod tests {
         assert_eq!(
             pmuludq_xmm(u, v),
             [0x0004_0001, 0x0000_0004, 0x0004_0001, 0x0000_0004]
+        );
+
+        assert_eq!(movd_to_xmm(0x1234_5678), [0x1234_5678, 0, 0, 0]);
+        assert_eq!(
+            movq_to_xmm([0x9abcdef0, 0x12345678]),
+            [0x9abcdef0, 0x12345678, 0, 0]
+        );
+        assert_eq!(
+            movq_from_xmm([0x9abcdef0, 0x12345678, 0, 0]),
+            0x123456789abcdef0
         );
     }
 
