@@ -103,6 +103,23 @@ pub fn WaitForMultipleObjects(
     crate::stub!(0) // WAIT_OBJECT_0
 }
 
+/// Signal an event object by handle, used by timer notifications that
+/// deliver TIME_CALLBACK_EVENT_SET (pulse = false) or
+/// TIME_CALLBACK_EVENT_PULSE (pulse = true) instead of a function call.
+pub fn signal_event(hEvent: HANDLE, pulse: bool) -> bool {
+    let kernel32 = lock();
+    let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
+        return false;
+    };
+    let mut signaled = event.signaled.lock().unwrap();
+    *signaled = true;
+    event.cond.notify_all();
+    if pulse {
+        *signaled = false;
+    }
+    true
+}
+
 #[win32_derive::dllexport]
 pub fn SetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     let kernel32 = lock();

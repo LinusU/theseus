@@ -5,10 +5,20 @@ use crate::{
     winmm::{state, winmm_main},
 };
 
+/// How a timer expiry is delivered: TIME_CALLBACK_FUNCTION calls a guest
+/// function, while TIME_CALLBACK_EVENT_SET/PULSE signal an event object
+/// (`lpTimeProc` is then an event handle rather than a function).
+#[derive(Debug, Copy, Clone)]
+pub enum Notify {
+    Function(u32),
+    Event { handle: u32, pulse: bool },
+}
+
 pub struct Timer {
     pub period: u32,
     pub next: u32,
-    pub callback: u32,
+    pub periodic: bool,
+    pub notify: Notify,
     pub user_data: u32,
 }
 
@@ -20,22 +30,25 @@ pub fn timeGetTime(_ctx: &mut Context) -> u32 {
 #[derive(Debug)]
 pub struct TIME {
     periodic: bool,
-    #[allow(unused)]
-    event: (), // todo
+    /// Some(pulse) when the callback parameter is an event handle to
+    /// signal (EVENT_SET/EVENT_PULSE) rather than a function.
+    event_pulse: Option<bool>,
 }
 
 impl crate::dllexport::FromABIParam for TIME {
     fn from_abi(val: u32) -> Self {
         // kind of a bitfield, kind of an enum
         let periodic = (val & 0xF) != 0;
-        assert_eq!(periodic, true);
-        let event = match val & 0xF0 {
-            0x00 => (),      // FUNCTION
-            0x10 => todo!(), // EVENT_SET
-            0x20 => todo!(), // EVENT_PULSE
+        let event_pulse = match val & 0xF0 {
+            0x00 => None,        // FUNCTION
+            0x10 => Some(false), // EVENT_SET
+            0x20 => Some(true),  // EVENT_PULSE
             _ => unimplemented!(),
         };
-        TIME { periodic, event }
+        TIME {
+            periodic,
+            event_pulse,
+        }
     }
 }
 
@@ -48,14 +61,21 @@ pub fn timeSetEvent(
     dwUser: u32,
     fuEvent: TIME,
 ) -> u32 {
-    assert_eq!(fuEvent.periodic, true);
+    let notify = match fuEvent.event_pulse {
+        None => Notify::Function(lpTimeProc),
+        Some(pulse) => Notify::Event {
+            handle: lpTimeProc,
+            pulse,
+        },
+    };
 
     let mut state = state();
     assert!(state.timer.is_none());
     state.timer = Some(Timer {
         period: uDelay,
         next: host::host().time() + uDelay,
-        callback: lpTimeProc,
+        periodic: fuEvent.periodic,
+        notify,
         user_data: dwUser,
     });
     kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
@@ -105,7 +125,8 @@ mod tests {
         state().timer = Some(Timer {
             period: 10,
             next: 0,
-            callback: 0,
+            periodic: true,
+            notify: Notify::Function(0),
             user_data: 0,
         });
         assert_eq!(timeKillEvent(&mut ctx, 2), 5); // wrong id

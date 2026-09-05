@@ -2,6 +2,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use runtime::Context;
 
+use crate::{FromABIParam, HANDLE, kernel32};
+
 mod time;
 pub use time::*;
 mod wave;
@@ -55,14 +57,30 @@ fn winmm_main(ctx: &mut Context) {
             std::thread::sleep(std::time::Duration::from_millis(delta as u64));
         }
 
-        let func = ctx.indirect(timer.callback);
-        let timer_id = 1;
+        let notify = timer.notify;
+        let periodic = timer.periodic;
         let user_data = timer.user_data;
-        let next = now + timer.period;
-        timer.next = next;
+        if periodic {
+            timer.next = now + timer.period;
+        } else {
+            lock.timer = None;
+        }
         drop(lock);
 
-        // LPTIMECALLBACK
-        ctx.call32_x86(func, vec![timer_id, 0, user_data, 0, 0]);
+        match notify {
+            Notify::Function(callback) => {
+                let func = ctx.indirect(callback);
+                let timer_id = 1;
+                // LPTIMECALLBACK
+                ctx.call32_x86(func, vec![timer_id, 0, user_data, 0, 0]);
+            }
+            Notify::Event { handle, pulse } => {
+                kernel32::signal_event(HANDLE::from_abi(handle), pulse);
+            }
+        }
+
+        if !periodic {
+            return;
+        }
     }
 }
