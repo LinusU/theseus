@@ -8,6 +8,11 @@ pub fn clc(ctx: &mut Context) {
     ctx.cpu.flags.remove(Flags::CF);
 }
 
+pub fn cmc(ctx: &mut Context) {
+    let carry = !ctx.cpu.flags.contains(Flags::CF);
+    ctx.cpu.flags.set(Flags::CF, carry);
+}
+
 pub fn std(ctx: &mut Context) {
     ctx.cpu.flags.insert(Flags::DF);
 }
@@ -48,7 +53,7 @@ pub fn lahf(ctx: &mut Context) {
 
 #[cfg(test)]
 mod tests {
-    use super::{lahf, sahf};
+    use super::{cmc, lahf, sahf};
     use crate::{BlockCache, CPU, Context, Flags, Memory};
 
     fn context() -> Context {
@@ -61,6 +66,19 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn cmc_inverts_carry_without_changing_other_flags() {
+        let mut ctx = context();
+        ctx.cpu.flags = Flags::CF | Flags::ZF;
+
+        cmc(&mut ctx);
+        assert!(!ctx.cpu.flags.contains(Flags::CF));
+        assert!(ctx.cpu.flags.contains(Flags::ZF));
+
+        cmc(&mut ctx);
+        assert!(ctx.cpu.flags.contains(Flags::CF));
     }
 
     #[test]

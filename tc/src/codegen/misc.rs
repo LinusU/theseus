@@ -188,7 +188,7 @@ impl<'a> CodeGen<'a> {
             Cwd => self.line("ctx.cpu.regs.set_dx_ax(ctx.cpu.regs.get_ax() as i16 as i32 as u32);"),
             Cdq => self.line("ctx.cpu.regs.set_edx_eax(ctx.cpu.regs.eax as i32 as i64 as u64);"),
 
-            Stc | Clc | Std | Cld | Sahf | Lahf => {
+            Stc | Clc | Cmc | Std | Cld | Sahf | Lahf => {
                 self.line(format!("{}(ctx);", instr_name(instr)));
             }
 
