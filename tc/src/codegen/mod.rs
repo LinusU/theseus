@@ -804,6 +804,38 @@ mod tests {
     }
 
     #[test]
+    fn codegen_reads_six_byte_protected_segment_pointers() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0xc4, 0x00];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+
+        assert!(
+            codegen
+                .buf
+                .contains("let ptr_offset = ctx.memory.read::<u32>(ctx.cpu.regs.eax);")
+        );
+        assert!(codegen.buf.contains(
+            "let ptr_segment = ctx.memory.read::<u16>(ctx.cpu.regs.eax.wrapping_add(4u32));"
+        ));
+        assert!(codegen.buf.contains("ctx.cpu.regs.es = ptr_segment;"));
+        assert!(codegen.buf.contains("ctx.cpu.regs.eax = ptr_offset;"));
+        assert!(
+            !codegen
+                .buf
+                .contains("ctx.memory.read::<u64>(ctx.cpu.regs.eax)")
+        );
+    }
+
+    #[test]
     fn codegen_registers_statically_imported_modules() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule {

@@ -258,9 +258,16 @@ impl<'a> CodeGen<'a> {
                     self.line(format!("ctx.cpu.regs.{segment} = (ptr >> 16) as u16;"));
                     self.line(self.set_op(instr, 0, "ptr as u16".into()));
                 } else {
-                    self.line(format!("let ptr = {};", get_mem("u64".into(), address),));
-                    self.line(format!("ctx.cpu.regs.{segment} = (ptr >> 32) as u16;"));
-                    self.line(self.set_op(instr, 0, "ptr as u32".into()));
+                    self.line(format!(
+                        "let ptr_offset = {};",
+                        get_mem("u32".into(), address.clone())
+                    ));
+                    self.line(format!(
+                        "let ptr_segment = {};",
+                        get_mem("u16".into(), format!("{address}.wrapping_add(4u32)"))
+                    ));
+                    self.line(format!("ctx.cpu.regs.{segment} = ptr_segment;"));
+                    self.line(self.set_op(instr, 0, "ptr_offset".into()));
                 }
             }
 
