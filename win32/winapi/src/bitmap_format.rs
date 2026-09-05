@@ -164,7 +164,9 @@ impl Bitmap {
         };
         match header_size {
             12 => {
-                let (header, rest) = BITMAPCOREHEADER::read_from_prefix(buf).unwrap();
+                let Some((header, rest)) = BITMAPCOREHEADER::read_from_prefix(buf).ok() else {
+                    return Self::degenerate();
+                };
                 Self::parseBMPv2(&header, rest)
             }
             // V3 and later headers share the BITMAPINFOHEADER prefix.
@@ -188,13 +190,20 @@ impl Bitmap {
         } else {
             0 // >8bpp core bitmaps have no color table
         };
-        let (palette, buf) = <[[u8; 3]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBTRIPLE
+        let Some((palette, buf)) = <[[u8; 3]]>::ref_from_prefix_with_elems(buf, palette_len).ok()
+        else {
+            return Self::degenerate();
+        };
         let palette = palette
             .iter()
             .map(|&[b, g, r]| COLORREF::from_rgb(r, g, b))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let pixels = &buf[..(header.bcHeight as usize * header.stride())];
+        let need = header.bcHeight as usize * header.stride();
+        if buf.len() < need {
+            return Self::degenerate();
+        }
+        let pixels = &buf[..need];
         let bitmap = Bitmap {
             width: header.bcWidth as u32,
             height: header.bcHeight as u32,
@@ -326,5 +335,46 @@ impl Bitmap {
                 dst[..len.min(dst_len)].fill(0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bitmap;
+
+    fn core_header(bc_bit_count: u16) -> Vec<u8> {
+        vec![
+            0x0c, 0x00, 0x00, 0x00, // bcSize = 12
+            0x01, 0x00, // bcWidth = 1
+            0x01, 0x00, // bcHeight = 1
+            0x01, 0x00, // bcPlanes = 1
+            bc_bit_count as u8,
+            (bc_bit_count >> 8) as u8, // bcBitCount
+        ]
+    }
+
+    #[test]
+    fn parse_rejects_truncated_core_header() {
+        // A buffer that claims a 12-byte BITMAPCOREHEADER but is too short.
+        let buf = [0x0c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00];
+        let (bmp, _) = Bitmap::parse(&buf);
+        assert_eq!(bmp.width, 0);
+        assert_eq!(bmp.height, 0);
+    }
+
+    #[test]
+    fn parse_rejects_core_8bpp_without_palette() {
+        // 8bpp needs 256*3 palette bytes after the 12-byte header.
+        let (bmp, _) = Bitmap::parse(&core_header(8));
+        assert_eq!(bmp.width, 0);
+        assert_eq!(bmp.height, 0);
+    }
+
+    #[test]
+    fn parse_rejects_core_24bpp_without_pixels() {
+        // 24bpp needs 1*4=4 pixel bytes after the (empty) palette.
+        let (bmp, _) = Bitmap::parse(&core_header(24));
+        assert_eq!(bmp.width, 0);
+        assert_eq!(bmp.height, 0);
     }
 }
