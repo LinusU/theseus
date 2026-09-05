@@ -4,7 +4,6 @@ use super::*;
 use crate::{
     Ptr, RECT,
     gdi32::{self, HDC},
-    stub,
 };
 
 #[win32_derive::dllexport]
@@ -235,7 +234,9 @@ pub fn WinHelpW(
 
 #[win32_derive::dllexport]
 pub fn CheckMenuItem(_ctx: &mut Context, _hMenu: HMENU, _uIDCheckItem: u32, _uCheck: u32) -> u32 {
-    stub!(0) // previously unchecked
+    // The model has no menus, so no item can be checked; the previous state
+    // is always "unchecked".
+    0
 }
 
 pub type LRESULT = i32;
@@ -323,18 +324,31 @@ pub fn CharPrevA(_ctx: &mut Context, lpszStart: Ptr<u8>, lpszCurrent: Ptr<u8>) -
 
 #[win32_derive::dllexport]
 pub fn MessageBoxW(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _hWnd: HWND,
-    _lpText: Ptr<u16>,    /* WSTR */
-    _lpCaption: Ptr<u16>, /* WSTR */
-    _uType: u32,          /* MESSAGEBOX_STYLE */
+    lpText: Ptr<u16>,    /* WSTR */
+    lpCaption: Ptr<u16>, /* WSTR */
+    _uType: u32,         /* MESSAGEBOX_STYLE */
 ) -> u32 /* MESSAGEBOX_RESULT */ {
-    stub!(0)
+    // We have no dialogs, but the C runtime reports fatal errors this way, so
+    // the text is worth surfacing.
+    let read = |ptr: Ptr<u16>| {
+        if ptr.addr == 0 {
+            String::new()
+        } else {
+            String::from_utf16_lossy(ctx.memory.read_wstr(ptr.addr).as_slice())
+        }
+    };
+    log::warn!("MessageBox: {} / {}", read(lpCaption), read(lpText));
+    const IDOK: u32 = 1;
+    IDOK
 }
 
 #[win32_derive::dllexport]
 pub fn SetMenu(_ctx: &mut Context, _hWnd: HWND, _hMenu: HMENU) -> bool {
-    stub!(true) // success
+    // The model has no menu bar; accepting the call reports success without
+    // changing anything the window can display.
+    true
 }
 
 #[win32_derive::dllexport]

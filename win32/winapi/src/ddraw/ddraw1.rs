@@ -5,7 +5,7 @@ use crate::{
     ddraw::{DD, GUID, get_pixel_format, state, types::*},
     gdi32::HDC,
     heap::Heap,
-    kernel32, stub,
+    kernel32,
     user32::HWND,
 };
 
@@ -434,7 +434,7 @@ pub mod IDirectDraw {
             .resize(ctx, width, height);
         assert!(bpp.is_multiple_of(8));
         ddraw.bytes_per_pixel = bpp / 8;
-        stub!(DD::OK)
+        DD::OK
     }
 
     #[win32_derive::dllexport]

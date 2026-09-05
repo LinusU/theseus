@@ -5,7 +5,7 @@ use runtime::Context;
 use crate::{
     FromABIParam, POINT, Ptr, RECT,
     gdi32::{self, Brush, COLORREF, DC, HBRUSH, HDC},
-    kernel32, stub,
+    kernel32,
     user32::{self, HCURSOR, HICON, HINSTANCE, HMENU, HWND, State, WM, state},
 };
 
@@ -642,7 +642,9 @@ pub fn InvalidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>, _bEras
 
 #[win32_derive::dllexport]
 pub fn GetDesktopWindow(_ctx: &mut Context) -> HWND {
-    stub!(HWND::null())
+    // The model's desktop is the null handle: GetDC(NULL), MapWindowPoints and
+    // friends all treat it as the screen.
+    HWND::null()
 }
 
 #[win32_derive::dllexport]
@@ -867,6 +869,17 @@ pub fn MapWindowPoints(
 }
 
 #[win32_derive::dllexport]
-pub fn ValidateRect(_ctx: &mut Context, _hWnd: HWND, _lpRect: Ptr<RECT>) -> bool {
-    stub!(true)
+pub fn ValidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>) -> bool {
+    // The update region is a single dirty flag covering the window, so
+    // validating any part of it clears the pending WM_PAINT.
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return hWnd.is_null();
+    };
+    let mut window = window.borrow_mut();
+    if !hWnd.is_null() && window.hwnd != hWnd {
+        return false;
+    }
+    window.dirty = false;
+    true
 }
