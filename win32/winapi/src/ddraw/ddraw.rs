@@ -475,7 +475,7 @@ impl Surface {
         // THESEUS_FLIP_DUMP=<path> writes the back buffer's raw guest pixels
         // as a PPM once (on the Nth flip, N from THESEUS_FLIP_DUMP_AT),
         // so we can compare against what the texture shows.
-        if std::env::var("THESEUS_FLIP_DUMP").is_ok() {
+        if let Ok(path) = std::env::var("THESEUS_FLIP_DUMP") {
             let at: u64 = std::env::var("THESEUS_FLIP_DUMP_AT")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -483,7 +483,6 @@ impl Surface {
             if flip_n == at
                 && let (Some(addr), true) = (back.pixels, back.bytes_per_pixel == 2)
             {
-                let path = std::env::var("THESEUS_FLIP_DUMP").unwrap();
                 let (w, h) = (back.width, back.height);
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
                 for i in 0..(w * h) {
@@ -704,7 +703,7 @@ pub fn blit_copy(
     // THESEUS_SRC_DUMP=<path> writes the Nth full-screen blit's raw source
     // pixels as a PPM (N from THESEUS_SRC_DUMP_AT), for comparing what the
     // game drew with what the screen shows.
-    if std::env::var("THESEUS_SRC_DUMP").is_ok() {
+    if let Ok(path) = std::env::var("THESEUS_SRC_DUMP") {
         let src = src_rc.borrow();
         if let (Some(addr), 2) = (src.pixels, src.bytes_per_pixel)
             && src.width == 640
@@ -717,7 +716,6 @@ pub fn blit_copy(
                 .unwrap_or(0);
             if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == at {
                 log::warn!("src dump: src={src_ptr:#x} pixels={addr:#x} dst={dst_ptr:#x}");
-                let path = std::env::var("THESEUS_SRC_DUMP").unwrap();
                 let (w, h) = (src.width, src.height);
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
                 for i in 0..(w * h) {
