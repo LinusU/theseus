@@ -124,10 +124,16 @@ fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> 
     )
 }
 
-fn char_type_output_fits(ctx: &Context, addr: u32, count: usize) -> bool {
+fn output_range_fits(ctx: &Context, addr: u32, bytes: usize) -> bool {
     (addr as usize)
-        .checked_add(count.checked_mul(2).unwrap_or(usize::MAX))
+        .checked_add(bytes)
         .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
+fn char_type_output_fits(ctx: &Context, addr: u32, count: usize) -> bool {
+    count
+        .checked_mul(2)
+        .is_some_and(|bytes| output_range_fits(ctx, addr, bytes))
 }
 
 #[win32_derive::dllexport]
@@ -342,7 +348,13 @@ pub fn MultiByteToWideChar(
     if cchWideChar == 0 {
         return wide.len() as i32;
     }
-    if cchWideChar < 0 || wide.len() > cchWideChar as usize {
+    if cchWideChar < 0
+        || wide.len() > cchWideChar as usize
+        || !wide
+            .len()
+            .checked_mul(2)
+            .is_some_and(|bytes| output_range_fits(ctx, lpWideCharStr.addr, bytes))
+    {
         return 0;
     }
     for (i, value) in wide.iter().copied().enumerate() {
@@ -402,7 +414,10 @@ pub fn WideCharToMultiByte(
     if cbMultiByte == 0 {
         return converted.len() as i32;
     }
-    if cbMultiByte < 0 || converted.len() > cbMultiByte as usize {
+    if cbMultiByte < 0
+        || converted.len() > cbMultiByte as usize
+        || !output_range_fits(ctx, lpMultiByteStr.addr, converted.len())
+    {
         return 0;
     }
     for (i, (value, _)) in converted.iter().copied().enumerate() {
@@ -648,6 +663,32 @@ mod tests {
         );
         assert_eq!(ctx.memory.read::<u16>(0x1100), 0xffff);
         assert_eq!(ctx.memory.read::<u8>(0x1200), 0xff);
+    }
+
+    #[test]
+    fn conversion_helpers_reject_truncated_outputs() {
+        let mut ctx = context();
+        ctx.memory.write::<u8>(0x1000, b'A');
+        ctx.memory.write::<u16>(0x1100, b'A' as u16);
+
+        assert_eq!(
+            MultiByteToWideChar(&mut ctx, 1252, 0, Ptr::new(0x1000), 1, Ptr::new(0x3fff), 1,),
+            0
+        );
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x1100),
+                1,
+                Ptr::new(0x4000),
+                1,
+                Ptr::new(0),
+                Ptr::new(0),
+            ),
+            0
+        );
     }
 
     #[test]
