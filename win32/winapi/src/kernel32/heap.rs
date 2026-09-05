@@ -18,8 +18,14 @@ win32flags! {
 #[win32_derive::dllexport]
 pub fn HeapAlloc(ctx: &mut Context, hHeap: HANDLE, dwFlags: HEAP_FLAGS, dwBytes: u32) -> u32 {
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
-    let addr = heap.alloc(&mut ctx.memory, dwBytes);
+    let Some(heap) = state.heaps.get(&hHeap) else {
+        log::error!("HeapAlloc({hHeap:x}): no such heap");
+        return 0;
+    };
+    let Some(addr) = heap.try_alloc(&mut ctx.memory, dwBytes) else {
+        // HeapAlloc returns NULL when the heap is exhausted.
+        return 0;
+    };
     drop(state);
     if addr != 0 && dwFlags.contains(HEAP_FLAGS::ZERO_MEMORY) {
         ctx.memory[addr..][..dwBytes as usize].fill(0);
@@ -65,7 +71,10 @@ pub fn HeapSize(
         log::warn!("HeapFree flags {dwFlags:x}");
     }
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
+    let Some(heap) = state.heaps.get(&hHeap) else {
+        log::error!("HeapSize({hHeap:x}): no such heap");
+        return u32::MAX;
+    };
     heap.size(&mut ctx.memory, lpMem.addr)
 }
 
@@ -80,9 +89,11 @@ pub fn HeapFree(
         log::warn!("HeapFree flags {dwFlags:x}");
     }
     let state = kernel32::lock();
-    let heap = state.heaps.get(&hHeap).unwrap();
-    heap.free(&mut ctx.memory, lpMem.addr);
-    true
+    let Some(heap) = state.heaps.get(&hHeap) else {
+        log::error!("HeapFree({hHeap:x}): no such heap");
+        return false;
+    };
+    heap.free(&mut ctx.memory, lpMem.addr)
 }
 
 const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x10;
@@ -109,13 +120,17 @@ pub fn HeapReAlloc(
     };
     // A null lpMem behaves like HeapAlloc.
     if lpMem.addr == 0 {
-        return heap.alloc(&mut ctx.memory, dwBytes);
+        return heap.try_alloc(&mut ctx.memory, dwBytes).unwrap_or(0);
     }
     if dwBytes == 0 {
         heap.free(&mut ctx.memory, lpMem.addr);
         return 0;
     }
     let old_size = heap.size(&mut ctx.memory, lpMem.addr);
+    if old_size == u32::MAX {
+        // lpMem is not a live block on this heap.
+        return 0;
+    }
     if dwBytes <= old_size {
         // Shrinking always succeeds in place.
         return lpMem.addr;
@@ -124,7 +139,9 @@ pub fn HeapReAlloc(
         // The free-list allocator cannot extend a live block in place.
         return 0;
     }
-    let new_addr = heap.alloc(&mut ctx.memory, dwBytes);
+    let Some(new_addr) = heap.try_alloc(&mut ctx.memory, dwBytes) else {
+        return 0;
+    };
     ctx.memory.bytes.copy_within(
         lpMem.addr as usize..lpMem.addr as usize + old_size as usize,
         new_addr as usize,
@@ -156,8 +173,11 @@ win32flags! {
 
 #[win32_derive::dllexport]
 pub fn GlobalAlloc(ctx: &mut Context, uFlags: GMEM, dwBytes: u32) -> u32 {
-    assert!(!uFlags.contains(GMEM::MOVEABLE));
-    let ptr = lock().process_heap.alloc(&mut ctx.memory, dwBytes);
+    // Handles are identity pointers and GlobalLock/Unlock are no-ops, so
+    // GMEM_MOVEABLE is satisfied transparently: blocks never move.
+    let Some(ptr) = lock().process_heap.try_alloc(&mut ctx.memory, dwBytes) else {
+        return 0;
+    };
     if uFlags.contains(GMEM::ZEROINIT) {
         ctx.memory[ptr..][..dwBytes as usize].fill(0);
     }
@@ -238,5 +258,26 @@ mod tests {
         // Destroying the heap removes it from the state.
         assert!(HeapDestroy(&mut ctx, hheap));
         assert!(!HeapDestroy(&mut ctx, hheap));
+    }
+
+    #[test]
+    fn heap_apis_degrade_on_bad_handles() {
+        kernel32::ensure_test_state();
+        let mut ctx = context();
+        let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
+        let hheap = heap.addr;
+        lock().heaps.insert(hheap, heap);
+
+        // An unknown heap handle fails without panicking.
+        let bad_heap = 0x7777;
+        assert_eq!(HeapAlloc(&mut ctx, bad_heap, HEAP_FLAGS::empty(), 8), 0);
+        assert_eq!(HeapSize(&mut ctx, bad_heap, 0, Ptr::new(0)), u32::MAX);
+        assert!(!HeapFree(&mut ctx, bad_heap, 0, Ptr::new(0)));
+
+        // A bad lpMem fails without panicking.
+        assert!(!HeapFree(&mut ctx, hheap, 0, Ptr::new(0)));
+        assert_eq!(HeapSize(&mut ctx, hheap, 0, Ptr::new(0)), u32::MAX);
+        assert_eq!(HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(0x40), 8), 0);
+        lock().heaps.remove(&hheap);
     }
 }

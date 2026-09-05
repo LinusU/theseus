@@ -27,24 +27,33 @@ impl Heap {
         self.addr..self.addr + self.size
     }
 
+    pub fn try_alloc(&self, mem: &mut Memory, size: u32) -> Option<u32> {
+        self.freelist.borrow_mut().alloc(mem, size)
+    }
+
     pub fn alloc(&self, mem: &mut Memory, size: u32) -> u32 {
-        self.freelist
-            .borrow_mut()
-            .alloc(mem, size)
+        self.try_alloc(mem, size)
             .unwrap_or_else(|| panic!("heap size {:x} oom {:x}", self.size, size))
     }
 
     #[allow(unused)]
     pub fn size(&self, mem: &mut Memory, addr: u32) -> u32 {
+        if addr < 4 || !self.range().contains(&(addr - 4)) {
+            // HeapSize documents (SIZE_T)-1 for a bad pointer.
+            return u32::MAX;
+        }
         mem.read::<u32>(addr - 4) - 4
     }
 
-    pub fn free(&self, mem: &mut Memory, addr: u32) {
-        if !self.range().contains(&(addr - 4)) {
+    /// Free a pointer previously returned by `alloc`. Returns false when the
+    /// pointer is not a block on this heap (matching HeapFree's FALSE).
+    pub fn free(&self, mem: &mut Memory, addr: u32) -> bool {
+        if addr < 4 || !self.range().contains(&(addr - 4)) {
             log::error!("free of addr not on heap");
-            return;
+            return false;
         }
         self.freelist.borrow_mut().free(mem, addr);
+        true
     }
 }
 
