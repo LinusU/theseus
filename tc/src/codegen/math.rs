@@ -1,6 +1,19 @@
 use crate::codegen::{CodeGen, get_reg, instr_name, op_size};
 
 impl<'a> CodeGen<'a> {
+    /// Emit the tail of a divide-error (#DE, vector 0) trap. Real-mode code
+    /// dispatches through the DOS interrupt vector; flat code has no IDT, so
+    /// the trap is an explicit failure like other unhandled interrupts.
+    fn divide_error(&self, instr: &iced_x86::Instruction) -> String {
+        if self.module.is_dos() {
+            // #DE is a fault: the pushed return address is the faulting
+            // instruction itself.
+            format!("return dos::int(ctx, {:#x}, 0x0)", instr.ip16())
+        } else {
+            format!("unhandled_interrupt(0x0, {:#x})", instr.ip32())
+        }
+    }
+
     pub fn codegen_math(&mut self, instr: &iced_x86::Instruction) -> bool {
         use iced_x86::Mnemonic::*;
         match instr.mnemonic() {
@@ -76,7 +89,13 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 let y = format!("{} as u{size2}", self.get_op(instr, 0));
-                self.line(format!("let (quot, rem) = div({x}, {y});"));
+                let trap = self.divide_error(instr);
+                self.line(format!("let dividend = {x};"));
+                self.line(format!("let divisor = {y};"));
+                self.line(format!(
+                    "if divisor == 0 || dividend / divisor > u{size}::MAX as u{size2} {{ {trap}; }}"
+                ));
+                self.line("let (quot, rem) = div(dividend, divisor);".to_string());
                 match size {
                     8 => {
                         self.line("ctx.cpu.regs.set_al(quot as u8);");
@@ -139,10 +158,17 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 let y = format!("{} as i{size} as i{size2}", self.get_op(instr, 0));
+                let trap = self.divide_error(instr);
                 self.line(format!("let x = {x};"));
                 self.line(format!("let y = {y};"));
-                let quot = format!("(x / y) as i{size} as u{size}");
-                let rem = format!("(x % y) as i{size} as u{size}");
+                self.line(format!(
+                    "let Some((quot, rem)) = x.checked_div(y).zip(x.checked_rem(y)) else {{ {trap}; }};"
+                ));
+                self.line(format!(
+                    "if quot < i{size}::MIN as i{size2} || quot > i{size}::MAX as i{size2} {{ {trap}; }}"
+                ));
+                let quot = format!("quot as i{size} as u{size}");
+                let rem = format!("rem as i{size} as u{size}");
                 match size {
                     8 => {
                         self.line(format!("ctx.cpu.regs.set_al({quot});"));

@@ -1093,6 +1093,94 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_div_idiv() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, wants) in [
+            // div cl: AX / CL -> AL=quot, AH=rem
+            (
+                &[0xf6, 0xf1][..],
+                vec![
+                    "let dividend = ctx.cpu.regs.get_ax();",
+                    "let divisor = ctx.cpu.regs.get_cl() as u16;",
+                    "if divisor == 0 || dividend / divisor > u8::MAX as u16 { unhandled_interrupt(0x0, 0x0); }",
+                    "let (quot, rem) = div(dividend, divisor);",
+                    "ctx.cpu.regs.set_al(quot as u8);",
+                    "ctx.cpu.regs.set_ah(rem as u8);",
+                ],
+            ),
+            // idiv cx: DX:AX / CX -> AX=quot, DX=rem (signed divisor)
+            (
+                &[0x66, 0xf7, 0xf9][..],
+                vec![
+                    "let x = ctx.cpu.regs.get_dx_ax() as i32;",
+                    "let y = ctx.cpu.regs.get_cx() as i16 as i32;",
+                    "x.checked_div(y).zip(x.checked_rem(y))",
+                    "if quot < i16::MIN as i32 || quot > i16::MAX as i32",
+                    "ctx.cpu.regs.set_ax(quot as i16 as u16);",
+                    "ctx.cpu.regs.set_dx(rem as i16 as u16);",
+                ],
+            ),
+            // div ecx: EDX:EAX / ECX -> EAX=quot, EDX=rem
+            (
+                &[0xf7, 0xf1][..],
+                vec![
+                    "let dividend = ctx.cpu.regs.get_edx_eax();",
+                    "let divisor = ctx.cpu.regs.ecx as u64;",
+                    "if divisor == 0 || dividend / divisor > u32::MAX as u64 { unhandled_interrupt(0x0, 0x0); }",
+                    "ctx.cpu.regs.eax = quot as u32;",
+                    "ctx.cpu.regs.edx = rem as u32;",
+                ],
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            for want in wants {
+                assert!(
+                    codegen.buf.contains(want),
+                    "wanted {want:?} in {:?}",
+                    codegen.buf
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codegen_dispatches_dos_divide_error() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // div cl in real mode: #DE dispatches through the DOS interrupt
+        // vector, pushing the faulting instruction's offset.
+        let bytes = [0xf6, 0xf1];
+        let mut decoder =
+            iced_x86::Decoder::with_ip(16, &bytes, 0x20, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Seg((0x100, 0x20).into()),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen.buf.contains("return dos::int(ctx, 0x20, 0x0);"),
+            "got {:?}",
+            codegen.buf
+        );
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
