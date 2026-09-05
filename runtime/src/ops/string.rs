@@ -249,4 +249,23 @@ mod tests {
 
         assert_eq!(ctx.cpu.regs.ecx, 0x0001_0000);
     }
+
+    #[test]
+    fn rep_movsb_follows_the_direction_flag() {
+        let mut ctx = context();
+        ctx.cpu.flags = Flags::DF;
+        ctx.cpu.regs.esi = 4;
+        ctx.cpu.regs.edi = 8;
+        ctx.cpu.regs.ecx = 2;
+        ctx.memory.write::<u8>(3, 0x32);
+        ctx.memory.write::<u8>(4, 0x31);
+
+        ctx.rep(Rep::REP, Context::movsb);
+
+        assert_eq!(ctx.memory.read::<u8>(8), 0x31);
+        assert_eq!(ctx.memory.read::<u8>(7), 0x32);
+        assert_eq!(ctx.cpu.regs.esi, 2);
+        assert_eq!(ctx.cpu.regs.edi, 6);
+        assert_eq!(ctx.cpu.regs.ecx, 0);
+    }
 }
