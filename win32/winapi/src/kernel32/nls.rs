@@ -306,7 +306,7 @@ fn read_multibyte(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
         count if count > 0 => count as usize,
         _ => return None,
     };
-    Some(ctx.memory[addr..][..len].to_vec())
+    Some(ctx.memory[addr..].get(..len)?.to_vec())
 }
 
 #[win32_derive::dllexport]
@@ -341,22 +341,10 @@ pub fn MultiByteToWideChar(
 }
 
 fn read_wide(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
-    let len = match count {
-        -1 => {
-            let mut len = 0;
-            while ctx.memory.read::<u16>(addr + (len * 2) as u32) != 0 {
-                len += 1;
-            }
-            len + 1
-        }
-        count if count > 0 => count as usize,
-        _ => return None,
-    };
-    Some(
-        (0..len)
-            .map(|i| ctx.memory.read::<u16>(addr + (i * 2) as u32))
-            .collect(),
-    )
+    if count == 0 || count < -1 {
+        return None;
+    }
+    read_string_type_w(ctx, addr, count)
 }
 
 fn wide_to_ansi(wide: u16, default: u8) -> (u8, bool) {
@@ -596,6 +584,36 @@ mod tests {
         assert_eq!(ctx.memory.read::<u16>(0x1100), b'A' as u16);
         assert_eq!(ctx.memory.read::<u16>(0x1102), 0x20ac);
         assert_eq!(ctx.memory.read::<u16>(0x1104), 0);
+    }
+
+    #[test]
+    fn conversion_helpers_reject_truncated_sources() {
+        let mut ctx = context();
+        ctx.memory.write::<u8>(0x3fff, b'A');
+        ctx.memory.write::<u16>(0x1100, 0xffff);
+        ctx.memory.write::<u8>(0x1200, 0xff);
+        ctx.memory.write::<u16>(0x3ffe, b'A' as u16);
+
+        assert_eq!(
+            MultiByteToWideChar(&mut ctx, 1252, 0, Ptr::new(0x3fff), 2, Ptr::new(0x1100), 1,),
+            0
+        );
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x3ffe),
+                -1,
+                Ptr::new(0x1200),
+                1,
+                Ptr::new(0),
+                Ptr::new(0),
+            ),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x1100), 0xffff);
+        assert_eq!(ctx.memory.read::<u8>(0x1200), 0xff);
     }
 
     #[test]
