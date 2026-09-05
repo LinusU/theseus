@@ -672,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn codegen_handles_paddb_paddw_paddd() {
+    fn codegen_handles_packed_add_sub() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
         let mut codegen = super::CodeGen::new(&state, false);
@@ -681,6 +681,8 @@ mod tests {
             ([0x0f, 0xfc, 0xc1], "paddb"),
             ([0x0f, 0xfd, 0xc1], "paddw"),
             ([0x0f, 0xfe, 0xc1], "paddd"),
+            ([0x0f, 0xf8, 0xc1], "psubb"),
+            ([0x0f, 0xfa, 0xc1], "psubd"),
         ] {
             let mut decoder =
                 iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);

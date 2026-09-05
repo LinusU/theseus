@@ -253,6 +253,28 @@ pub fn psubusb(x: u64, y: u64) -> u64 {
     .pack()
 }
 
+pub fn psubb(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    [
+        x[0].wrapping_sub(y[0]),
+        x[1].wrapping_sub(y[1]),
+        x[2].wrapping_sub(y[2]),
+        x[3].wrapping_sub(y[3]),
+        x[4].wrapping_sub(y[4]),
+        x[5].wrapping_sub(y[5]),
+        x[6].wrapping_sub(y[6]),
+        x[7].wrapping_sub(y[7]),
+    ]
+    .pack()
+}
+
+pub fn psubd(x: u64, y: u64) -> u64 {
+    let x: [u32; 2] = x.unpack();
+    let y: [u32; 2] = y.unpack();
+    [x[0].wrapping_sub(y[0]), x[1].wrapping_sub(y[1])].pack()
+}
+
 pub fn psubw(x: u64, y: u64) -> u64 {
     let x: [u16; 4] = x.unpack();
     let y: [u16; 4] = y.unpack();
@@ -277,7 +299,7 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{paddb, paddd, paddw, psraw};
+    use super::{paddb, paddd, paddw, psraw, psubb, psubd};
 
     #[test]
     fn paddb_and_paddd_wrap_each_lane_independently() {
@@ -296,6 +318,15 @@ mod tests {
         assert_eq!(
             paddw(0x0001_ffff_7fff_8000, 0x0001_0002_0001_8000),
             0x0002_0001_8000_0000
+        );
+    }
+
+    #[test]
+    fn psubb_and_psubd_wrap_each_lane_independently() {
+        assert_eq!(psubb(0, 0x0101_0101_0101_0101), 0xffff_ffff_ffff_ffff);
+        assert_eq!(
+            psubd(0x0000_0001_0000_0000, 0x0000_0002_0000_0001),
+            0xffff_ffff_ffff_ffff
         );
     }
 
