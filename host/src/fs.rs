@@ -427,9 +427,9 @@ mod imp {
             if fs.directories.contains(&cur) || fs.files.contains_key(&cur) {
                 continue;
             }
-            let parent =
-                cur.rsplit_once('/')
-                    .map_or("/", |(p, _)| if p.is_empty() { "/" } else { p });
+            let parent = cur
+                .rsplit_once('/')
+                .map_or("/", |(p, _)| if p.is_empty() { "/" } else { p });
             let parent_exists = parent == "/"
                 || fs.directories.contains(parent)
                 || fs.files.contains_key(parent)

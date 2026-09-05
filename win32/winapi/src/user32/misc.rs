@@ -204,13 +204,21 @@ pub fn CreateCursor(
 }
 
 #[win32_derive::dllexport]
-pub fn ReleaseCapture(_ctx: &mut Context) -> bool {
-    stub!(true)
+pub fn GetCapture(_ctx: &mut Context) -> HWND {
+    state().capture.get()
 }
 
 #[win32_derive::dllexport]
-pub fn SetCapture(_ctx: &mut Context, _hWnd: HWND) -> HWND {
-    stub!(HWND::null())
+pub fn ReleaseCapture(_ctx: &mut Context) -> bool {
+    state().capture.set(HWND::null());
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn SetCapture(_ctx: &mut Context, hWnd: HWND) -> HWND {
+    let prev = state().capture.get();
+    state().capture.set(hWnd);
+    prev
 }
 
 #[win32_derive::dllexport]

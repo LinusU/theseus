@@ -48,6 +48,8 @@ pub struct State {
     cursor_display: Cell<i32>,
     /// Next RegisterClass atom; class atoms live at 0xC000 and above.
     next_class_atom: Cell<u16>,
+    /// The window that has captured the mouse, or 0 if none.
+    capture: Cell<HWND>,
 }
 
 // TODO: reuse locking pattern from kernel32
@@ -114,5 +116,6 @@ pub fn state() -> &'static State {
         current_cursor: Cell::new(0),
         cursor_display: Cell::new(0),
         next_class_atom: Cell::new(0xC000),
+        capture: Cell::new(HWND::null()),
     })
 }

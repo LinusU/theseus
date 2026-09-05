@@ -589,6 +589,51 @@ impl Host {
                 }
             }
         }
+
+        // Debug aid: synthesize a single left mouse click for headless/scripted
+        // runs. THESEUS_INJECT_CLICK is "x,y" and THESEUS_INJECT_CLICK_MS is
+        // the delay before the move; down/up follow 50ms apart.
+        static CLICK_INJECT: std::sync::OnceLock<Option<((u32, u32), u32)>> =
+            std::sync::OnceLock::new();
+        static CLICK_PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        if let Some(((x, y), at_ms)) = CLICK_INJECT.get_or_init(|| {
+            let s = std::env::var("THESEUS_INJECT_CLICK").ok()?;
+            let (x, y) = s.split_once(',')?;
+            let x = x.trim().parse().ok()?;
+            let y = y.trim().parse().ok()?;
+            let at_ms = std::env::var("THESEUS_INJECT_CLICK_MS")
+                .ok()?
+                .parse()
+                .ok()?;
+            Some(((x, y), at_ms))
+        }) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let phase = CLICK_PHASE.load(Relaxed) as u32;
+            if phase < 3 {
+                let at = at_ms + phase * 50;
+                if self.time() >= at {
+                    CLICK_PHASE.store((phase + 1) as u8, Relaxed);
+                    let (button, buttons) = match phase {
+                        1 => (host::MouseButton::Left, host::MouseButton::Left),
+                        2 => (host::MouseButton::Left, host::MouseButton::empty()),
+                        _ => (host::MouseButton::empty(), host::MouseButton::empty()),
+                    };
+                    let message = host::MouseMessage {
+                        x: *x,
+                        y: *y,
+                        button,
+                        buttons,
+                    };
+                    return Some(match phase {
+                        0 => host::Message::MouseMove(message),
+                        1 => host::Message::MouseDown(message),
+                        2 => host::Message::MouseUp(message),
+                        _ => unreachable!(),
+                    });
+                }
+            }
+        }
+
         self.main_thread.get().poll()
     }
     pub fn wait(&self) -> host::Message {
