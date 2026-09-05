@@ -376,13 +376,44 @@ impl Surface {
         };
 
         let mut back = self.attached.as_ref().unwrap().borrow_mut();
-        if self.palette.is_some() {
-            back.update_texture(mem, &self.palette);
+        // Refresh the back buffer's texture every flip, not just in
+        // palettized modes — a palette is only needed to expand indexed
+        // pixels, while 16/32bpp buffers convert without one.
+        log::debug!(
+            "flip: front={:#x} back={:#x} back.pixels={:#x}",
+            self.addr,
+            back.addr,
+            back.pixels.unwrap_or(0)
+        );
+        back.update_texture(mem, &self.palette);
+        // THESEUS_FLIP_DUMP=<path> writes the back buffer's raw guest pixels
+        // as a PPM once (on the Nth flip, N from THESEUS_FLIP_DUMP_AT),
+        // so we can compare against what the texture shows.
+        if std::env::var("THESEUS_FLIP_DUMP").is_ok() {
+            static FLIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let at: u64 = std::env::var("THESEUS_FLIP_DUMP_AT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let n = FLIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n == at
+                && let (Some(addr), true) = (back.pixels, back.bytes_per_pixel == 2)
+            {
+                let path = std::env::var("THESEUS_FLIP_DUMP").unwrap();
+                let (w, h) = (back.width, back.height);
+                let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                for i in 0..(w * h) {
+                    let p = mem.read::<u16>(addr + i * 2);
+                    out.push((((p >> 11) & 0x1f) << 3) as u8);
+                    out.push((((p >> 5) & 0x3f) << 2) as u8);
+                    out.push(((p & 0x1f) << 3) as u8);
+                }
+                let _ = std::fs::write(&path, out);
+            }
         }
         let Target::Texture(texture) = &mut back.target else {
             unreachable!()
         };
-
         let mut window = window.borrow_mut();
         window.host.render(texture);
     }
@@ -571,6 +602,35 @@ pub fn blit_copy(
     let src_rc = state().surf.borrow_mut().get(&src_ptr).unwrap().clone();
     let dst_rc = state().surf.borrow_mut().get(&dst_ptr).unwrap().clone();
 
+    // THESEUS_SRC_DUMP=<path> writes the Nth full-screen blit's raw source
+    // pixels as a PPM (N from THESEUS_SRC_DUMP_AT), for comparing what the
+    // game drew with what the screen shows.
+    if std::env::var("THESEUS_SRC_DUMP").is_ok() {
+        let src = src_rc.borrow();
+        if let (Some(addr), 2) = (src.pixels, src.bytes_per_pixel)
+            && src.width == 640
+            && src.height == 480
+        {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let at: u64 = std::env::var("THESEUS_SRC_DUMP_AT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == at {
+                let path = std::env::var("THESEUS_SRC_DUMP").unwrap();
+                let (w, h) = (src.width, src.height);
+                let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                for i in 0..(w * h) {
+                    let p = ctx.memory.read::<u16>(addr + i * 2);
+                    out.push((((p >> 11) & 0x1f) << 3) as u8);
+                    out.push((((p >> 5) & 0x3f) << 2) as u8);
+                    out.push(((p & 0x1f) << 3) as u8);
+                }
+                let _ = std::fs::write(&path, out);
+            }
+        }
+    }
+
     let (rows, row_bytes, row_count, bpp) = {
         let mut src = src_rc.borrow_mut();
         let addr = src.lock(&mut ctx.memory);
@@ -719,6 +779,7 @@ pub fn blt(
     };
 
     let src_rect = read_rect(ctx, lpSrcRect);
+    log::debug!("Blt: dst={this:#x} src={lpDDSrcSurface:#x} flags={dwFlags:#x}");
     blit_copy(ctx, this, dst_rect, lpDDSrcSurface, src_rect, color_key);
     DD::OK
 }
@@ -751,6 +812,7 @@ pub fn blt_fast(
     };
 
     let src_rect = read_rect(ctx, lpSrcRect);
+    log::debug!("BltFast: dst={this:#x} src={lpDDSrcSurface:#x} ({dwX},{dwY})");
     let (w, h) = match &src_rect {
         Some(r) => ((r.right - r.left).max(0), (r.bottom - r.top).max(0)),
         None => {
