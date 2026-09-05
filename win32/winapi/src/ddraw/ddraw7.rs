@@ -170,7 +170,7 @@ pub mod IDirectDraw7 {
         });
         let s = surface.borrow();
         log::debug!(
-            "CreateSurface: {:#x} {}x{} {}bpp caps={:#x} flags={:#x} mips={} lpSurface={:#x}",
+            "CreateSurface: {:#x} {}x{} {}bpp caps={:#x} flags={:#x} mips={} lpSurface={:#x} pf_flags={:#x} fourcc={:#x} masks={:#x},{:#x},{:#x},{:#x}",
             s.addr,
             s.width,
             s.height,
@@ -179,6 +179,12 @@ pub mod IDirectDraw7 {
             desc.dwFlags.bits(),
             desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle,
             desc.lpSurface,
+            desc.ddpfPixelFormat.dwFlags,
+            desc.ddpfPixelFormat.dwFourCC,
+            desc.ddpfPixelFormat.dwRBitMask,
+            desc.ddpfPixelFormat.dwGBitMask,
+            desc.ddpfPixelFormat.dwBBitMask,
+            desc.ddpfPixelFormat.dwRGBAlphaBitMask,
         );
         ctx.memory.write(lplpDDSurface, s.addr);
 

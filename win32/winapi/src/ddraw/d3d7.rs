@@ -1945,10 +1945,13 @@ fn read_vertex(mem: &Memory, addr: u32) -> RhwVertex {
 // D3DRENDERSTATETYPE values the rasterizer acts on.
 const D3DRENDERSTATE_ZENABLE: u32 = 7;
 const D3DRENDERSTATE_ZWRITEENABLE: u32 = 14;
+const D3DRENDERSTATE_ALPHATESTENABLE: u32 = 15;
 const D3DRENDERSTATE_SRCBLEND: u32 = 19;
 const D3DRENDERSTATE_DESTBLEND: u32 = 20;
 const D3DRENDERSTATE_CULLMODE: u32 = 22;
 const D3DRENDERSTATE_ZFUNC: u32 = 23;
+const D3DRENDERSTATE_ALPHAREF: u32 = 24;
+const D3DRENDERSTATE_ALPHAFUNC: u32 = 25;
 const D3DRENDERSTATE_ALPHABLENDENABLE: u32 = 27;
 const D3DCULL_CW: u32 = 2;
 const D3DCULL_CCW: u32 = 3;
@@ -2014,7 +2017,22 @@ fn blend_565(dst: u16, src: u16, sa: f32, sblend: u32, dblend: u32) -> u16 {
     out
 }
 
-fn sample_565(mem: &Memory, addr: u32, width: u32, height: u32, u: f32, v: f32) -> Option<u16> {
+// Texture pixel formats the rasterizer decodes, classified from the
+// surface's DDPIXELFORMAT channel masks.
+const TEXFMT_RGB565: u8 = 0;
+const TEXFMT_A1R5G5B5: u8 = 1;
+const TEXFMT_A4R4G4B4: u8 = 2;
+
+/// Sample one texel, returning (RGB565 color, 0-255 alpha).
+fn sample_texel(
+    mem: &Memory,
+    addr: u32,
+    width: u32,
+    height: u32,
+    u: f32,
+    v: f32,
+    fmt: u8,
+) -> Option<(u16, u8)> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -2024,7 +2042,30 @@ fn sample_565(mem: &Memory, addr: u32, width: u32, height: u32, u: f32, v: f32) 
     let v = if v < 0.0 { v + 1.0 } else { v };
     let x = (u * (width - 1) as f32) as u32 % width;
     let y = (v * (height - 1) as f32) as u32 % height;
-    Some(mem.read::<u16>(addr + (y * width + x) * 2))
+    let p = mem.read::<u16>(addr + (y * width + x) * 2);
+    Some(match fmt {
+        // A1R5G5B5: 1-bit alpha, 5/5/5 color.
+        TEXFMT_A1R5G5B5 => {
+            let r = (p >> 10) & 0x1f;
+            let g = (p >> 5) & 0x1f;
+            let b = p & 0x1f;
+            (
+                (r << 11) | (((g << 1) | (g >> 4)) << 5) | b,
+                if p & 0x8000 != 0 { 255 } else { 0 },
+            )
+        }
+        // A4R4G4B4: 4-bit alpha, 4/4/4 color expanded to 5/6/5.
+        TEXFMT_A4R4G4B4 => {
+            let r = (p >> 8) & 0xf;
+            let g = (p >> 4) & 0xf;
+            let b = p & 0xf;
+            (
+                ((r << 1) | (r >> 3)) << 11 | (((g << 2) | (g >> 2)) << 5) | ((b << 1) | (b >> 3)),
+                (((p >> 12) & 0xf) * 17) as u8,
+            )
+        }
+        _ => (p, 255),
+    })
 }
 
 fn rasterize(
@@ -2059,6 +2100,7 @@ fn rasterize(
         tex_width: u32,
         tex_height: u32,
         tex_bpp: u32,
+        tex_fmt: u8,
         // (pixels, width, height) for each filled sub-level past the base.
         tex_mips: Vec<(u32, u32, u32)>,
         zbuf_addr: u32,
@@ -2069,6 +2111,9 @@ fn rasterize(
         alpha_blend: u32,
         src_blend: u32,
         dst_blend: u32,
+        alpha_test: u32,
+        alpha_func: u32,
+        alpha_ref: u32,
     }
 
     let t = 'targets: {
@@ -2108,11 +2153,40 @@ fn rasterize(
             .render_states
             .get(&D3DRENDERSTATE_DESTBLEND)
             .unwrap_or(&1);
+        // Alpha test defaults: disabled, ALWAYS(8), ref 0.
+        let alpha_test = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ALPHATESTENABLE)
+            .unwrap_or(&0);
+        let alpha_func = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ALPHAFUNC)
+            .unwrap_or(&8);
+        let alpha_ref = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ALPHAREF)
+            .unwrap_or(&0);
 
         let surfs = state().surf.borrow();
         let rt_surf = surfs.get(&rt_surface_key).cloned();
         let tex_surf = surfs.get(&tex).cloned();
         drop(surfs);
+
+        // Classify the texture's channel masks so alpha-bearing formats
+        // decode properly instead of being read as opaque 565.
+        let tex_fmt = tex_surf
+            .as_ref()
+            .map(|s| {
+                let pf = &s.borrow().pixel_format;
+                if pf.dwRGBAlphaBitMask == 0x8000 && pf.dwRBitMask == 0x7c00 {
+                    TEXFMT_A1R5G5B5
+                } else if pf.dwRGBAlphaBitMask == 0xf000 && pf.dwRBitMask == 0x0f00 {
+                    TEXFMT_A4R4G4B4
+                } else {
+                    TEXFMT_RGB565
+                }
+            })
+            .unwrap_or(TEXFMT_RGB565);
 
         let Some(rt_surf) = rt_surf else {
             log::debug!(
@@ -2199,6 +2273,7 @@ fn rasterize(
             tex_width: tex_w,
             tex_height: tex_h,
             tex_bpp,
+            tex_fmt,
             tex_mips,
             zbuf_addr,
             cull,
@@ -2208,6 +2283,9 @@ fn rasterize(
             alpha_blend,
             src_blend,
             dst_blend,
+            alpha_test,
+            alpha_func,
+            alpha_ref,
         };
     };
 
@@ -2299,26 +2377,9 @@ fn rasterize(
             _ => {}
         }
 
-        // Pick the mip level by texel density: with `area` and the UV-space
-        // cross product both doubled areas, the factor cancels and
-        // 0.5·log2(texels/pixels) is the level index.
-        let (tex_addr, tex_w, tex_h) = if t.tex_addr != 0 && !t.tex_mips.is_empty() {
-            let tex_area = ((b.u - a.u) * (c.v - a.v) - (c.u - a.u) * (b.v - a.v)).abs()
-                * t.tex_width as f32
-                * t.tex_height as f32;
-            let lvl = (0.5 * (tex_area / area.abs()).log2()).round().max(0.0) as usize;
-            if lvl == 0 {
-                (t.tex_addr, t.tex_width, t.tex_height)
-            } else {
-                t.tex_mips
-                    .get(lvl - 1)
-                    .copied()
-                    .or_else(|| t.tex_mips.last().copied())
-                    .unwrap()
-            }
-        } else {
-            (t.tex_addr, t.tex_width, t.tex_height)
-        };
+        // With mips available, λ = log2(max texel-space UV derivative) picks
+        // the level per pixel, evaluated below in the pixel loop.
+        let base_level = (t.tex_addr, t.tex_width, t.tex_height);
 
         // Compute the 2D bounding box, clamped to the render target.
         let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
@@ -2394,21 +2455,9 @@ fn rasterize(
                 }
                 entered = true;
 
-                // Depth is linear in screen space for pre-transformed verts.
-                if zbuf_addr != 0 {
-                    let z = z_to_u16(alpha * a.z + beta * b.z + gamma * c.z);
-                    let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
-                    if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
-                        continue;
-                    }
-                    if t.zwrite != 0 {
-                        ctx.memory.write::<u16>(zaddr, z);
-                    }
-                }
-
                 // Perspective-correct texture coordinate interpolation.
                 let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
-                let persp = tex_addr != 0 && w_sum != 0.0;
+                let persp = t.tex_addr != 0 && w_sum != 0.0;
                 let u = if persp {
                     (alpha * a.u_w + beta * b.u_w + gamma * c.u_w) / w_sum
                 } else {
@@ -2420,9 +2469,60 @@ fn rasterize(
                     alpha * a.v + beta * b.v + gamma * c.v
                 };
 
-                let color = if tex_addr != 0 {
-                    sample_565(&ctx.memory, tex_addr, tex_w, tex_h, u, v)
-                        .unwrap_or(argb_to_565(0xff_00_00_00))
+                // Source color and alpha. The default MODULATE stage
+                // multiplies the texture by the interpolated vertex diffuse;
+                // 565 textures have no texel alpha so theirs is the diffuse
+                // alpha alone.
+                let diff_a = alpha * ((a.diffuse >> 24) & 0xff) as f32
+                    + beta * ((b.diffuse >> 24) & 0xff) as f32
+                    + gamma * ((c.diffuse >> 24) & 0xff) as f32;
+                let (color, sa) = if t.tex_addr != 0 {
+                    let (taddr, tw, th) = if t.tex_mips.is_empty() {
+                        base_level
+                    } else {
+                        // d(uv)/dx and d(uv)/dy: re-evaluate the barycentrics
+                        // one pixel right and one down (w0/w1 were already
+                        // stepped in x, so step them back for the y probe).
+                        let alpha2 = w0 / area;
+                        let beta2 = w1 / area;
+                        let alpha3 = (w0 - dw0dx + dw0dy) / area;
+                        let beta3 = (w1 - dw1dx + dw1dy) / area;
+                        let uv_at = |al: f32, be: f32| {
+                            let ga = 1.0 - al - be;
+                            if persp {
+                                let w = al * a.w + be * b.w + ga * c.w;
+                                (
+                                    (al * a.u_w + be * b.u_w + ga * c.u_w) / w,
+                                    (al * a.v_w + be * b.v_w + ga * c.v_w) / w,
+                                )
+                            } else {
+                                (
+                                    al * a.u + be * b.u + ga * c.u,
+                                    al * a.v + be * b.v + ga * c.v,
+                                )
+                            }
+                        };
+                        let (u2, v2) = uv_at(alpha2, beta2);
+                        let (u3, v3) = uv_at(alpha3, beta3);
+                        let rho = ((u2 - u) * t.tex_width as f32)
+                            .abs()
+                            .max(((v2 - v) * t.tex_height as f32).abs())
+                            .max(((u3 - u) * t.tex_width as f32).abs())
+                            .max(((v3 - v) * t.tex_height as f32).abs());
+                        let lvl = rho.max(1e-9).log2().round().max(0.0) as usize;
+                        if lvl == 0 {
+                            base_level
+                        } else {
+                            t.tex_mips
+                                .get(lvl - 1)
+                                .copied()
+                                .or_else(|| t.tex_mips.last().copied())
+                                .unwrap_or(base_level)
+                        }
+                    };
+                    let (c, ta) = sample_texel(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
+                        .unwrap_or((argb_to_565(0xff_00_00_00), 255));
+                    (c, ta as f32 * diff_a / 255.0)
                 } else {
                     let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32
                         + beta * ((b.diffuse >> 16) & 0xff) as f32
@@ -2438,17 +2538,31 @@ fn rasterize(
                         + beta * ((b.diffuse) & 0xff) as f32
                         + gamma * ((c.diffuse) & 0xff) as f32) as u32)
                         .min(255);
-                    ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
+                    (
+                        ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3),
+                        diff_a,
+                    )
                 };
+
+                // An alpha-tested-out fragment leaves color and depth alone.
+                if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u16, t.alpha_ref as u16) {
+                    continue;
+                }
+
+                // Depth is linear in screen space for pre-transformed verts.
+                if zbuf_addr != 0 {
+                    let z = z_to_u16(alpha * a.z + beta * b.z + gamma * c.z);
+                    let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
+                    if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
+                        continue;
+                    }
+                    if t.zwrite != 0 {
+                        ctx.memory.write::<u16>(zaddr, z);
+                    }
+                }
 
                 let pixel_addr = t.rt_addr + py as u32 * stride + px as u32 * 2;
                 let color = if t.alpha_blend != 0 {
-                    // 565 textures have no alpha channel, so under the
-                    // default MODULATE texture stage the pixel alpha is the
-                    // interpolated vertex diffuse alpha.
-                    let sa = alpha * ((a.diffuse >> 24) & 0xff) as f32
-                        + beta * ((b.diffuse >> 24) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 24) & 0xff) as f32;
                     let dst = ctx.memory.read::<u16>(pixel_addr);
                     blend_565(dst, color, sa, t.src_blend, t.dst_blend)
                 } else {

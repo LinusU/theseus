@@ -30,6 +30,7 @@ struct SurfaceParams {
     height: u32,
     bytes_per_pixel: u32,
     caps: DDSCAPS2,
+    pixel_format: DDPIXELFORMAT,
 }
 
 impl DirectDraw {
@@ -79,6 +80,27 @@ impl DirectDraw {
             DDSCAPS2::default()
         };
 
+        // Keep the requested pixel format so the rasterizer can decode
+        // alpha-bearing textures (1555/4444) instead of assuming 565.
+        let pixel_format = if desc.dwFlags.contains(DDSD::PIXELFORMAT)
+            && desc.ddpfPixelFormat.dwFlags & 0x40 != 0
+        // DDPF_RGB
+        {
+            desc.ddpfPixelFormat.clone()
+        } else {
+            // Unspecified formats take the display format (565 here).
+            DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: 0x40,
+                dwFourCC: 0,
+                dwRGBBitCount: bytes_per_pixel * 8,
+                dwRBitMask: 0xF800,
+                dwGBitMask: 0x07E0,
+                dwBBitMask: 0x001F,
+                dwRGBAlphaBitMask: 0,
+            }
+        };
+
         let surface = self.create_one_surface(
             new_pointer(),
             &SurfaceParams {
@@ -87,6 +109,7 @@ impl DirectDraw {
                 height,
                 bytes_per_pixel,
                 caps,
+                pixel_format: pixel_format.clone(),
             },
         );
 
@@ -118,6 +141,7 @@ impl DirectDraw {
                     height,
                     bytes_per_pixel,
                     caps: back_caps,
+                    pixel_format: pixel_format.clone(),
                 },
             );
             back.borrow_mut().primary.replace(surface.clone());
@@ -145,6 +169,7 @@ impl DirectDraw {
                         height: h,
                         bytes_per_pixel,
                         caps,
+                        pixel_format: pixel_format.clone(),
                     },
                 );
                 parent.borrow_mut().attachments.push(level.clone());
@@ -178,6 +203,7 @@ impl DirectDraw {
             bytes_per_pixel: params.bytes_per_pixel,
             target,
             caps: params.caps,
+            pixel_format: params.pixel_format.clone(),
             primary: Default::default(),
             attached: Default::default(),
             attachments: Vec::new(),
@@ -245,6 +271,10 @@ pub struct Surface {
 
     /// The DDSCAPS2 the surface was created with, reported by GetCaps.
     pub caps: DDSCAPS2,
+
+    /// The requested pixel format — the rasterizer needs the channel masks
+    /// to decode 1555/4444 textures instead of assuming 565.
+    pub pixel_format: DDPIXELFORMAT,
 
     /// The IDirectDrawClipper interface pointer attached through SetClipper.
     /// Clipper objects are not modeled (they only affect windowed-mode blits),
