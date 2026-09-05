@@ -181,6 +181,28 @@ impl<'a> CodeGen<'a> {
                 self.line("}");
                 self.line("}");
             }
+            // UD2: the guaranteed-#UD instruction; MSVC emits it for
+            // unreachable paths.
+            Ud2 => self.line(format!("unhandled_interrupt(0x6, {:#x});", instr.ip32())),
+            // Prefetches are pure hints.
+            Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 => {}
+            Cmpxchg8b => {
+                // Compare EDX:EAX with m64; on equal write ECX:EBX, else load
+                // EDX:EAX from memory. Only ZF is affected.
+                let addr = self.gen_addr(instr);
+                self.line(format!(
+                    "let cmpxchg8b_old = ctx.memory.read::<u64>({addr});"
+                ));
+                self.line("let cmpxchg8b_eq = ctx.cpu.regs.get_edx_eax() == cmpxchg8b_old;");
+                self.line("ctx.cpu.flags.set(Flags::ZF, cmpxchg8b_eq);");
+                self.line("if cmpxchg8b_eq {");
+                self.line(format!(
+                    "ctx.memory.write::<u64>({addr}, ((ctx.cpu.regs.ecx as u64) << 32) | (ctx.cpu.regs.ebx as u64));"
+                ));
+                self.line("} else {");
+                self.line("ctx.cpu.regs.set_edx_eax(cmpxchg8b_old);");
+                self.line("}");
+            }
             Xgetbv => {
                 self.line("let (xgetbv_eax, xgetbv_edx) = xgetbv(ctx.cpu.regs.ecx);");
                 self.line("ctx.cpu.regs.eax = xgetbv_eax;");

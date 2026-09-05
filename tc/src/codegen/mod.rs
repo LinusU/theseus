@@ -1433,6 +1433,47 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_ud2_prefetch_cmpxchg8b() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (&[0x0f, 0x0b][..], "unhandled_interrupt(0x6, 0x0);"), // ud2
+            (&[0x0f, 0x18, 0x00], "// 00000000 prefetchnta"),      // prefetchnta [eax]
+            // cmpxchg8b qword ptr [eax]
+            (
+                &[0x0f, 0xc7, 0x08],
+                "let cmpxchg8b_old = ctx.memory.read::<u64>(ctx.cpu.regs.eax);",
+            ),
+            (
+                &[0x0f, 0xc7, 0x08],
+                "let cmpxchg8b_eq = ctx.cpu.regs.get_edx_eax() == cmpxchg8b_old;",
+            ),
+            (
+                &[0x0f, 0xc7, 0x08],
+                "ctx.cpu.regs.set_edx_eax(cmpxchg8b_old);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
