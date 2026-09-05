@@ -72,11 +72,17 @@ pub fn CreateFontA(
     }))
 }
 
+/// The emulated display is non-palettized, so a palette is only a
+/// placeholder handle; its entries are never realized.
+#[derive(Debug, Clone, Copy)]
+pub struct Palette;
+
 pub enum Object {
     Bitmap(Arc<Bitmap>),
     Brush(Brush),
     Pen(Pen),
     Font(Font),
+    Palette(Palette),
 }
 
 impl Object {
@@ -165,7 +171,7 @@ pub fn GetStockObject(_ctx: &mut Context, i: GetStockObjectArg) -> HGDIOBJ {
         // documented defaults (white brush, black pen).
         DC_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
         DC_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
-        DEFAULT_PALETTE => todo!("palette objects are not modeled"),
+        DEFAULT_PALETTE => Object::Palette(Palette),
     };
     gdi32::lock().objects.add(object)
 }
@@ -200,6 +206,10 @@ pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
             dc.font = (h, font.clone());
             prev
         }
+        Object::Palette(_) => {
+            // Palettes are selected with SelectPalette, not SelectObject.
+            HGDIOBJ::null()
+        }
     }
 }
 
@@ -222,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn stock_objects_cover_every_non_palette_variant() {
+    fn stock_objects_cover_every_variant() {
         use GetStockObjectArg::*;
         let mut ctx = context();
         for i in [
@@ -244,6 +254,7 @@ mod tests {
             DEFAULT_GUI_FONT,
             DC_BRUSH,
             DC_PEN,
+            DEFAULT_PALETTE,
         ] {
             assert!(!GetStockObject(&mut ctx, i).is_null());
         }
