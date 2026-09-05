@@ -1094,3 +1094,43 @@ pub fn ucomisd_update_flags(flags: crate::Flags, a: [u32; 2], b: [u32; 2]) -> cr
 pub fn movmskpd(src: [u32; 4]) -> u32 {
     ((src[1] >> 31) & 1) | (((src[3] >> 31) & 1) << 1)
 }
+
+pub fn pmovmskb_xmm(src: [u32; 4]) -> u32 {
+    let bytes = to_bytes(src);
+    (0..16).fold(0u32, |mask, i| mask | (((bytes[i] >> 7) as u32) << i))
+}
+
+pub fn pextrw_xmm(src: [u32; 4], sel: u8) -> u32 {
+    let words = to_words(src);
+    words[(sel & 7) as usize] as u32
+}
+
+pub fn pinsrw_xmm(dst: [u32; 4], src: u16, sel: u8) -> [u32; 4] {
+    let mut words = to_words(dst);
+    words[(sel & 7) as usize] = src;
+    from_words(words)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pmovmskb_pextrw_pinsrw_move_xmm_word_lanes() {
+        let xmm = [0x0004_0003, 0x0002_0001, 0x0008_0007, 0x0006_0005];
+        assert_eq!(pmovmskb_xmm([0xffff_ffff; 4]), 0xffff);
+        assert_eq!(pmovmskb_xmm([0; 4]), 0);
+        assert_eq!(pmovmskb_xmm([0x0000_0080, 0, 0x8000_0000, 0]), 0x0801);
+        assert_eq!(pextrw_xmm(xmm, 0), 3);
+        assert_eq!(pextrw_xmm(xmm, 1), 4);
+        assert_eq!(pextrw_xmm(xmm, 7), 6);
+        assert_eq!(
+            pinsrw_xmm(xmm, 0xabcd, 0),
+            [0x0004_abcd, 0x0002_0001, 0x0008_0007, 0x0006_0005]
+        );
+        assert_eq!(
+            pinsrw_xmm(xmm, 0xabcd, 7),
+            [0x0004_0003, 0x0002_0001, 0x0008_0007, 0xabcd_0005]
+        );
+    }
+}

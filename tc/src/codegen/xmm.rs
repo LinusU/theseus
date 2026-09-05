@@ -498,6 +498,35 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(instr, 0, format!("movmskpd({src})")));
             }
 
+            // Extract a 16-bit mask of the sign bits of each byte, or extract
+            // or insert a single word lane in a 128-bit XMM register.
+            Pmovmskb => {
+                let src = self.xmm_get(instr, 1);
+                self.line(self.set_op(instr, 0, format!("pmovmskb_xmm({src})")));
+            }
+            Pextrw => {
+                let src = self.xmm_get(instr, 1);
+                let sel = self.get_op(instr, 2);
+                let expr = format!("pextrw_xmm({src}, {sel})");
+                if matches!(instr.op_kind(0), iced_x86::OpKind::Memory) {
+                    self.line(self.set_op(instr, 0, format!("({expr} as u16)")));
+                } else {
+                    self.line(self.set_op(instr, 0, expr));
+                }
+            }
+            Pinsrw => {
+                let src = self.get_op(instr, 1);
+                let sel = self.get_op(instr, 2);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "pinsrw_xmm({}, {src} as u16, {sel})",
+                        self.xmm_get(instr, 0)
+                    ),
+                ));
+            }
+
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.

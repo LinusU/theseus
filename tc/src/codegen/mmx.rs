@@ -133,6 +133,15 @@ impl<'a> CodeGen<'a> {
         {
             return false;
         }
+        // PMOVMSKB/PEXTRW read an MMX source in their MMX form and an XMM
+        // source in their SSE2 form. PINSRW writes an MMX destination in its
+        // MMX form and an XMM destination in its SSE2 form.
+        if matches!(instr.mnemonic(), Pmovmskb | Pextrw) && !is_mmx_reg(instr.op_register(1)) {
+            return false;
+        }
+        if matches!(instr.mnemonic(), Pinsrw) && !is_mmx_reg(instr.op_register(0)) {
+            return false;
+        }
         match instr.mnemonic() {
             Movd => self.line(self.mmx_set_32(instr, 0, self.mmx_get_32(instr, 1))),
             // MOVNTQ is a non-temporal MMX store; in the flat memory model it

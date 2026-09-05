@@ -4009,6 +4009,46 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_pmovmskb_pextrw_pinsrw() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pmovmskb eax, xmm1
+            (
+                &[0x66, 0x0f, 0xd7, 0xc1][..],
+                "ctx.cpu.regs.eax = pmovmskb_xmm(ctx.cpu.xmm.xmm1);",
+            ),
+            // pextrw eax, xmm1, 2
+            (
+                &[0x66, 0x0f, 0xc5, 0xc1, 0x02],
+                "ctx.cpu.regs.eax = pextrw_xmm(ctx.cpu.xmm.xmm1, 0x2u8);",
+            ),
+            // pinsrw xmm0, ecx, 2
+            (
+                &[0x66, 0x0f, 0xc4, 0xc1, 0x02],
+                "ctx.cpu.xmm.xmm0 = pinsrw_xmm(ctx.cpu.xmm.xmm0, ctx.cpu.regs.ecx as u16, 0x2u8);",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
