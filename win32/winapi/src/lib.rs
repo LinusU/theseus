@@ -18,6 +18,7 @@ pub mod kernel32;
 mod locked_state;
 pub mod msacm32;
 pub mod msvcrt;
+pub mod msvfw32;
 pub mod ole32;
 mod point;
 mod ptr;
@@ -25,6 +26,7 @@ mod rect;
 pub mod shell32;
 pub mod trace;
 pub mod user32;
+pub mod vtuneapi;
 pub mod winmm;
 
 /// Functions a program may resolve at runtime with LoadLibrary/GetProcAddress
@@ -69,11 +71,7 @@ pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[
         "DirectDrawEnumerateExA",
         ddraw::DirectDrawEnumerateExA_stdcall,
     ),
-    (
-        "blade",
-        "DirectDrawCreate",
-        ddraw::DirectDrawCreate_stdcall,
-    ),
+    ("blade", "DirectDrawCreate", ddraw::DirectDrawCreate_stdcall),
     (
         "blade",
         "DirectDrawCreateEx",
@@ -105,6 +103,59 @@ pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[
         ddraw::DirectDrawEnumerateExW_stdcall,
     ),
     ("blade", "GetDXVB", ddraw::GetDXVB_stdcall),
+    ("msvfw32", "MCIWndCreate", msvfw32::MCIWndCreate_stdcall),
+    ("msvfw32", "MCIWndCreateA", msvfw32::MCIWndCreate_stdcall),
+    ("msvfw32", "MCIWndCreateW", msvfw32::MCIWndCreate_stdcall),
+    ("msvfw32", "ICOpen", msvfw32::ICOpen_stdcall),
+    ("msvfw32", "ICClose", msvfw32::ICClose_stdcall),
+    (
+        "msvfw32",
+        "ICImageDecompress",
+        msvfw32::ICImageDecompress_stdcall,
+    ),
+    (
+        "msvfw32",
+        "ICImageCompress",
+        msvfw32::ICImageCompress_stdcall,
+    ),
+    ("msvfw32", "ICGetInfo", msvfw32::ICGetInfo_stdcall),
+    ("msvfw32", "ICInfo", msvfw32::ICInfo_stdcall),
+    ("msvfw32", "ICLocate", msvfw32::ICLocate_stdcall),
+    (
+        "msvfw32",
+        "ICGetDisplayFormat",
+        msvfw32::ICGetDisplayFormat_stdcall,
+    ),
+    ("msvfw32", "ICSendMessage", msvfw32::ICSendMessage_stdcall),
+    ("msvfw32", "ICOpenFunction", msvfw32::ICOpenFunction_stdcall),
+    ("vtuneapi", "VTPause", vtuneapi::VTPause_stdcall),
+    ("vtuneapi", "VTResume", vtuneapi::VTResume_stdcall),
+    (
+        "vtuneapi",
+        "VTPauseSampling",
+        vtuneapi::VTPauseSampling_stdcall,
+    ),
+    (
+        "vtuneapi",
+        "VTResumeSampling",
+        vtuneapi::VTResumeSampling_stdcall,
+    ),
+    ("vtuneapi", "CMPause", vtuneapi::CMPause_stdcall),
+    ("vtuneapi", "CMResume", vtuneapi::CMResume_stdcall),
+    ("vtuneapi", "VtPause", vtuneapi::VtPause_stdcall),
+    ("vtuneapi", "VtResume", vtuneapi::VtResume_stdcall),
+    (
+        "vtuneapi",
+        "VtPauseSampling",
+        vtuneapi::VtPauseSampling_stdcall,
+    ),
+    (
+        "vtuneapi",
+        "VtResumeSampling",
+        vtuneapi::VtResumeSampling_stdcall,
+    ),
+    ("vtuneapi", "CmPause", vtuneapi::CmPause_stdcall),
+    ("vtuneapi", "CmResume", vtuneapi::CmResume_stdcall),
 ];
 
 pub use dllexport::{ABIReturn, FromABIParam};
