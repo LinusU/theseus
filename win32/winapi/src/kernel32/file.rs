@@ -124,6 +124,9 @@ pub fn CreateDirectoryA(
     let path = resolve_path(&name);
     match host::fs::create_dir(&path) {
         Ok(()) => true,
+        // Callers probe-create their save dirs every run; a pre-existing
+        // directory is the documented failure case, not a problem.
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => false,
         Err(err) => {
             log::warn!("CreateDirectoryA({name:?} => {path:?}): {err}");
             false

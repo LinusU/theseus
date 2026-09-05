@@ -316,8 +316,20 @@ pub fn MoveWindow(
 }
 
 #[win32_derive::dllexport]
-pub fn UpdateWindow(_ctx: &mut Context, _hWnd: HWND) -> bool {
-    stub!(true)
+pub fn UpdateWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    // A dirty window gets a WM_PAINT from the next queue pump, which is
+    // what UpdateWindow's synchronous paint achieves here.
+    let state = state();
+    let window = state.window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    window.dirty = true;
+    true
 }
 
 #[win32_derive::dllexport]
