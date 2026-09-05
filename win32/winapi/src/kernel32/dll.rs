@@ -1,6 +1,6 @@
 use runtime::Context;
 
-use crate::{Ptr, kernel32::lock, stub};
+use crate::{Ptr, kernel32::lock};
 
 use super::state::LoadedModule;
 
@@ -121,15 +121,26 @@ pub fn register_export(dll: &str, func: &str, addr: u32) {
 
 #[win32_derive::dllexport]
 pub fn GetModuleFileNameA(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _hModule: HMODULE,
-    _lpFilename: Ptr<u8>,
-    _nSize: u32,
+    lpFilename: Ptr<u8>,
+    nSize: u32,
 ) -> u32 {
-    /*
-    get_module_file_name(sys, hModule, &mut EncoderAnsi::new(&mut filename))
-    */
-    stub!(0)
+    // The module's path isn't recorded, but its name is the first token of
+    // the command line the process was launched with.
+    let cmdline = ctx.memory.read_str(lock().command_line.command_line_8);
+    let name = cmdline
+        .split(|ch| ch == ' ')
+        .next()
+        .unwrap_or(cmdline)
+        .to_owned();
+    if nSize == 0 || lpFilename.addr == 0 {
+        return 0;
+    }
+    let copy = name.len().min(nSize as usize - 1);
+    ctx.memory[lpFilename.addr..][..copy].copy_from_slice(&name.as_bytes()[..copy]);
+    ctx.memory.write::<u8>(lpFilename.addr + copy as u32, 0);
+    copy as u32
 }
 
 #[win32_derive::dllexport]

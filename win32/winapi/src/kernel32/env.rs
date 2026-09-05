@@ -1,6 +1,6 @@
 use runtime::Context;
 
-use crate::{Ptr, kernel32::lock, stub};
+use crate::{Ptr, kernel32::lock};
 
 #[win32_derive::dllexport]
 pub fn GetEnvironmentStrings(_ctx: &mut Context) -> u32 {
@@ -29,7 +29,7 @@ pub fn GetEnvironmentStrings(_ctx: &mut Context) -> u32 {
 #[win32_derive::dllexport]
 pub fn GetEnvironmentStringsW(_ctx: &mut Context) -> u32 {
     // Returning 0 pushes the CRT towards the ANSI fallback (GetEnvironmentStrings).
-    stub!(0)
+    0
 }
 
 #[win32_derive::dllexport]
@@ -39,17 +39,18 @@ pub fn GetEnvironmentVariableA(
     _lpBuffer: Ptr<u8>,
     _nSize: u32,
 ) -> u32 {
-    stub!(lock().environ.get())
+    // The process environment is an empty block, so no variable is ever set.
+    0
 }
 
 #[win32_derive::dllexport]
 pub fn FreeEnvironmentStringsA(_ctx: &mut Context, _penv: Ptr<u8>) -> bool {
-    //sys.memory().process_heap.free(sys.mem(), penv);
-    stub!(true) // success
+    // The block lives in the process data area, not the process heap.
+    true
 }
 
 #[win32_derive::dllexport]
 pub fn FreeEnvironmentStringsW(_ctx: &mut Context, _penv: Ptr<u16>) -> bool {
-    //sys.memory().process_heap.free(sys.mem(), penv);
-    stub!(true) // success
+    // The block lives in the process data area, not the process heap.
+    true
 }

@@ -139,12 +139,13 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
 pub fn mciSendCommandA(
     _ctx: &mut Context,
     _mciId: u32,
-    _uMsg: u32,
+    uMsg: u32,
     _dwParam1: u32,
     _dwParam2: u32,
 ) -> u32 {
     // CD audio etc.; pretend success and play nothing.
-    crate::stub!(0)
+    log::debug!("mciSendCommandA(msg={uMsg:#x}): no-op");
+    0
 }
 
 #[win32_derive::dllexport]
