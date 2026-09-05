@@ -110,8 +110,8 @@ impl<'a> CodeGen<'a> {
         match instr.mnemonic() {
             // Aligned and unaligned 128-bit moves are identical in the emulated
             // flat memory model; both copy 16 bytes without any alignment check.
-            // MOVNTPS/MOVNTPD are also pure stores in this model.
-            Movups | Movaps | Movntps | Movupd | Movapd | Movntpd => {
+            // MOVNTPS/MOVNTPD/MOVNTDQ are also pure stores in this model.
+            Movups | Movaps | Movntps | Movupd | Movapd | Movntpd | Movdqu | Movdqa | Movntdq => {
                 self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1)))
             }
 
