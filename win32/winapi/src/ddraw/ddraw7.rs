@@ -9,7 +9,7 @@ use crate::{
     gdi32,
     gdi32::HDC,
     heap::Heap,
-    kernel32, stub,
+    kernel32,
     user32::HWND,
 };
 
@@ -436,15 +436,20 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn SetDisplayMode(
-        _ctx: &mut Context,
-        _this: u32,
-        _width: u32,
-        _height: u32,
-        _bpp: u32,
+        ctx: &mut Context,
+        this: u32,
+        width: u32,
+        height: u32,
+        bpp: u32,
         _refresh: u32,
         _flags: u32,
     ) -> DD {
-        stub!(DD::OK)
+        let mut ddraw = state().get_ddraw(this);
+        if let Some(window) = &ddraw.window {
+            window.borrow_mut().resize(ctx, width, height);
+        }
+        ddraw.bytes_per_pixel = bpp.div_ceil(8);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -998,7 +1003,7 @@ pub mod IDirectDrawSurface7 {
             pixels,
         ));
         ctx.memory.write(lphDC, dc.to_raw());
-        stub!(DD::OK)
+        DD::OK
     }
 
     #[win32_derive::dllexport]

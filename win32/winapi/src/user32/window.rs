@@ -350,7 +350,9 @@ pub fn DefWindowProcW(
 
 #[win32_derive::dllexport]
 pub fn SetFocus(_ctx: &mut Context, _hWnd: HWND) -> HWND {
-    stub!(HWND::null())
+    // Focus is not tracked; with a single window there was nothing focused
+    // before, so null is the correct previous-focus value.
+    HWND::null()
 }
 
 #[repr(C)]
