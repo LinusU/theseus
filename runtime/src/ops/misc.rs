@@ -26,26 +26,56 @@ impl Context {
     }
 
     pub fn pushad(&mut self) {
-        let esp = self.cpu.regs.esp;
-        self.push32(self.cpu.regs.eax);
-        self.push32(self.cpu.regs.ecx);
-        self.push32(self.cpu.regs.edx);
-        self.push32(self.cpu.regs.ebx);
-        self.push32(esp);
-        self.push32(self.cpu.regs.ebp);
-        self.push32(self.cpu.regs.esi);
-        self.push32(self.cpu.regs.edi);
+        if self.cpu.real_mode {
+            let sp = self.cpu.regs.get_sp();
+            self.push16(self.cpu.regs.get_ax());
+            self.push16(self.cpu.regs.get_cx());
+            self.push16(self.cpu.regs.get_dx());
+            self.push16(self.cpu.regs.get_bx());
+            self.push16(sp);
+            self.push16(self.cpu.regs.get_bp());
+            self.push16(self.cpu.regs.get_si());
+            self.push16(self.cpu.regs.get_di());
+        } else {
+            let esp = self.cpu.regs.esp;
+            self.push32(self.cpu.regs.eax);
+            self.push32(self.cpu.regs.ecx);
+            self.push32(self.cpu.regs.edx);
+            self.push32(self.cpu.regs.ebx);
+            self.push32(esp);
+            self.push32(self.cpu.regs.ebp);
+            self.push32(self.cpu.regs.esi);
+            self.push32(self.cpu.regs.edi);
+        }
     }
 
     pub fn popad(&mut self) {
-        self.cpu.regs.edi = self.pop32();
-        self.cpu.regs.esi = self.pop32();
-        self.cpu.regs.ebp = self.pop32();
-        self.pop32();
-        self.cpu.regs.ebx = self.pop32();
-        self.cpu.regs.edx = self.pop32();
-        self.cpu.regs.ecx = self.pop32();
-        self.cpu.regs.eax = self.pop32();
+        if self.cpu.real_mode {
+            let di = self.pop16();
+            let si = self.pop16();
+            let bp = self.pop16();
+            self.pop16();
+            let bx = self.pop16();
+            let dx = self.pop16();
+            let cx = self.pop16();
+            let ax = self.pop16();
+            self.cpu.regs.set_di(di);
+            self.cpu.regs.set_si(si);
+            self.cpu.regs.set_bp(bp);
+            self.cpu.regs.set_bx(bx);
+            self.cpu.regs.set_dx(dx);
+            self.cpu.regs.set_cx(cx);
+            self.cpu.regs.set_ax(ax);
+        } else {
+            self.cpu.regs.edi = self.pop32();
+            self.cpu.regs.esi = self.pop32();
+            self.cpu.regs.ebp = self.pop32();
+            self.pop32();
+            self.cpu.regs.ebx = self.pop32();
+            self.cpu.regs.edx = self.pop32();
+            self.cpu.regs.ecx = self.pop32();
+            self.cpu.regs.eax = self.pop32();
+        }
     }
 
     pub fn enter(&mut self, bytes: u16, nesting: u8) {
@@ -207,5 +237,39 @@ mod tests {
         ctx.leave();
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
         assert_eq!(ctx.cpu.regs.ebp, 0xfeed_0200);
+    }
+
+    #[test]
+    fn real_mode_pushad_popad_use_16_bit_registers() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0xabcd_0100;
+        ctx.cpu.regs.eax = 0x1111_0001;
+        ctx.cpu.regs.ecx = 0x2222_0002;
+        ctx.cpu.regs.edx = 0x3333_0003;
+        ctx.cpu.regs.ebx = 0x4444_0004;
+        ctx.cpu.regs.ebp = 0x5555_0005;
+        ctx.cpu.regs.esi = 0x6666_0006;
+        ctx.cpu.regs.edi = 0x7777_0007;
+
+        ctx.pushad();
+        ctx.cpu.regs.eax = 0;
+        ctx.cpu.regs.ecx = 0;
+        ctx.cpu.regs.edx = 0;
+        ctx.cpu.regs.ebx = 0;
+        ctx.cpu.regs.ebp = 0;
+        ctx.cpu.regs.esi = 0;
+        ctx.cpu.regs.edi = 0;
+        ctx.popad();
+
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
+        assert_eq!(ctx.cpu.regs.eax, 0x0000_0001);
+        assert_eq!(ctx.cpu.regs.ecx, 0x0000_0002);
+        assert_eq!(ctx.cpu.regs.edx, 0x0000_0003);
+        assert_eq!(ctx.cpu.regs.ebx, 0x0000_0004);
+        assert_eq!(ctx.cpu.regs.ebp, 0x0000_0005);
+        assert_eq!(ctx.cpu.regs.esi, 0x0000_0006);
+        assert_eq!(ctx.cpu.regs.edi, 0x0000_0007);
     }
 }
