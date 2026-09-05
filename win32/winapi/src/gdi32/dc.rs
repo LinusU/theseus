@@ -257,7 +257,9 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
     let opaque = dc.bk_mode == 2;
     let scale_x = (size.cx / 5).clamp(1, 64);
     let scale_y = (size.cy / 7).clamp(1, 64);
-    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
+        return false;
+    };
     for (index, character) in string.into_iter().enumerate() {
         let origin_x = x.saturating_add(size.cx.saturating_mul(index as i32));
         if opaque {
@@ -309,7 +311,9 @@ pub fn Rectangle(
     }
     let fill = dc.brush.1.0.map(|c| c.to_pixel());
     let border = dc.pen.1.0.map(|c| c.to_pixel());
-    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
+        return false;
+    };
     if let Some(fill) = fill {
         fill_pixels(pixels, &bitmap, left, top, width, height, fill);
     }
@@ -435,7 +439,9 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
     let sy = if y0 < y { 1 } else { -1 };
     let mut err = dx + dy;
 
-    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
+        return false;
+    };
     loop {
         if x0 >= 0 && y0 >= 0 && (x0 as u32) < width && (y0 as u32) < height {
             let i = (y0 as u32 * stride + x0 as u32 * 4) as usize;
@@ -502,7 +508,9 @@ pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) ->
     {
         return COLORREF(0xFFFF_FFFF); // CLR_INVALID
     }
-    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
+        return COLORREF(0xFFFF_FFFF); // CLR_INVALID
+    };
     let i = (y as u32 * bitmap.stride() + x as u32 * 4) as usize;
     pixels[i..][..4].copy_from_slice(&color.to_pixel());
     color
@@ -510,7 +518,21 @@ pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{Font, SIZE, text_extent};
+    use super::{COLORREF, Font, SetPixel, SIZE, text_extent};
+    use crate::gdi32;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
 
     #[test]
     fn text_extent_uses_requested_font_metrics() {
@@ -526,5 +548,15 @@ mod tests {
     #[test]
     fn text_extent_defaults_zero_metrics() {
         assert_eq!(text_extent(&Font::default(), 3), SIZE { cx: 24, cy: 16 });
+    }
+
+    #[test]
+    fn set_pixel_rejects_out_of_bounds_bitmap() {
+        let mut ctx = context();
+        // 2x2 bitmap at 0x3FFC needs 16 bytes, extending past 0x4000.
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3FFC);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        let result = SetPixel(&mut ctx, hdc, 0, 0, COLORREF::from_rgb(0, 0, 0));
+        assert_eq!(result.as_win32(), 0xFFFF_FFFF);
     }
 }

@@ -134,8 +134,8 @@ impl Bitmap {
         self.pixels as usize..self.pixels as usize + self.pixels_len()
     }
 
-    pub fn pixels_mut<'a>(&self, memory: &'a mut runtime::Memory) -> &'a mut [u8] {
-        &mut memory.bytes[self.pixels_range()]
+    pub fn pixels_mut<'a>(&self, memory: &'a mut runtime::Memory) -> Option<&'a mut [u8]> {
+        memory.bytes.get_mut(self.pixels_range())
     }
 
     /// A degenerate bitmap returned when a header can't be parsed: no pixels
