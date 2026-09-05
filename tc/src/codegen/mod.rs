@@ -2569,6 +2569,55 @@ mod tests {
     }
 
     #[test]
+    fn codegen_traps_privileged_system_instructions() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for bytes in [
+            &[0x0f, 0x02, 0xc0][..], // lar eax, eax
+            &[0x0f, 0x03, 0xc0],     // lsl eax, eax
+            &[0x0f, 0x00, 0xe0],     // verr ax
+            &[0x0f, 0x00, 0xe8],     // verw ax
+            &[0x0f, 0x00, 0xd0],     // lldt ax
+            &[0x0f, 0x00, 0xd8],     // ltr ax
+            &[0x0f, 0x01, 0xf0],     // lmsw ax
+            &[0x0f, 0x01, 0x11],     // lgdt [ecx]
+            &[0x0f, 0x01, 0x19],     // lidt [ecx]
+            &[0x0f, 0x01, 0x39],     // invlpg [ecx]
+            &[0x0f, 0x08],           // invd
+            &[0x0f, 0x09],           // wbinvd
+            &[0x0f, 0x06],           // clts
+            &[0x0f, 0x30],           // wrmsr
+            &[0x0f, 0x32],           // rdmsr
+            &[0x0f, 0x33],           // rdpmc
+            &[0x0f, 0xaa],           // rsm
+            &[0x0f, 0x01, 0xc8],     // monitor
+            &[0x0f, 0x01, 0xc9],     // mwait
+            &[0x0f, 0x34],           // sysenter
+            &[0x0f, 0x35],           // sysexit
+            &[0x0f, 0x01, 0xd1],     // xsetbv
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains("unhandled_interrupt(0xd, 0x0);"),
+                "wanted privileged fault for {} in {:?}",
+                instr.iced,
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_ins_outs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

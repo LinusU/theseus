@@ -399,6 +399,16 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // The remaining system instructions are privileged in Windows
+            // usermode, and on DOS they would need protected-mode machinery
+            // the machine cannot model. Emit an explicit #GP trap rather than
+            // silently dropping them.
+            Lar | Lsl | Verr | Verw | Lldt | Ltr | Lmsw | Lgdt | Lidt | Invlpg | Invd | Wbinvd
+            | Clts | Rdmsr | Wrmsr | Rdpmc | Rsm | Monitor | Mwait | Sysenter | Sysexit
+            | Swapgs | Xsetbv => {
+                self.line(format!("unhandled_interrupt(0xd, {:#x});", instr.ip32()));
+            }
+
             _ => return false,
         }
         true
