@@ -1,12 +1,15 @@
 use runtime::Context;
 
-use crate::{gdi32::HDC, stub};
+use crate::{HANDLE, gdi32::HDC};
 
 pub type HGDIOBJ = u32;
 
 #[win32_derive::dllexport]
-pub fn DeleteObject(_ctx: &mut Context, _ho: HGDIOBJ) -> bool {
-    stub!(true)
+pub fn DeleteObject(_ctx: &mut Context, ho: HGDIOBJ) -> bool {
+    crate::gdi32::lock()
+        .objects
+        .remove(HANDLE::from_raw(ho))
+        .is_some()
 }
 
 #[win32_derive::dllexport]

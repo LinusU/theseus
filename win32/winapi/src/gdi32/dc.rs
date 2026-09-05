@@ -3,9 +3,10 @@ use std::sync::Arc;
 use runtime::Context;
 
 use crate::{
-    HANDLE, POINT, Ptr,
-    gdi32::{self, Bitmap, Brush, COLORREF, Font, HBITMAP, HBRUSH, HGDIOBJ, HPEN, Pen, State},
-    stub,
+    HANDLE, Handles, POINT, Ptr,
+    gdi32::{
+        self, Bitmap, Brush, COLORREF, Font, HBITMAP, HBRUSH, HGDIOBJ, HPEN, Object, Pen, State,
+    },
 };
 
 pub type HDC = HANDLE;
@@ -13,7 +14,7 @@ pub type HDC = HANDLE;
 impl State {
     pub fn new_memory_dc(&mut self, bitmap: Bitmap) -> HDC {
         let (hbitmap, bitmap) = self.new_bitmap_handle(bitmap);
-        let dc = DC::new(hbitmap, bitmap);
+        let dc = DC::new(hbitmap, bitmap, &mut self.objects);
         self.dcs.add(dc)
     }
 
@@ -44,15 +45,18 @@ pub struct SIZE {
 }
 
 impl DC {
-    pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>) -> Self {
+    /// A fresh DC selects the stock objects Windows gives it (black pen,
+    /// white brush, system font), so SelectObject reports a real previous
+    /// handle rather than null.
+    pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>, objects: &mut Handles<Object>) -> Self {
+        let pen = Pen(Some(COLORREF::default()));
+        let brush = Brush(Some(COLORREF::from_rgb(0xff, 0xff, 0xff)));
+        let font = Font::default();
         DC {
             bitmap: (hbitmap, bitmap),
-            pen: (HPEN::null(), Pen(Some(COLORREF::default()))),
-            brush: (
-                HBRUSH::null(),
-                Brush(Some(COLORREF::from_rgb(0xff, 0xff, 0xff))),
-            ),
-            font: (HGDIOBJ::null(), Font::default()),
+            pen: (objects.add(Object::Pen(pen.clone())), pen),
+            brush: (objects.add(Object::Brush(brush.clone())), brush),
+            font: (objects.add(Object::Font(font.clone())), font),
             rop2: R2::COPYPEN,
             bk_mode: 2,
             text_color: COLORREF::default(),
@@ -89,8 +93,8 @@ pub fn CreateCompatibleDC(_ctx: &mut Context, hdc: HDC) -> HDC {
 }
 
 #[win32_derive::dllexport]
-pub fn DeleteDC(_ctx: &mut Context, _hdc: HDC) -> bool {
-    stub!(true)
+pub fn DeleteDC(_ctx: &mut Context, hdc: HDC) -> bool {
+    gdi32::lock().dcs.remove(hdc).is_some()
 }
 
 #[win32_derive::dllexport]

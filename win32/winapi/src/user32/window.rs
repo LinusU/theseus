@@ -526,8 +526,13 @@ pub fn EndPaint(ctx: &mut Context, _hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> bo
 #[win32_derive::dllexport]
 pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
     if hWnd.is_null() {
-        // desktop window
-        return stub!(HDC::null());
+        // A null HWND asks for a DC covering the whole screen; there is no
+        // desktop to draw on, so hand out a screen-sized memory DC.
+        let pixels = kernel32::lock()
+            .process_heap
+            .alloc(&mut ctx.memory, 640 * 480 * 4);
+        let bitmap = gdi32::Bitmap::new_simple(640, 480, pixels);
+        return gdi32::lock().new_memory_dc(bitmap);
     }
 
     let state = state();
@@ -539,7 +544,7 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
 
     let mut lock = gdi32::lock();
     let (hbitmap, bitmap) = lock.new_bitmap_handle(bitmap);
-    let dc = DC::new(hbitmap, bitmap);
+    let dc = DC::new(hbitmap, bitmap, &mut lock.objects);
     // dc.hwnd = Some(hWnd);
     lock.dcs.add(dc)
 }
