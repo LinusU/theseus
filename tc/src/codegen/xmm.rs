@@ -80,6 +80,14 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // Packed single-precision unary math. RSQRTPS and RCPPS are
+            // approximations on real hardware; the emulated host computes the
+            // full-precision values.
+            Sqrtps | Rsqrtps | Rcpps => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(instr, 0, format!("{func}({})", self.xmm_get(instr, 1))));
+            }
+
             _ => return false,
         }
         true
