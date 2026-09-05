@@ -503,10 +503,20 @@ pub fn wsprintfW(ctx: &mut Context) -> i32 {
     let fmt_addr = ctx.memory.read::<u32>(esp + 8);
     let fmt = ctx.memory.read_wstr(fmt_addr).as_slice().to_vec();
     let out = wsprintf_impl(ctx, &fmt, esp + 12, true);
-    for (j, unit) in out.iter().enumerate() {
-        ctx.memory.write::<u16>(dst + j as u32 * 2, *unit);
+    // wsprintf takes no size; a destination at the edge of emulated memory
+    // would panic the host, so write only what fits.
+    if let Some(buf) = ctx.memory.bytes.get_mut(dst as usize..) {
+        let mut chunks = buf.chunks_exact_mut(2);
+        // Keep a unit free for the terminator so a truncated result still
+        // reads as a string.
+        let spare = chunks.len().saturating_sub(1);
+        for (chunk, unit) in chunks.by_ref().zip(out.iter().take(spare)) {
+            chunk.copy_from_slice(&unit.to_le_bytes());
+        }
+        if let Some(chunk) = chunks.next() {
+            chunk.copy_from_slice(&[0, 0]);
+        }
     }
-    ctx.memory.write::<u16>(dst + out.len() as u32 * 2, 0);
     out.len() as i32
 }
 
@@ -526,8 +536,17 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     let out = wsprintf_impl(ctx, &fmt, esp + 12, false);
 
     let bytes: Vec<u8> = out.iter().map(|&c| c as u8).collect();
-    ctx.memory[dst..][..bytes.len()].copy_from_slice(&bytes);
-    ctx.memory.write::<u8>(dst + bytes.len() as u32, 0);
+    // wsprintf takes no size; a destination at the edge of emulated memory
+    // would panic the host, so write only what fits.
+    if let Some(buf) = ctx.memory.bytes.get_mut(dst as usize..) {
+        // Keep a byte free for the terminator so a truncated result still
+        // reads as a string.
+        let written = bytes.len().min(buf.len().saturating_sub(1));
+        buf[..written].copy_from_slice(&bytes[..written]);
+        if let Some(slot) = buf.get_mut(written) {
+            *slot = 0;
+        }
+    }
     bytes.len() as i32
 }
 
@@ -600,5 +619,23 @@ mod tests {
             read_wstr(&ctx, 0x300),
             "val=42 hey".encode_utf16().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn wsprintf_tolerates_an_out_of_range_destination() {
+        let mut ctx = context();
+        let len = ctx.memory.bytes.len() as u32;
+        ctx.cpu.regs.esp = 0x200;
+        ctx.memory.write::<u32>(0x200, 0);
+        ctx.memory.write::<u32>(0x204, len - 4); // only four bytes left
+        ctx.memory.write::<u32>(0x208, 0x400);
+        ctx.memory[0x400..][..8].copy_from_slice(b"val=%d!\0");
+        ctx.memory.write::<u32>(0x20c, 42);
+        // Truncated to fit instead of panicking; the count is still honest.
+        assert_eq!(wsprintfA(&mut ctx), 7);
+        assert_eq!(read_cstr(&ctx, len - 4), "val");
+
+        ctx.memory.write::<u32>(0x204, len + 0x100); // wholly out of range
+        assert_eq!(wsprintfA(&mut ctx), 7);
     }
 }
