@@ -13,9 +13,14 @@ impl Context {
     }
 
     pub fn push16(&mut self, x: u16) {
-        let sp = self.cpu.regs.get_sp().wrapping_sub(2);
-        self.cpu.regs.set_sp(sp);
-        self.memory.write::<u16>(segofs(self.cpu.regs.ss, sp), x);
+        if self.cpu.real_mode {
+            let sp = self.cpu.regs.get_sp().wrapping_sub(2);
+            self.cpu.regs.set_sp(sp);
+            self.memory.write::<u16>(segofs(self.cpu.regs.ss, sp), x);
+        } else {
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_sub(2);
+            self.memory.write::<u16>(self.cpu.regs.esp, x);
+        }
     }
 
     pub fn pop32(&mut self) -> u32 {
@@ -32,10 +37,16 @@ impl Context {
     }
 
     pub fn pop16(&mut self) -> u16 {
-        let sp = self.cpu.regs.get_sp();
-        let x = self.memory.read::<u16>(segofs(self.cpu.regs.ss, sp));
-        self.cpu.regs.set_sp(sp.wrapping_add(2));
-        x
+        if self.cpu.real_mode {
+            let sp = self.cpu.regs.get_sp();
+            let x = self.memory.read::<u16>(segofs(self.cpu.regs.ss, sp));
+            self.cpu.regs.set_sp(sp.wrapping_add(2));
+            x
+        } else {
+            let x = self.memory.read::<u16>(self.cpu.regs.esp);
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(2);
+            x
+        }
     }
 
     pub fn pushad(&mut self) {
@@ -489,6 +500,19 @@ mod tests {
         assert_eq!(ctx.cpu.regs.get_al(), 0xa1);
         assert!(ctx.cpu.flags.contains(Flags::CF));
         assert!(!ctx.cpu.flags.contains(Flags::AF));
+    }
+
+    #[test]
+    fn flat_mode_push16_pop16_use_esp_stack_addressing() {
+        let mut ctx = context();
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0x100;
+
+        ctx.push16(0x1234);
+        assert_eq!(ctx.cpu.regs.esp, 0xfe);
+        assert_eq!(ctx.memory.read::<u16>(0xfe), 0x1234);
+        assert_eq!(ctx.pop16(), 0x1234);
+        assert_eq!(ctx.cpu.regs.esp, 0x100);
     }
 
     #[test]
