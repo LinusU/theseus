@@ -1,3 +1,6 @@
+// The checked-in generated snapshot predates the current `tc` lint-clean
+// output and cannot be regenerated (the input executable is not in-tree).
+#[allow(clippy::double_parens)]
 mod generated;
 
 fn main() {
