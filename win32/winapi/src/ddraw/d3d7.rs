@@ -1959,9 +1959,16 @@ const D3DRENDERSTATE_CULLMODE: u32 = 22;
 const D3DRENDERSTATE_ZFUNC: u32 = 23;
 const D3DRENDERSTATE_ALPHAREF: u32 = 24;
 const D3DRENDERSTATE_ALPHAFUNC: u32 = 25;
+const D3DRENDERSTATE_SHADEMODE: u32 = 9;
 const D3DRENDERSTATE_ALPHABLENDENABLE: u32 = 27;
+const D3DRENDERSTATE_FOGCOLOR: u32 = 34;
+const D3DRENDERSTATE_FOGSTART: u32 = 36;
+const D3DRENDERSTATE_FOGEND: u32 = 37;
+const D3DRENDERSTATE_FOGVERTEXMODE: u32 = 140;
 const D3DCULL_CW: u32 = 2;
 const D3DCULL_CCW: u32 = 3;
+const D3DSHADE_FLAT: u32 = 1;
+const D3DFOG_LINEAR: u32 = 3;
 
 const HANDLED_RENDER_STATES: &[u32] = &[
     D3DRENDERSTATE_ZENABLE,
@@ -1973,7 +1980,12 @@ const HANDLED_RENDER_STATES: &[u32] = &[
     D3DRENDERSTATE_ZFUNC,
     D3DRENDERSTATE_ALPHAREF,
     D3DRENDERSTATE_ALPHAFUNC,
+    D3DRENDERSTATE_SHADEMODE,
     D3DRENDERSTATE_ALPHABLENDENABLE,
+    D3DRENDERSTATE_FOGCOLOR,
+    D3DRENDERSTATE_FOGSTART,
+    D3DRENDERSTATE_FOGEND,
+    D3DRENDERSTATE_FOGVERTEXMODE,
 ];
 
 const HANDLED_TEXTURE_STAGE_STATES: &[u32] = &[16, 17, 18];
@@ -2093,6 +2105,21 @@ fn decode_texel(p: u16, fmt: u8) -> (u8, u8, u8, u8) {
 
 fn pack_565(r: u8, g: u8, b: u8) -> u16 {
     ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
+}
+
+/// Blend a 565 color with a 565 fog color by factor `f` (1.0 = no fog).
+fn fog_565(color: u16, fog: u16, f: f32) -> u16 {
+    let r = ((((color >> 11) & 0x1f) << 3) | ((color >> 11) & 0x1f) >> 2) as f32;
+    let g = ((((color >> 5) & 0x3f) << 2) | ((color >> 5) & 0x3f) >> 4) as f32;
+    let b = (((color & 0x1f) << 3) | (color & 0x1f) >> 2) as f32;
+    let fr = ((((fog >> 11) & 0x1f) << 3) | ((fog >> 11) & 0x1f) >> 2) as f32;
+    let fg = ((((fog >> 5) & 0x3f) << 2) | ((fog >> 5) & 0x3f) >> 4) as f32;
+    let fb = (((fog & 0x1f) << 3) | (fog & 0x1f) >> 2) as f32;
+    pack_565(
+        (r * f + fr * (1.0 - f)) as u8,
+        (g * f + fg * (1.0 - f)) as u8,
+        (b * f + fb * (1.0 - f)) as u8,
+    )
 }
 
 /// Sample one texel (nearest), returning (RGB565 color, 0-255 alpha).
@@ -2218,6 +2245,11 @@ fn rasterize(
         alpha_test: u32,
         alpha_func: u32,
         alpha_ref: u32,
+        flat_shade: bool,
+        fog_color: u16,
+        fog_start: f32,
+        fog_end: f32,
+        fog_linear: bool,
     }
 
     let t = 'targets: {
@@ -2270,6 +2302,35 @@ fn rasterize(
             .render_states
             .get(&D3DRENDERSTATE_ALPHAREF)
             .unwrap_or(&0);
+        let shade_mode = *device
+            .render_states
+            .get(&D3DRENDERSTATE_SHADEMODE)
+            .unwrap_or(&2);
+        let flat_shade = shade_mode == D3DSHADE_FLAT;
+
+        // Linear fog.  FOGVERTEXMODE=3 selects linear; FOGSTART/FOGEND are
+        // stored as u32 bit patterns of an f32.
+        let fog_color = *device
+            .render_states
+            .get(&D3DRENDERSTATE_FOGCOLOR)
+            .unwrap_or(&0);
+        let fog_start = f32::from_bits(
+            *device
+                .render_states
+                .get(&D3DRENDERSTATE_FOGSTART)
+                .unwrap_or(&0),
+        );
+        let fog_end = f32::from_bits(
+            *device
+                .render_states
+                .get(&D3DRENDERSTATE_FOGEND)
+                .unwrap_or(&0),
+        );
+        let fog_vertex_mode = *device
+            .render_states
+            .get(&D3DRENDERSTATE_FOGVERTEXMODE)
+            .unwrap_or(&0);
+        let fog_linear = fog_vertex_mode == D3DFOG_LINEAR && fog_start < fog_end;
 
         let surfs = state().surf.borrow();
         let rt_surf = surfs.get(&rt_surface_key).cloned();
@@ -2398,6 +2459,11 @@ fn rasterize(
             alpha_test,
             alpha_func,
             alpha_ref,
+            flat_shade,
+            fog_color: argb_to_565(fog_color),
+            fog_start,
+            fog_end,
+            fog_linear,
         };
     };
 
@@ -2587,13 +2653,32 @@ fn rasterize(
                 };
 
                 // Source color and alpha. The default MODULATE stage
-                // multiplies the texture by the interpolated vertex diffuse;
-                // 565 textures have no texel alpha so theirs is the diffuse
-                // alpha alone.
-                let diff_a = alpha * ((a.diffuse >> 24) & 0xff) as f32
-                    + beta * ((b.diffuse >> 24) & 0xff) as f32
-                    + gamma * ((c.diffuse >> 24) & 0xff) as f32;
-                let (color, sa) = if t.tex_addr != 0 {
+                // multiplies the texture by the vertex diffuse; 565 textures
+                // have no texel alpha so theirs is the diffuse alpha alone.
+                // D3DSHADE_FLAT uses the first vertex's diffuse for the whole
+                // triangle, GOURAUD interpolates it.
+                let diffuse = if t.flat_shade {
+                    a.diffuse
+                } else {
+                    let rr = (alpha * ((a.diffuse >> 16) & 0xff) as f32
+                        + beta * ((b.diffuse >> 16) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 16) & 0xff) as f32) as u32;
+                    let gg = (alpha * ((a.diffuse >> 8) & 0xff) as f32
+                        + beta * ((b.diffuse >> 8) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 8) & 0xff) as f32) as u32;
+                    let bb = (alpha * ((a.diffuse) & 0xff) as f32
+                        + beta * ((b.diffuse) & 0xff) as f32
+                        + gamma * ((c.diffuse) & 0xff) as f32) as u32;
+                    let aa = (alpha * ((a.diffuse >> 24) & 0xff) as f32
+                        + beta * ((b.diffuse >> 24) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 24) & 0xff) as f32) as u32;
+                    (aa.min(255) << 24)
+                        | (rr.min(255) << 16)
+                        | (gg.min(255) << 8)
+                        | bb.min(255)
+                };
+                let diff_a = ((diffuse >> 24) & 0xff) as f32;
+                let (mut color, sa) = if t.tex_addr != 0 {
                     // rho is the texel-space UV derivative magnitude, needed
                     // both to pick the mip level and to choose between the
                     // magnification and minification filters.
@@ -2659,25 +2744,22 @@ fn rasterize(
                     .unwrap_or((argb_to_565(0xff_00_00_00), 255));
                     (c, ta as f32 * diff_a / 255.0)
                 } else {
-                    let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32
-                        + beta * ((b.diffuse >> 16) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 16) & 0xff) as f32)
-                        as u32)
-                        .min(255);
-                    let g = ((alpha * ((a.diffuse >> 8) & 0xff) as f32
-                        + beta * ((b.diffuse >> 8) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 8) & 0xff) as f32)
-                        as u32)
-                        .min(255);
-                    let b = ((alpha * ((a.diffuse) & 0xff) as f32
-                        + beta * ((b.diffuse) & 0xff) as f32
-                        + gamma * ((c.diffuse) & 0xff) as f32) as u32)
-                        .min(255);
+                    let r = ((diffuse >> 16) & 0xff).min(255);
+                    let g = ((diffuse >> 8) & 0xff).min(255);
+                    let b = ((diffuse) & 0xff).min(255);
                     (
                         ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3),
                         diff_a,
                     )
                 };
+
+                // Linear fog: view-space depth is 1/w (rhw).  Objects inside
+                // FOGSTART keep full color, objects past FOGEND become fog.
+                if t.fog_linear && w_sum != 0.0 {
+                    let dist = 1.0 / w_sum;
+                    let f = ((t.fog_end - dist) / (t.fog_end - t.fog_start)).clamp(0.0, 1.0);
+                    color = fog_565(color, t.fog_color, f);
+                }
 
                 // An alpha-tested-out fragment leaves color and depth alone.
                 if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u16, t.alpha_ref as u16) {
