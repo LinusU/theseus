@@ -32,7 +32,7 @@ pub const VTABLES: [(&'static str, &[&str]); 5] = [
 ];
 
 #[repr(C)]
-#[derive(PartialEq, zerocopy::FromBytes)]
+#[derive(Clone, Copy, PartialEq, zerocopy::FromBytes)]
 pub struct GUID(pub (u32, u16, u16, [u8; 8]));
 
 impl std::fmt::Debug for GUID {

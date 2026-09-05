@@ -347,7 +347,10 @@ pub fn DirectDrawCreateEx(
     iid: u32,
     _pUnkOuter: u32,
 ) -> DD {
-    assert!(lpGuid == 0);
+    if lpGuid != 0 {
+        let _guid = ctx.memory.read::<GUID>(lpGuid);
+        log::debug!("DirectDrawCreateEx with GUID {_guid:?}");
+    }
     let iid = if iid == 0 {
         None
     } else {
@@ -372,6 +375,52 @@ pub fn DirectDrawCreateEx(
     });
 
     ctx.memory.write(lplpDD, addr);
+    DD::OK
+}
+
+fn alloc_string(ctx: &mut Context, s: &str) -> u32 {
+    let kernel32 = kernel32::lock();
+    let addr = kernel32.process_heap.alloc(&mut ctx.memory, s.len() as u32);
+    drop(kernel32);
+    ctx.memory[addr..addr + s.len() as u32].copy_from_slice(s.as_bytes());
+    addr
+}
+
+#[win32_derive::dllexport]
+pub fn DirectDrawEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> DD {
+    if lpCallback == 0 {
+        return DD::ERR_GENERIC;
+    }
+    let desc = alloc_string(ctx, "Primary Display Driver\0");
+    let name = alloc_string(ctx, "DISPLAY\0");
+    let callback = ctx.indirect(lpCallback);
+    ctx.call32_x86(callback, vec![desc, name, lpContext]);
+    DD::OK
+}
+
+#[win32_derive::dllexport]
+pub fn DirectDrawEnumerateExA(
+    ctx: &mut Context,
+    lpCallback: u32,
+    lpContext: u32,
+    _dwFlags: u32,
+) -> DD {
+    if lpCallback == 0 {
+        return DD::ERR_GENERIC;
+    }
+    let guid_addr = {
+        let kernel32 = kernel32::lock();
+        let addr = kernel32
+            .process_heap
+            .alloc(&mut ctx.memory, std::mem::size_of::<GUID>() as u32);
+        drop(kernel32);
+        ctx.memory[addr..addr + std::mem::size_of::<GUID>() as u32].fill(0);
+        addr
+    };
+    let desc = alloc_string(ctx, "Primary Display Driver\0");
+    let name = alloc_string(ctx, "DISPLAY\0");
+    let callback = ctx.indirect(lpCallback);
+    ctx.call32_x86(callback, vec![guid_addr, desc, name, lpContext, 0]);
     DD::OK
 }
 
