@@ -23,6 +23,8 @@ static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::defaul
 /// succeeds and records the imports in the global STATE.
 struct Loader;
 impl kernel32::DLLs for Loader {
+    fn register_module(&mut self, _dll: &str) {}
+
     fn register_export(&mut self, _dll: &str, _func: &str, _addr: u32) {
         // ignore
     }
