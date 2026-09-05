@@ -33,6 +33,7 @@ pub struct DC {
     text_color: COLORREF,
     bk_color: COLORREF,
     pos: POINT,
+    layout: u32,
 }
 
 #[repr(C)]
@@ -57,6 +58,7 @@ impl DC {
             text_color: COLORREF::default(),
             bk_color: COLORREF::from_rgb(0xff, 0xff, 0xff),
             pos: POINT::default(),
+            layout: 0, // LAYOUT_LTR
         }
     }
 
@@ -424,13 +426,31 @@ pub fn MoveToEx(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lppt: Ptr<POINT>) -
 }
 
 #[win32_derive::dllexport]
-pub fn SetLayout(_ctx: &mut Context, _hdc: HDC, _l: u32 /* DC_LAYOUT */) -> u32 {
-    todo!()
+pub fn SetLayout(_ctx: &mut Context, hdc: HDC, l: u32 /* DC_LAYOUT */) -> u32 {
+    // RTL mirroring is not modeled, but the layout is recorded so the
+    // documented "previous layout" return value stays accurate.
+    let mut state = gdi32::lock();
+    let dc = state.dcs.get_mut(hdc).unwrap();
+    std::mem::replace(&mut dc.layout, l)
 }
 
 #[win32_derive::dllexport]
-pub fn SetPixel(_ctx: &mut Context, _hdc: HDC, _x: i32, _y: i32, _color: COLORREF) -> COLORREF {
-    todo!()
+pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) -> COLORREF {
+    let mut state = gdi32::lock();
+    let dc = state.dcs.get_mut(hdc).unwrap();
+    let bitmap = dc.bitmap();
+    if !bitmap.is_simple()
+        || x < 0
+        || y < 0
+        || x as u32 >= bitmap.width
+        || y as u32 >= bitmap.height
+    {
+        return COLORREF(0xFFFF_FFFF); // CLR_INVALID
+    }
+    let pixels = bitmap.pixels_mut(&mut ctx.memory);
+    let i = (y as u32 * bitmap.stride() + x as u32 * 4) as usize;
+    pixels[i..][..4].copy_from_slice(&color.to_pixel());
+    color
 }
 
 #[cfg(test)]
