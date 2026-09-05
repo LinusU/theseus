@@ -35,7 +35,11 @@ pub struct CPINFO {
 }
 
 #[win32_derive::dllexport]
-pub fn GetCPInfo(ctx: &mut Context, _CodePage: u32, lpCPInfo: Ptr<CPINFO>) -> bool {
+pub fn GetCPInfo(ctx: &mut Context, CodePage: u32, lpCPInfo: Ptr<CPINFO>) -> bool {
+    if !matches!(CodePage, 0 | 1 | 437 | 1252) {
+        log::warn!("GetCPInfo: unsupported code page {CodePage}");
+        return false;
+    }
     // A single-byte codepage, so no lead byte ranges.
     let info = CPINFO {
         MaxCharSize: 1,
@@ -390,6 +394,16 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn get_cp_info_rejects_unknown_code_pages() {
+        let mut ctx = context();
+
+        assert!(GetCPInfo(&mut ctx, 1252, Ptr::new(0x1100)));
+        assert_eq!(ctx.memory.read::<u32>(0x1100), 1);
+        assert_eq!(ctx.memory.read::<u8>(0x1104), b'?');
+        assert!(!GetCPInfo(&mut ctx, 65001, Ptr::new(0x1100)));
     }
 
     #[test]
