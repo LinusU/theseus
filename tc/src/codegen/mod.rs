@@ -1449,6 +1449,50 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_pushf() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x9c];
+        let mut decoder = iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Seg((0, 0).into()),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        assert_eq!(instr.iced.mnemonic(), iced_x86::Mnemonic::Pushf);
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.push16(ctx.cpu.flags.bits() as u16 | 2);")
+        );
+    }
+
+    #[test]
+    fn codegen_handles_popf() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x9d];
+        let mut decoder = iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Seg((0, 0).into()),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        assert_eq!(instr.iced.mnemonic(), iced_x86::Mnemonic::Popf);
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32);")
+        );
+    }
+
+    #[test]
     fn codegen_handles_pushfd() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

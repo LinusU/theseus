@@ -142,6 +142,8 @@ impl<'a> CodeGen<'a> {
             }
             Rdtsc => self.line("ctx.cpu.regs.set_edx_eax(rdtsc());"),
             Int1 | Int3 => {}
+            Pushf => self.line("ctx.push16(ctx.cpu.flags.bits() as u16 | 2);"),
+            Popf => self.line("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32);"),
             Pushfd => self.line("ctx.push32(ctx.cpu.flags.bits() | 2);"),
             Popfd => self.line("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop32());"),
             Cpuid => {
