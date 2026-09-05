@@ -407,12 +407,17 @@ pub fn DefWindowProcW(
             };
             let pixels = window.ensure_pixels(ctx);
             let pixel_count = (window.width * window.height) as usize;
+            let Some(buf) = ctx
+                .memory
+                .bytes
+                .get_mut(pixels as usize..(pixels + pixel_count as u32 * 4) as usize)
+            else {
+                return 0;
+            };
             use zerocopy::FromBytes;
-            let pixels = <[[u8; 4]]>::mut_from_bytes_with_elems(
-                &mut ctx.memory[pixels..][..pixel_count * 4],
-                pixel_count,
-            )
-            .unwrap();
+            let Ok(pixels) = <[[u8; 4]]>::mut_from_bytes_with_elems(buf, pixel_count) else {
+                return 0;
+            };
             pixels.fill(color.to_pixel());
             return 1;
         }
