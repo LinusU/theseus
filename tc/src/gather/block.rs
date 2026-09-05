@@ -224,7 +224,10 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                     }
                 }
                 Ret | Retf | Iret => {}
-                Into => {}        // terminates
+                Into => {
+                    let ip = self.block_ip.with_local(instr.next_ip32());
+                    self.traverse.queue.enqueue(ip);
+                }
                 Int1 | Int3 => {} // breakpoint
                 Int => {
                     let ip = block_ip.with_local(instr.next_ip32());

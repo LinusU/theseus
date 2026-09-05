@@ -1479,6 +1479,25 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_into_overflow_trap() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0xce];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(codegen.buf.contains("ctx.cpu.flags.contains(Flags::OF)"));
+        assert!(codegen.buf.contains("unhandled_interrupt(0x4, 0x0);"));
+        assert!(codegen.buf.contains("Cont(unk_1)"));
+    }
+
+    #[test]
     fn codegen_maps_windows_int_to_explicit_failure() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
