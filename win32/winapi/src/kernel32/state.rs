@@ -23,6 +23,9 @@ pub struct State {
     pub loaded_modules: HashMap<u32, LoadedModule>,
     pub command_line: CommandLine,
     pub environ: Cell<u32>,
+    /// Process environment variables, in insertion order. Names compare
+    /// case-insensitively, matching Windows semantics.
+    pub env: Vec<(String, String)>,
     pub next_thread_id: u32,
     pub next_tls_index: u32,
     pub unhandled_exception_filter: u32,
@@ -48,6 +51,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         process_heap: Default::default(),
         command_line: Default::default(),
         environ: Default::default(),
+        env: Vec::new(),
         next_thread_id: 2,
         next_tls_index: 0,
         unhandled_exception_filter: 0,

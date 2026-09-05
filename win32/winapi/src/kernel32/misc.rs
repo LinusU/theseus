@@ -77,11 +77,6 @@ pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -
 }
 
 #[win32_derive::dllexport]
-pub fn SetEnvironmentVariableA(_ctx: &mut Context, _lpName: Ptr<u8>, _lpValue: Ptr<u8>) -> bool {
-    stub!(true)
-}
-
-#[win32_derive::dllexport]
 pub fn ExitThread(_ctx: &mut Context, dwExitCode: u32) {
     // Wrong for a thread from CreateThread, which should end just that thread.
     // Loud because getting here from a worker kills the process.
