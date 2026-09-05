@@ -1,6 +1,6 @@
 use crate::{
     Instr,
-    codegen::{CodeGen, get_reg, instr_name, is_memory_op},
+    codegen::{CodeGen, get_reg, instr_name, is_memory_op, reg_size},
     gather::IP,
 };
 
@@ -74,18 +74,16 @@ impl<'a> CodeGen<'a> {
                 }
             }
             iced_x86::OpKind::Register => {
+                let reg = instr.iced.op0_register();
+                let expr = get_reg(reg);
                 if self.module.bitness() == 16 {
-                    cont = format!(
-                        "ctx.indirect16((ctx.cpu.regs.cs, {reg}).into())",
-                        reg = get_reg(instr.iced.op0_register())
-                    );
+                    cont = format!("ctx.indirect16((ctx.cpu.regs.cs, {expr}).into())");
+                } else if reg_size(reg) == 32 {
+                    cont = format!("ctx.indirect({expr})");
                 } else {
                     // The operand-size prefix can select a 16-bit register in
                     // flat code, so zero-extend to the flat address width.
-                    cont = format!(
-                        "ctx.indirect({reg} as u32)",
-                        reg = get_reg(instr.iced.op0_register())
-                    );
+                    cont = format!("ctx.indirect({expr} as u32)");
                 }
             }
             k => todo!("{:?}", k),

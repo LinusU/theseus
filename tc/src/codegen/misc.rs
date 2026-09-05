@@ -1,4 +1,4 @@
-use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, op_size};
+use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, op_size, reg_size};
 
 impl<'a> CodeGen<'a> {
     pub fn codegen_misc(&mut self, instr: &iced_x86::Instruction) -> bool {
@@ -104,8 +104,15 @@ impl<'a> CodeGen<'a> {
                 let size = op_size(instr, 0);
                 assert!(matches!(size, 16 | 32));
                 let operation = instr_name(instr);
-                let bit = self.get_op(instr, 1);
-                self.line(format!("let bit = ({bit}) as u32;"));
+                let bit_op = self.get_op(instr, 1);
+                let bit = if instr.op_kind(1) == iced_x86::OpKind::Register
+                    && reg_size(instr.op_register(1)) == 32
+                {
+                    bit_op
+                } else {
+                    format!("{bit_op} as u32")
+                };
+                self.line(format!("let bit = {bit};"));
                 if is_memory_op(instr.op_kind(0)) {
                     let addr = self.gen_addr(instr);
                     let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
@@ -308,7 +315,12 @@ impl<'a> CodeGen<'a> {
                     self.get_op(instr, 1)
                 };
                 let width = op_size(instr, 0);
-                self.line(self.set_op(instr, 0, format!("port_in({port}, {width}) as u{width}")));
+                let value = if width == 32 {
+                    format!("port_in({port}, {width})")
+                } else {
+                    format!("port_in({port}, {width}) as u{width}")
+                };
+                self.line(self.set_op(instr, 0, value));
             }
             Out => {
                 assert_eq!(instr.op_count(), 2);
@@ -319,13 +331,16 @@ impl<'a> CodeGen<'a> {
                     self.get_op(instr, 0)
                 };
                 let width = op_size(instr, 1);
-                if self.module.is_dos() {
-                    self.line(format!("dos::out(ctx, {port}, {});", self.get_op(instr, 1)));
+                let value = self.get_op(instr, 1);
+                let value = if width == 32 {
+                    value
                 } else {
-                    self.line(format!(
-                        "port_out({port}, ({}) as u32, {width});",
-                        self.get_op(instr, 1)
-                    ));
+                    format!("{value} as u32")
+                };
+                if self.module.is_dos() {
+                    self.line(format!("dos::out(ctx, {port}, {value});"));
+                } else {
+                    self.line(format!("port_out({port}, {value}, {width});"));
                 }
             }
 

@@ -827,7 +827,7 @@ mod tests {
             ),
             (
                 &[0xe7, 0x80][..],
-                "port_out(0x80u16, (ctx.cpu.regs.eax) as u32, 32);",
+                "port_out(0x80u16, ctx.cpu.regs.eax, 32);",
             ),
         ] {
             let mut decoder =

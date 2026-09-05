@@ -69,7 +69,16 @@ impl<'a> CodeGen<'a> {
                 assert_eq!(instr.op_count(), 1);
                 let size = op_size(instr, 0);
                 let size2 = size * 2;
-                self.line(format!("let res = mul(ctx.cpu.regs.eax as u{size} as u{size2}, {} as u{size2}, &mut ctx.cpu.flags);", self.get_op(instr, 0)));
+                let x = match size {
+                    8 => get_reg(iced_x86::Register::AL),
+                    16 => get_reg(iced_x86::Register::AX),
+                    32 => get_reg(iced_x86::Register::EAX),
+                    _ => unreachable!(),
+                };
+                self.line(format!(
+                    "let res = mul({x} as u{size2}, {} as u{size2}, &mut ctx.cpu.flags);",
+                    self.get_op(instr, 0)
+                ));
                 match size {
                     8 => self.line("ctx.cpu.regs.set_ax(res);"),
                     16 => self.line("ctx.cpu.regs.set_dx_ax(res);"),
@@ -117,7 +126,12 @@ impl<'a> CodeGen<'a> {
                 let size = op_size(instr, 0);
                 if instr.op_count() == 1 {
                     // one-op imul has different in/out reg and overflow behavior from others
-                    let x = format!("{} as u{size}", get_reg(iced_x86::Register::EAX));
+                    let x = match size {
+                        8 => get_reg(iced_x86::Register::AL),
+                        16 => get_reg(iced_x86::Register::AX),
+                        32 => get_reg(iced_x86::Register::EAX),
+                        _ => unreachable!(),
+                    };
                     let y = self.get_op(instr, 0);
                     let res = format!("imul1_{size}({x}, {y}, &mut ctx.cpu.flags)");
                     match size {
