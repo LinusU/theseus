@@ -235,7 +235,7 @@ impl<'a> CodeGen<'a> {
             }
 
             // 3DNow! packed single/integer conversions are unary MMX operations.
-            Pf2id | Pi2fd | Pfrcp | Pfrsqrt => {
+            Pf2id | Pf2iw | Pi2fd | Pi2fw | Pfrcp | Pfrsqrt => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(instr, 0, format!("{func}({})", self.mmx_get(instr, 1))));
             }

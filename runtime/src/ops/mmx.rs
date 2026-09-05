@@ -579,6 +579,25 @@ pub fn pi2fd(x: u64) -> u64 {
     ((high.to_bits() as u64) << 32) | (low.to_bits() as u64)
 }
 
+/// PF2IW (3DNow!) converts two packed single-precision floats to two
+/// 16-bit signed integers using round-to-zero, then sign-extends each
+/// result to 32 bits with saturation to the i16 range.
+pub fn pf2iw(x: u64) -> u64 {
+    let low = f32::from_bits(x as u32);
+    let high = f32::from_bits((x >> 32) as u32);
+    let low_i = (low as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16 as i32 as u32;
+    let high_i = (high as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16 as i32 as u32;
+    ((high_i as u64) << 32) | (low_i as u64)
+}
+
+/// PI2FW (3DNow!) converts the low 16-bit signed integer word in each
+/// 32-bit dword of the source to a single-precision float.
+pub fn pi2fw(x: u64) -> u64 {
+    let low = (x as u16 as i16) as f32;
+    let high = ((x >> 32) as u16 as i16) as f32;
+    ((high.to_bits() as u64) << 32) | (low.to_bits() as u64)
+}
+
 /// PFADD (3DNow!) adds the two packed single-precision floats.
 pub fn pfadd(x: u64, y: u64) -> u64 {
     let x: [f32; 2] = x.unpack();
@@ -829,8 +848,8 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pf2id, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc,
-        pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub, pfsubr, pi2fd, pinsrw,
+        pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc,
+        pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub, pfsubr, pi2fd, pi2fw, pinsrw,
         pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq,
         psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
         pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
@@ -994,6 +1013,29 @@ mod tests {
         let ints = ((-7i32 as u64) << 32) | (42u64);
         let expected = ((f32::to_bits(-7.0) as u64) << 32) | (f32::to_bits(42.0) as u64);
         assert_eq!(pi2fd(ints), expected);
+    }
+
+    #[test]
+    fn pf2iw_and_pi2fw_convert_word_lanes() {
+        // 1.5 as f32 -> 1 (sign-extended to 32 bits); -2.7 as f32 -> -2.
+        let one_point_five = f32::to_bits(1.5);
+        let neg_two_point_seven = f32::to_bits(-2.7);
+        let floats = (neg_two_point_seven as u64) << 32 | (one_point_five as u64);
+        assert_eq!(pf2iw(floats), (0xffff_ffff_ffff_fffeu64 << 32) | 1);
+
+        // Out-of-range values saturate to i16 and are sign-extended.
+        let big = f32::to_bits(40000.0);
+        let small = f32::to_bits(-40000.0);
+        let out_of_range = (small as u64) << 32 | (big as u64);
+        assert_eq!(
+            pf2iw(out_of_range),
+            (0xffff_ffff_ffff_8000u64 << 32) | 0x7fff
+        );
+
+        // 42 and -7 as 16-bit signed integers in the low words of each dword.
+        let words = ((-7i16 as u64) << 32) | (42u64);
+        let expected = ((f32::to_bits(-7.0) as u64) << 32) | (f32::to_bits(42.0) as u64);
+        assert_eq!(pi2fw(words), expected);
     }
 
     #[test]

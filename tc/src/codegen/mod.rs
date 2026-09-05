@@ -3285,13 +3285,12 @@ mod tests {
         let mut codegen = super::CodeGen::new(&state, false);
 
         for bytes in [
-            &[0x0f, 0xff, 0xc0][..],   // ud0 eax, eax
-            &[0x0f, 0xb9, 0xc0],       // ud1 eax, eax
-            &[0x0f, 0x0f, 0xc0, 0x1c], // pf2iw mm0, mm0
-            &[0x0f, 0xae, 0x21],       // xsave [ecx]
-            &[0x0f, 0xae, 0x29],       // xrstor [ecx]
-            &[0x0f, 0xc7, 0xf0],       // rdrand eax
-            &[0x0f, 0xc7, 0xf8],       // rdseed eax
+            &[0x0f, 0xff, 0xc0][..], // ud0 eax, eax
+            &[0x0f, 0xb9, 0xc0],     // ud1 eax, eax
+            &[0x0f, 0xae, 0x21],     // xsave [ecx]
+            &[0x0f, 0xae, 0x29],     // xrstor [ecx]
+            &[0x0f, 0xc7, 0xf0],     // rdrand eax
+            &[0x0f, 0xc7, 0xf8],     // rdseed eax
         ] {
             codegen.buf.clear();
             let mut decoder =
@@ -4305,6 +4304,16 @@ mod tests {
             (
                 &[0x0f, 0x0f, 0xc1, 0x0d],
                 "ctx.cpu.mmx.mm0 = pi2fd(ctx.cpu.mmx.mm1);",
+            ),
+            // pf2iw mm0, mm1 (0F 0F /r 1C)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x1c],
+                "ctx.cpu.mmx.mm0 = pf2iw(ctx.cpu.mmx.mm1);",
+            ),
+            // pi2fw mm0, mm1 (0F 0F /r 0C)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x0c],
+                "ctx.cpu.mmx.mm0 = pi2fw(ctx.cpu.mmx.mm1);",
             ),
         ] {
             codegen.buf.clear();
