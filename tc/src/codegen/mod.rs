@@ -4264,6 +4264,31 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_maskmovdqu() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // maskmovdqu m128, xmm1 (mask implicit in xmm0)
+        let bytes = &[0x66, 0x0f, 0xf7, 0xc1][..];
+        let want = "ctx.maskmovdqu(ctx.cpu.xmm.xmm1, ctx.cpu.xmm.xmm0);";
+
+        let mut decoder = iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen.buf.contains(want),
+            "wanted {want:?} in {:?}",
+            codegen.buf
+        );
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

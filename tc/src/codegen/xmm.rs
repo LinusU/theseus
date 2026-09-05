@@ -146,6 +146,15 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("movq2dq({src})")));
             }
 
+            // MASKMOVDQU stores the source to the implicit DS:(E)DI destination,
+            // writing a byte only when the corresponding mask byte's high bit is
+            // set. The mask is always in XMM0.
+            Maskmovdqu => {
+                let src = self.xmm_get(instr, 2);
+                let mask = self.xmm_get(instr, 1);
+                self.line(format!("ctx.maskmovdqu({src}, {mask});"));
+            }
+
             // Packed single/double-precision arithmetic and bitwise operations.
             Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps | Addpd | Subpd
             | Mulpd | Divpd | Andpd | Andnpd | Orpd | Xorpd => {

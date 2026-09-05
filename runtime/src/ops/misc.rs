@@ -335,6 +335,20 @@ impl Context {
             }
         }
     }
+
+    /// MASKMOVDQU stores each byte of `data` to the implicit DS:(E)DI
+    /// destination only where the matching `mask` byte's high bit is set.
+    pub fn maskmovdqu(&mut self, data: [u32; 4], mask: [u32; 4]) {
+        let addr = self.addr(self.cpu.regs.ds, self.cpu.regs.edi);
+        for i in 0..16u32 {
+            let word = i / 4;
+            let shift = (i % 4) * 8;
+            if mask[word as usize] & (0x80u32 << shift) != 0 {
+                self.memory
+                    .write::<u8>(addr.wrapping_add(i), (data[word as usize] >> shift) as u8);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +407,23 @@ mod tests {
         ctx.maskmovq(0x0807_0605_0403_0201, 0x8000_0080_0000_0080);
 
         assert_eq!(ctx.memory.read::<u64>(0x100), 0x08ff_ff05_ffff_ff01);
+    }
+
+    #[test]
+    fn maskmovdqu_stores_only_masked_bytes_at_ds_edi() {
+        let mut ctx = context();
+        ctx.cpu.regs.edi = 0x100;
+        ctx.memory.write::<[u32; 4]>(0x100, [u32::MAX; 4]);
+
+        // Mask bytes 0 and 15 have their high bit set; data is bytes 0..15.
+        let data = [0x0302_0100, 0x0706_0504, 0x0b0a_0908, 0x0f0e_0d0c];
+        let mask = [0x0000_0080, 0, 0, 0x8000_0000];
+        ctx.maskmovdqu(data, mask);
+
+        assert_eq!(
+            ctx.memory.read::<[u32; 4]>(0x100),
+            [0xffff_ff00, 0xffff_ffff, 0xffff_ffff, 0x0fff_ffff]
+        );
     }
 
     #[test]
