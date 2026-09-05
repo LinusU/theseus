@@ -354,11 +354,9 @@ pub fn PeekMessageA(
     _wMsgFilterMax: u32,
     wRemoveMsg: u32, /* PEEK_MESSAGE_REMOVE_TYPE */
 ) -> bool {
-    let remove = match wRemoveMsg {
-        0 => false,   // PM_NOREMOVE
-        1 => true,    // PM_REMOVE
-        _ => todo!(), // e.g. PM_NOYIELD
-    };
+    // PM_REMOVE is bit 0; the remaining bits (PM_NOYIELD, PM_QS_*) are
+    // filtering/scheduling hints that change nothing in this emulated queue.
+    let remove = wRemoveMsg & 1 != 0;
     // Games poll for messages every frame; keep the audio mixer fed from here
     // too, in case the app renders without flipping.
     crate::dsound::pump(ctx);
