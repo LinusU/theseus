@@ -1986,9 +1986,27 @@ const HANDLED_RENDER_STATES: &[u32] = &[
     D3DRENDERSTATE_FOGSTART,
     D3DRENDERSTATE_FOGEND,
     D3DRENDERSTATE_FOGVERTEXMODE,
+    // Legacy states that the modern SetTextureStageState filter/address path
+    // has replaced; their default values match what the rasterizer already does.
+    4,   // D3DRENDERSTATE_TEXTUREPERSPECTIVE
+    137, // D3DRENDERSTATE_TEXTUREMAG
 ];
 
-const HANDLED_TEXTURE_STAGE_STATES: &[u32] = &[16, 17, 18];
+// States the rasterizer consults (filter/mip) or whose D3D7 defaults match the
+// rasterizer's MODULATE/TEXTURE/DIFFUSE/Wrap behavior.
+const HANDLED_TEXTURE_STAGE_STATES: &[u32] = &[
+    1,  // D3DTSS_COLOROP
+    2,  // D3DTSS_COLORARG1
+    3,  // D3DTSS_COLORARG2
+    4,  // D3DTSS_ALPHAOP
+    5,  // D3DTSS_ALPHAARG1
+    6,  // D3DTSS_ALPHAARG2
+    13, // D3DTSS_ADDRESSU
+    14, // D3DTSS_ADDRESSV
+    16, // D3DTSS_MAGFILTER
+    17, // D3DTSS_MINFILTER
+    18, // D3DTSS_MIPFILTER
+];
 
 static WARNED_RENDER_STATES: LazyLock<Mutex<HashSet<u32>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
