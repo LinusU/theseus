@@ -142,6 +142,18 @@ pub fn paddsw(x: u64, y: u64) -> u64 {
     .pack()
 }
 
+pub fn paddw(x: u64, y: u64) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    let y: [u16; 4] = y.unpack();
+    [
+        x[0].wrapping_add(y[0]),
+        x[1].wrapping_add(y[1]),
+        x[2].wrapping_add(y[2]),
+        x[3].wrapping_add(y[3]),
+    ]
+    .pack()
+}
+
 pub fn paddusb(x: u64, y: u64) -> u64 {
     let x: [u8; 8] = x.unpack();
     let y: [u8; 8] = y.unpack();
@@ -243,7 +255,15 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::psraw;
+    use super::{paddw, psraw};
+
+    #[test]
+    fn paddw_wraps_each_word_independently() {
+        assert_eq!(
+            paddw(0x0001_ffff_7fff_8000, 0x0001_0002_0001_8000),
+            0x0002_0001_8000_0000
+        );
+    }
 
     #[test]
     fn psraw_saturates_large_shift_counts_to_the_sign_bit() {

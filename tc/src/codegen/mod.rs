@@ -672,6 +672,27 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_paddw() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0x0f, 0xfd, 0xc1];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.mmx.mm0 = paddw(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);")
+        );
+    }
+
+    #[test]
     fn codegen_handles_port_io() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
