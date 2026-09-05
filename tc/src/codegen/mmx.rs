@@ -28,7 +28,7 @@ impl<'a> CodeGen<'a> {
             Memory => {
                 let addr = self.gen_addr(instr);
                 let size = codegen::mem_size(instr);
-                codegen::get_mem(format!("u{size}"), addr)
+                codegen::get_mem(codegen::type_for_size(size), addr)
             }
             Immediate8 => format!("{:#x}u64", instr.immediate8()),
             k => todo!("{k:?}"),

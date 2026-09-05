@@ -56,6 +56,11 @@ pub fn get_reg(r: iced_x86::Register) -> String {
         CS | DS | ES | FS | GS | SS => {
             format!("ctx.cpu.regs.get_{reg}()", reg = reg_name(r))
         }
+        r if (iced_x86::Register::XMM0 as usize) <= (r as usize)
+            && (r as usize) <= (iced_x86::Register::XMM7 as usize) =>
+        {
+            format!("ctx.cpu.xmm.{reg}", reg = reg_name(r))
+        }
         r => todo!("{r:?}"),
     }
 }
@@ -70,6 +75,11 @@ pub fn set_reg(r: iced_x86::Register, expr: String) -> String {
         DI | SI | SP | BP | // comment to disable formatting
         CS | DS | ES | FS | GS | SS => {
             format!("ctx.cpu.regs.set_{reg}({expr});", reg = reg_name(r))
+        }
+        r if (iced_x86::Register::XMM0 as usize) <= (r as usize)
+            && (r as usize) <= (iced_x86::Register::XMM7 as usize) =>
+        {
+            format!("ctx.cpu.xmm.{reg} = {expr};", reg = reg_name(r))
         }
         r => todo!("{r:?}"),
     }
@@ -140,6 +150,17 @@ impl<'a> CodeGen<'a> {
     }
 }
 
+/// Rust type used for a generic `memory.read`/`write` of a given bit width.
+/// 128-bit packed values use `[u32; 4]` so they round-trip through the XMM
+/// register file; all other widths use the corresponding `uN` primitive.
+pub fn type_for_size(size: usize) -> String {
+    if size == 128 {
+        "[u32; 4]".into()
+    } else {
+        format!("u{size}")
+    }
+}
+
 pub fn get_mem(typ: String, addr: String) -> String {
     format!("ctx.memory.read::<{typ}>({addr})")
 }
@@ -158,7 +179,7 @@ impl<'a> CodeGen<'a> {
             Immediate8to32 => format!("{:#x}u32", instr.immediate8to32()),
             Immediate32 => format!("{:#x}u32", instr.immediate32()),
             Register => get_reg(instr.op_register(n)),
-            Memory => get_mem(format!("u{}", mem_size(instr)), self.gen_addr(instr)),
+            Memory => get_mem(type_for_size(mem_size(instr)), self.gen_addr(instr)),
             k => todo!("{:?}", k),
         }
     }
@@ -172,6 +193,7 @@ pub fn reg_size(r: iced_x86::Register) -> usize {
         CS | DS | ES | FS | GS | SS => 16,
         EAX | EBX | ECX | EDX | ESI | EDI | ESP | EBP => 32,
         MM0 | MM1 | MM2 | MM3 | MM4 | MM5 | MM6 | MM7 => 64,
+        XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 => 128,
         r => todo!("{r:?}"),
     }
 }
@@ -191,6 +213,7 @@ pub fn mem_size(instr: &iced_x86::Instruction) -> usize {
         Packed64_UInt8 | Packed64_Int8 | Packed64_UInt16 | Packed64_Int16 | Packed64_UInt32
         | Packed64_Int32 => 64,
         DwordOffset => 32, // e.g. `call dword ptr [...]`
+        s if format!("{s:?}").starts_with("Packed128") => 128,
         s => todo!("{s:?}"),
     }
 }
@@ -216,7 +239,7 @@ impl<'a> CodeGen<'a> {
             Memory => {
                 let addr = self.gen_addr(instr);
                 let size = mem_size(instr);
-                set_mem(format!("u{size}"), addr, expr)
+                set_mem(type_for_size(size), addr, expr)
             }
             k => todo!("{:?}", k),
         }
