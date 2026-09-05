@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn heap_realloc_grows_and_preserves() {
-        kernel32::init_state(0x400000, 0..0);
+        kernel32::ensure_test_state();
         let mut ctx = context();
         let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
         let hheap = heap.addr;

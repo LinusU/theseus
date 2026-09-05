@@ -106,8 +106,8 @@ impl kernel32::State {
         self.environ.set((env.as_ptr() as usize - origin) as u32);
 
         let (params, buf) = RTL_USER_PROCESS_PARAMETERS::mut_from_prefix(buf).unwrap();
-        params.hStdOutput = 0xF11E_0002;
-        params.hStdError = 0xF11E_0003;
+        params.hStdOutput = crate::kernel32::file::STDOUT_HFILE;
+        params.hStdError = crate::kernel32::file::STDERR_HFILE;
 
         let (peb, _buf) = PEB::mut_from_prefix(buf).unwrap();
         peb.ProcessParameters = (params as *const _ as usize - origin) as u32;

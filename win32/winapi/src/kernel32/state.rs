@@ -26,6 +26,9 @@ pub struct State {
     /// Process environment variables, in insertion order. Names compare
     /// case-insensitively, matching Windows semantics.
     pub env: Vec<(String, String)>,
+    /// STD_INPUT_HANDLE/STD_OUTPUT_HANDLE/STD_ERROR_HANDLE as overridden by
+    /// SetStdHandle; GetStdHandle reports these values.
+    pub std_handles: [u32; 3],
     pub next_thread_id: u32,
     pub next_tls_index: u32,
     pub unhandled_exception_filter: u32,
@@ -38,11 +41,10 @@ pub struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
-pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
-    let mut state = STATE.lock().unwrap();
+fn build_state(image_base: u32, resources: std::ops::Range<u32>) -> State {
     let mut dlls = Box::new(kernel32::Exports::default());
     dlls.register_module("kernel32");
-    *state = Some(State {
+    State {
         image_base,
         resources,
         loaded_modules: HashMap::new(),
@@ -52,6 +54,11 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         command_line: Default::default(),
         environ: Default::default(),
         env: Vec::new(),
+        std_handles: [
+            crate::kernel32::file::STDIN_HFILE,
+            crate::kernel32::file::STDOUT_HFILE,
+            crate::kernel32::file::STDERR_HFILE,
+        ],
         next_thread_id: 2,
         next_tls_index: 0,
         unhandled_exception_filter: 0,
@@ -60,7 +67,21 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         process_priority_class: 0x20,
         dlls,
         objects: Handles::new(0x1000),
-    });
+    }
+}
+
+pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
+    *STATE.lock().unwrap() = Some(build_state(image_base, resources));
+}
+
+/// Initialize the shared state only when it is still empty, so parallel tests
+/// cannot reset each other's setup mid-assertion.
+#[cfg(test)]
+pub fn ensure_test_state() {
+    let mut state = STATE.lock().unwrap();
+    if state.is_none() {
+        *state = Some(build_state(0x400000, 0..0));
+    }
 }
 
 pub type Lock = LockedState<State>;
@@ -70,11 +91,11 @@ pub fn lock() -> Lock {
 
 #[cfg(test)]
 mod tests {
-    use super::{init_state, lock};
+    use super::{ensure_test_state, lock};
 
     #[test]
     fn kernel32_is_loaded_at_process_initialization() {
-        init_state(0x400000, 0..0);
+        ensure_test_state();
         assert!(lock().dlls.module_handle("KERNEL32.DLL").is_some());
     }
 }

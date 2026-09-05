@@ -21,6 +21,8 @@ pub use misc::*;
 pub use nls::*;
 pub use process::*;
 pub use resource::*;
+#[cfg(test)]
+pub use state::ensure_test_state;
 pub use state::{Lock, State, init_state, lock};
 pub use strings::*;
 pub use thread::*;

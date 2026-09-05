@@ -25,9 +25,9 @@ pub enum MoveMethod {
     FILE_END = 2,
 }
 
-const STDIN_HFILE: HANDLE = 0xF11E_0001;
-const STDOUT_HFILE: HANDLE = 0xF11E_0002;
-const STDERR_HFILE: HANDLE = 0xF11E_0003;
+pub(crate) const STDIN_HFILE: HANDLE = 0xF11E_0001;
+pub(crate) const STDOUT_HFILE: HANDLE = 0xF11E_0002;
+pub(crate) const STDERR_HFILE: HANDLE = 0xF11E_0003;
 
 const INVALID_SET_FILE_POINTER: u32 = 0xFFFF_FFFF;
 
@@ -159,13 +159,20 @@ pub fn GetDriveTypeA(ctx: &mut Context, lpRootPathName: Ptr<u8>) -> u32 {
     drive_type(path.as_deref())
 }
 
+fn std_handle_index(nStdHandle: u32) -> Option<usize> {
+    match nStdHandle as i32 {
+        -10 => Some(0),
+        -11 => Some(1),
+        -12 => Some(2),
+        _ => None,
+    }
+}
+
 #[win32_derive::dllexport]
 pub fn GetStdHandle(_ctx: &mut Context, nStdHandle: u32) -> u32 {
-    match nStdHandle as i32 {
-        -10 => STDIN_HFILE,
-        -11 => STDOUT_HFILE,
-        -12 => STDERR_HFILE,
-        _ => {
+    match std_handle_index(nStdHandle) {
+        Some(i) => lock().std_handles[i],
+        None => {
             log::error!("GetStdHandle: invalid handle");
             0
         }
@@ -173,8 +180,13 @@ pub fn GetStdHandle(_ctx: &mut Context, nStdHandle: u32) -> u32 {
 }
 
 #[win32_derive::dllexport]
-pub fn SetStdHandle(_ctx: &mut Context, _nStdHandle: u32, _hHandle: u32) -> u32 {
-    crate::stub!(1)
+pub fn SetStdHandle(_ctx: &mut Context, nStdHandle: u32, hHandle: u32) -> bool {
+    let Some(i) = std_handle_index(nStdHandle) else {
+        log::warn!("SetStdHandle: invalid nStdHandle {nStdHandle:x}");
+        return false;
+    };
+    lock().std_handles[i] = hHandle;
+    true
 }
 
 #[win32_derive::dllexport]

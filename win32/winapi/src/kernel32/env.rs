@@ -155,9 +155,12 @@ mod tests {
         }
     }
 
+    /// The two cases share one test so they cannot interleave on the shared
+    /// environment list.
     #[test]
-    fn environment_round_trip() {
-        crate::kernel32::init_state(0x400000, 0..0);
+    fn environment_variables_round_trip_and_list() {
+        crate::kernel32::ensure_test_state();
+        lock().env.clear();
         lock().process_heap = crate::heap::Heap::new(0x100_000, 0x100_000);
         let mut ctx = context();
         // teb_mut dereferences fs_base; give it a live region.
@@ -193,27 +196,20 @@ mod tests {
             crate::kernel32::teb(&mut ctx).LastErrorValue,
             ERROR_ENVVAR_NOT_FOUND
         );
-    }
 
-    #[test]
-    fn environment_block_lists_variables() {
-        crate::kernel32::init_state(0x400000, 0..0);
-        lock().process_heap = crate::heap::Heap::new(0x100_000, 0x100_000);
-        let mut ctx = context();
-        ctx.cpu.regs.fs_base = 0x2000;
-
-        ctx.memory[0x3000..][..4].copy_from_slice(b"Foo\0");
-        ctx.memory[0x3100..][..4].copy_from_slice(b"Bar\0");
-        ctx.memory[0x3200..][..3].copy_from_slice(b"42\0");
+        // The environment block lists the current variables.
+        ctx.memory[0x3300..][..4].copy_from_slice(b"Foo\0");
+        ctx.memory[0x3400..][..4].copy_from_slice(b"Bar\0");
+        ctx.memory[0x3500..][..3].copy_from_slice(b"42\0");
         assert!(SetEnvironmentVariableA(
             &mut ctx,
-            Ptr::new(0x3000),
-            Ptr::new(0x3200)
+            Ptr::new(0x3300),
+            Ptr::new(0x3500)
         ));
         assert!(SetEnvironmentVariableA(
             &mut ctx,
-            Ptr::new(0x3100),
-            Ptr::new(0x3200)
+            Ptr::new(0x3400),
+            Ptr::new(0x3500)
         ));
 
         let block = GetEnvironmentStrings(&mut ctx);
