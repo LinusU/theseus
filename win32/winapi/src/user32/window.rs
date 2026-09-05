@@ -62,7 +62,10 @@ impl Window {
             return;
         }
         let stride = self.width * 4;
-        let pixels = self.pixels.unwrap();
+        let Some(pixels) = self.pixels else {
+            // Nothing was ever drawn into this window's buffer.
+            return;
+        };
         let pixels = &mut ctx.memory[pixels..][..(self.height * stride) as usize];
         let surface = self
             .surface
@@ -323,7 +326,10 @@ pub fn MoveWindow(
 ) -> bool {
     let state = state();
     let window = state.window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
     window.x = X;
     window.y = Y;
     window.resize(ctx, nWidth as u32, nHeight as u32);
@@ -527,7 +533,9 @@ pub fn RegisterClassA(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
 
 #[win32_derive::dllexport]
 pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
-    let wndclass = lpWndClass.read(&ctx.memory).unwrap();
+    let Some(wndclass) = lpWndClass.read(&ctx.memory) else {
+        return 0;
+    };
     let background = if wndclass.hbrBackground.is_null() {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {
@@ -537,13 +545,10 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
             .ok()
             .map(|color| Brush(Some(color.to_colorref())))
     } else {
-        Some(
-            gdi32::lock()
-                .objects
-                .get(wndclass.hbrBackground)
-                .unwrap()
-                .unwrap_brush(),
-        )
+        match gdi32::lock().objects.get(wndclass.hbrBackground) {
+            Some(gdi32::Object::Brush(brush)) => Some(brush.clone()),
+            _ => return 0,
+        }
     };
     state().register_class(WndClass {
         wndproc: ctx.indirect(wndclass.lpfnWndProc),
@@ -675,8 +680,9 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
 pub fn ReleaseDC(ctx: &mut Context, hWnd: HWND, hDC: HDC) -> i32 {
     if !hWnd.is_null() {
         let window = user32::state().window.borrow();
-        let mut window = window.as_ref().unwrap().borrow_mut();
-        window.flush(ctx);
+        if let Some(window) = window.as_ref() {
+            window.borrow_mut().flush(ctx);
+        }
     }
     gdi32::lock().release_dc(hDC);
     1 // success
@@ -919,8 +925,12 @@ pub fn MapWindowPoints(
 
     let mut points = lpPoints;
     for _ in 0..cPoints {
-        let point = points.read(&ctx.memory).unwrap();
-        points.write(&mut ctx.memory, point.add(delta)).unwrap();
+        let Some(point) = points.read(&ctx.memory) else {
+            return 0;
+        };
+        if points.write(&mut ctx.memory, point.add(delta)).is_none() {
+            return 0;
+        }
         points.advance();
     }
 
