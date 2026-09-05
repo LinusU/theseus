@@ -1,4 +1,4 @@
-use crate::codegen::{self, CodeGen};
+use crate::codegen::{self, CodeGen, instr_name};
 
 fn is_xmm_reg(reg: iced_x86::Register) -> bool {
     use iced_x86::Register::*;
@@ -65,6 +65,21 @@ impl<'a> CodeGen<'a> {
             // Aligned and unaligned 128-bit moves are identical in the emulated
             // flat memory model; both copy 16 bytes without any alignment check.
             Movups | Movaps => self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1))),
+
+            // Packed single-precision arithmetic and bitwise operations.
+            Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             _ => return false,
         }
         true
