@@ -92,16 +92,34 @@ impl Context {
     }
 
     pub fn enter(&mut self, bytes: u16, nesting: u8) {
-        assert_eq!(nesting, 0);
+        let nesting = nesting & 0x1f;
         if self.cpu.real_mode {
-            self.push16(self.cpu.regs.get_bp());
-            self.cpu.regs.set_bp(self.cpu.regs.get_sp());
+            let old_bp = self.cpu.regs.get_bp();
+            self.push16(old_bp);
+            let frame_temp = self.cpu.regs.get_sp();
+            for i in 1..nesting {
+                let addr = segofs(self.cpu.regs.ss, old_bp.wrapping_sub(u16::from(i) * 2));
+                self.push16(self.memory.read::<u16>(addr));
+            }
+            if nesting != 0 {
+                self.push16(frame_temp);
+            }
+            self.cpu.regs.set_bp(frame_temp);
             self.cpu
                 .regs
                 .set_sp(self.cpu.regs.get_sp().wrapping_sub(bytes));
         } else {
-            self.push32(self.cpu.regs.ebp);
-            self.cpu.regs.ebp = self.cpu.regs.esp;
+            let old_bp = self.cpu.regs.ebp;
+            self.push32(old_bp);
+            let frame_temp = self.cpu.regs.esp;
+            for i in 1..nesting {
+                let addr = old_bp.wrapping_sub(u32::from(i) * 4);
+                self.push32(self.memory.read::<u32>(addr));
+            }
+            if nesting != 0 {
+                self.push32(frame_temp);
+            }
+            self.cpu.regs.ebp = frame_temp;
             self.cpu.regs.esp -= bytes as u32;
         }
     }
@@ -515,6 +533,23 @@ mod tests {
         ctx.leave();
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
         assert_eq!(ctx.cpu.regs.ebp, 0xfeed_0200);
+    }
+
+    #[test]
+    fn real_mode_enter_copies_nested_frame_pointers() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0xabcd_0200;
+        ctx.cpu.regs.ebp = 0xfeed_0100;
+        ctx.memory.write::<u16>(segofs(0x1000, 0x00fe), 0xaaaa);
+
+        ctx.enter(4, 2);
+
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_01f6);
+        assert_eq!(ctx.cpu.regs.ebp, 0xfeed_01fe);
+        assert_eq!(ctx.memory.read::<u16>(segofs(0x1000, 0x01fc)), 0xaaaa);
+        assert_eq!(ctx.memory.read::<u16>(segofs(0x1000, 0x01fa)), 0x01fe);
     }
 
     #[test]
