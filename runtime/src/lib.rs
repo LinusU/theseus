@@ -7,6 +7,7 @@ mod memory;
 mod mmx;
 mod ops;
 mod registers;
+mod xmm;
 
 pub use exe::EXEData;
 pub use flags::Flags;

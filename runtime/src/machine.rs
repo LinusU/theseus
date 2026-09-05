@@ -1,10 +1,11 @@
-use crate::{Cont, ContFn, Flags, Memory, Regs, SegOfs, fpu::FPU, mmx::MMX, segofs};
+use crate::{Cont, ContFn, Flags, Memory, Regs, SegOfs, fpu::FPU, mmx::MMX, segofs, xmm::XMM};
 
 pub struct CPU {
     pub regs: Regs,
     pub flags: Flags,
     pub fpu: FPU,
     pub mmx: MMX,
+    pub xmm: XMM,
     pub real_mode: bool,
     /// SSE MXCSR register, kept for stmxcsr/ldmxcsr state even though no SSE
     /// unit is modeled.
@@ -18,6 +19,7 @@ impl Default for CPU {
             flags: Flags::default(),
             fpu: FPU::default(),
             mmx: MMX::default(),
+            xmm: XMM::default(),
             real_mode: false,
             mxcsr: 0x1f80,
         }

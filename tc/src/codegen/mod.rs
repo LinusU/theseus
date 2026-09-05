@@ -7,6 +7,7 @@ mod math;
 mod misc;
 mod mmx;
 mod string;
+mod xmm;
 
 use crate::{Block, BlockType, Instr, Module, State, memory::Memory, write_if_changed};
 
@@ -316,6 +317,7 @@ impl<'a> CodeGen<'a> {
         } else if self.codegen_misc(&instr.iced) {
         } else if self.codegen_fpu(&instr.iced) {
         } else if self.codegen_mmx(&instr.iced) {
+        } else if self.codegen_xmm(&instr.iced) {
         } else {
             anyhow::bail!("{:?} not implemented", instr.iced.mnemonic());
         }
@@ -1362,6 +1364,49 @@ mod tests {
                 &[0x0f, 0xd7, 0xc0],
                 "ctx.cpu.regs.eax = pmovmskb(ctx.cpu.mmx.mm0);",
             ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
+    fn codegen_handles_sse1_moves() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // movups xmm0, xmm1
+            (
+                &[0x0f, 0x10, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = ctx.cpu.xmm.xmm1;",
+            ),
+            // movups xmm0, [eax]
+            (
+                &[0x0f, 0x10, 0x00],
+                "ctx.cpu.xmm.xmm0 = ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax);",
+            ),
+            // movups [eax], xmm1
+            (
+                &[0x0f, 0x11, 0x08],
+                "ctx.memory.write::<[u32; 4]>(ctx.cpu.regs.eax, ctx.cpu.xmm.xmm1);",
+            ),
+            // movaps xmm0, xmm1 (same lowering as movups in emulated memory)
+            (&[0x0f, 0x28, 0xc1], "ctx.cpu.xmm.xmm0 = ctx.cpu.xmm.xmm1;"),
         ] {
             codegen.buf.clear();
             let mut decoder =
