@@ -390,8 +390,19 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
     };
     let src = lpString2.addr as usize;
     let dst = lpString1.addr as usize;
-    let bytes = (len + 1) * 2;
-    ctx.memory.bytes.copy_within(src..src + bytes, dst as usize);
+    let Some(bytes) = len.checked_add(1).and_then(|len| len.checked_mul(2)) else {
+        return 0;
+    };
+    let Some(src_end) = src.checked_add(bytes) else {
+        return 0;
+    };
+    let Some(dst_end) = dst.checked_add(bytes) else {
+        return 0;
+    };
+    if src_end > ctx.memory.bytes.len() || dst_end > ctx.memory.bytes.len() {
+        return 0;
+    }
+    ctx.memory.bytes.copy_within(src..src_end, dst);
     lpString1.addr
 }
 
@@ -451,6 +462,15 @@ mod tests {
         assert_eq!(ctx.memory.read::<u16>(0x1200), b'A' as u16);
         assert_eq!(ctx.memory.read::<u16>(0x1202), 0x03b2);
         assert_eq!(ctx.memory.read::<u16>(0x1204), 0);
+    }
+
+    #[test]
+    fn wide_string_copy_rejects_truncated_destination() {
+        let mut ctx = context();
+        ctx.memory.write::<u16>(0x1000, b'A' as u16);
+        ctx.memory.write::<u16>(0x1002, 0);
+
+        assert_eq!(lstrcpyW(&mut ctx, Ptr::new(0x3fff), Ptr::new(0x1000)), 0);
     }
 
     #[test]
