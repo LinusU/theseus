@@ -1,7 +1,7 @@
 use runtime::Context;
 
 use crate::{
-    kernel32, stub,
+    kernel32,
     winmm::{state, winmm_main},
 };
 
@@ -33,21 +33,24 @@ pub struct TIME {
     /// Some(pulse) when the callback parameter is an event handle to
     /// signal (EVENT_SET/EVENT_PULSE) rather than a function.
     event_pulse: Option<bool>,
+    /// False when `fuEvent` contains bits the emulated model does not handle.
+    valid: bool,
 }
 
 impl crate::dllexport::FromABIParam for TIME {
     fn from_abi(val: u32) -> Self {
         // kind of a bitfield, kind of an enum
         let periodic = (val & 0xF) != 0;
-        let event_pulse = match val & 0xF0 {
-            0x00 => None,        // FUNCTION
-            0x10 => Some(false), // EVENT_SET
-            0x20 => Some(true),  // EVENT_PULSE
-            _ => unimplemented!(),
+        let (valid, event_pulse) = match val & 0xF0 {
+            0x00 => (true, None),        // FUNCTION
+            0x10 => (true, Some(false)), // EVENT_SET
+            0x20 => (true, Some(true)),  // EVENT_PULSE
+            _ => (false, None),
         };
         TIME {
             periodic,
             event_pulse,
+            valid,
         }
     }
 }
@@ -61,6 +64,10 @@ pub fn timeSetEvent(
     dwUser: u32,
     fuEvent: TIME,
 ) -> u32 {
+    if !fuEvent.valid {
+        return 0;
+    }
+
     let notify = match fuEvent.event_pulse {
         None => Notify::Function(lpTimeProc),
         Some(pulse) => Notify::Event {
@@ -82,7 +89,7 @@ pub fn timeSetEvent(
         winmm_main(ctx);
     });
 
-    stub!(1)
+    1
 }
 
 #[win32_derive::dllexport]
@@ -103,6 +110,7 @@ pub fn timeKillEvent(_ctx: &mut Context, uTimerID: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dllexport::FromABIParam;
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -132,5 +140,12 @@ mod tests {
         assert_eq!(timeKillEvent(&mut ctx, 2), 5); // wrong id
         assert_eq!(timeKillEvent(&mut ctx, 1), 0);
         assert!(state().timer.is_none());
+    }
+
+    #[test]
+    fn time_set_event_rejects_unknown_callback_kinds() {
+        assert_eq!(TIME::from_abi(0x30).valid, false);
+        assert_eq!(TIME::from_abi(0x11).valid, true); // periodic | EVENT_SET
+        assert_eq!(TIME::from_abi(0x21).valid, true); // periodic | EVENT_PULSE
     }
 }
