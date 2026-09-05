@@ -97,15 +97,95 @@ pub fn ReleaseMutex(_ctx: &mut Context, _hMutex: HANDLE) -> bool {
     true
 }
 
+enum Waitable {
+    Event(Arc<Event>),
+    /// Mutexes are always signaled: there is only one x86 thread.
+    Always,
+    /// Thread handles never signal; the emulated process has one thread that
+    /// does not exit.
+    Never,
+}
+
+impl Waitable {
+    fn signaled(&self) -> bool {
+        match self {
+            Waitable::Event(event) => *event.signaled.lock().unwrap(),
+            Waitable::Always => true,
+            Waitable::Never => false,
+        }
+    }
+
+    /// Auto-reset events are consumed by a completed wait.
+    fn consume(&self) {
+        if let Waitable::Event(event) = self
+            && !event.manual_reset
+        {
+            *event.signaled.lock().unwrap() = false;
+        }
+    }
+}
+
 #[win32_derive::dllexport]
 pub fn WaitForMultipleObjects(
-    _ctx: &mut Context,
-    _nCount: u32,
-    _lpHandles: Ptr<u32>,
-    _bWaitAll: bool,
-    _dwMilliseconds: u32,
+    ctx: &mut Context,
+    nCount: u32,
+    lpHandles: Ptr<u32>,
+    bWaitAll: bool,
+    dwMilliseconds: u32,
 ) -> u32 /* WAIT_EVENT */ {
-    crate::stub!(0) // WAIT_OBJECT_0
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 0x102;
+    const WAIT_FAILED: u32 = u32::MAX;
+    const INFINITE: u32 = u32::MAX;
+
+    if nCount == 0 {
+        return WAIT_FAILED;
+    }
+    let mut waitables = Vec::with_capacity(nCount as usize);
+    {
+        let kernel32 = lock();
+        for i in 0..nCount {
+            let raw = ctx.memory.read::<u32>(lpHandles.addr + i * 4);
+            match kernel32.objects.get(HANDLE::from_raw(raw)) {
+                Some(Object::Event(event)) => waitables.push(Waitable::Event(event.clone())),
+                Some(Object::Mutex) => waitables.push(Waitable::Always),
+                Some(Object::Thread) => waitables.push(Waitable::Never),
+                _ => return WAIT_FAILED,
+            }
+        }
+    }
+
+    let deadline = (dwMilliseconds != INFINITE).then(|| {
+        std::time::Instant::now() + std::time::Duration::from_millis(dwMilliseconds as u64)
+    });
+    loop {
+        let mut any = None;
+        let mut all = true;
+        for (i, waitable) in waitables.iter().enumerate() {
+            if waitable.signaled() {
+                if any.is_none() {
+                    any = Some(i);
+                }
+            } else {
+                all = false;
+            }
+        }
+        if (!bWaitAll && any.is_some()) || (bWaitAll && all) {
+            if bWaitAll {
+                for waitable in &waitables {
+                    waitable.consume();
+                }
+                return WAIT_OBJECT_0;
+            }
+            let index = any.unwrap();
+            waitables[index].consume();
+            return WAIT_OBJECT_0 + index as u32;
+        }
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return WAIT_TIMEOUT;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 /// Signal an event object by handle, used by timer notifications that
