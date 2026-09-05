@@ -226,6 +226,34 @@ pub fn cvttss2si(src: u32) -> u32 {
     (f32::from_bits(src) as i32) as u32
 }
 
+pub fn cvtpi2ps(dst: [u32; 4], src: u64) -> [u32; 4] {
+    let low = (src as u32) as i32;
+    let high = (src >> 32) as i32;
+    [
+        (low as f32).to_bits(),
+        (high as f32).to_bits(),
+        dst[2],
+        dst[3],
+    ]
+}
+
+fn cvt_f32_to_i32(src: u32, truncate: bool) -> i32 {
+    let f = f32::from_bits(src);
+    if truncate { f as i32 } else { f.round() as i32 }
+}
+
+pub fn cvtps2pi(src: [u32; 2]) -> u64 {
+    let low = cvt_f32_to_i32(src[0], false) as u64 as u32 as u64;
+    let high = (cvt_f32_to_i32(src[1], false) as u64) << 32;
+    low | high
+}
+
+pub fn cvttps2pi(src: [u32; 2]) -> u64 {
+    let low = cvt_f32_to_i32(src[0], true) as u64 as u32 as u64;
+    let high = (cvt_f32_to_i32(src[1], true) as u64) << 32;
+    low | high
+}
+
 pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
     let a = f32::from_bits(dst[0]);
     let b = f32::from_bits(src);

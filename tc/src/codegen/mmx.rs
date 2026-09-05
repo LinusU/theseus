@@ -21,7 +21,7 @@ fn mmx_reg(reg: iced_x86::Register) -> String {
 }
 
 impl<'a> CodeGen<'a> {
-    fn mmx_get(&self, instr: &iced_x86::Instruction, n: u32) -> String {
+    pub(crate) fn mmx_get(&self, instr: &iced_x86::Instruction, n: u32) -> String {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => mmx_reg(instr.op_register(n)),
@@ -46,7 +46,7 @@ impl<'a> CodeGen<'a> {
         self.get_op(instr, n)
     }
 
-    fn mmx_set(&self, instr: &iced_x86::Instruction, n: u32, expr: String) -> String {
+    pub(crate) fn mmx_set(&self, instr: &iced_x86::Instruction, n: u32, expr: String) -> String {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => format!("{} = {};", mmx_reg(instr.op_register(n)), expr),

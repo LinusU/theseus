@@ -40,6 +40,18 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    fn xmm_get_64(&self, instr: &iced_x86::Instruction, n: u32) -> String {
+        use iced_x86::OpKind::*;
+        match instr.op_kind(n) {
+            Register => format!("low_qword({})", xmm_reg(instr.op_register(n))),
+            Memory => {
+                let addr = self.gen_addr(instr);
+                codegen::get_mem("[u32; 2]".into(), addr)
+            }
+            k => todo!("{k:?}"),
+        }
+    }
+
     fn xmm_get_32(&self, instr: &iced_x86::Instruction, n: u32) -> String {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
@@ -238,6 +250,22 @@ impl<'a> CodeGen<'a> {
                 let func = instr_name(instr);
                 let src = self.xmm_get_32(instr, 1);
                 self.line(self.set_op(instr, 0, format!("{func}({src})")));
+            }
+
+            // MMX/XMM packed conversions. CVTPI2PS reads a 64-bit MMX value and
+            // converts two int32s to two floats in the low qword of the XMM
+            // destination. CVTPS2PI/CVTTPS2PI read the low qword of an XMM
+            // source (or a 64-bit memory pair) and convert two floats to two
+            // int32s in the MMX destination.
+            Cvtpi2ps => {
+                let src = self.mmx_get(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                self.line(self.xmm_set(instr, 0, format!("cvtpi2ps({}, {})", dst, src)));
+            }
+            Cvtps2pi | Cvttps2pi => {
+                let func = instr_name(instr);
+                let src = self.xmm_get_64(instr, 1);
+                self.line(self.mmx_set(instr, 0, format!("{func}({src})")));
             }
 
             // 64-bit low/high loads and stores. Memory loads replace the
