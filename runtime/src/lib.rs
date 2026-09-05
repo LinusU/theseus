@@ -57,6 +57,15 @@ pub fn rdtsc() -> u64 {
         .as_nanos() as u64
 }
 
+pub fn port_in(port: u16, width: u32) -> u32 {
+    log::warn!("port input {port:#x}/{width} is unavailable; returning zero");
+    0
+}
+
+pub fn port_out(port: u16, data: u32, width: u32) {
+    log::warn!("port output {port:#x}/{width}: {data:#x} ignored");
+}
+
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     match (leaf, subleaf) {
         (0, 0) => (1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69),

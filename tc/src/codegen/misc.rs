@@ -192,6 +192,16 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("ctx.{}();", instr_name(instr)));
             }
 
+            In => {
+                assert_eq!(instr.op_count(), 2);
+                let port = if instr.op1_kind() == iced_x86::OpKind::Immediate8 {
+                    format!("{:#x}u16", instr.immediate8())
+                } else {
+                    self.get_op(instr, 1)
+                };
+                let width = op_size(instr, 0);
+                self.line(self.set_op(instr, 0, format!("port_in({port}, {width}) as u{width}")));
+            }
             Out => {
                 assert_eq!(instr.op_count(), 2);
                 let port = if instr.op0_kind() == iced_x86::OpKind::Immediate8 {
@@ -200,7 +210,15 @@ impl<'a> CodeGen<'a> {
                 } else {
                     self.get_op(instr, 0)
                 };
-                self.line(format!("dos::out(ctx, {port}, {});", self.get_op(instr, 1)));
+                let width = op_size(instr, 1);
+                if self.module.is_dos() {
+                    self.line(format!("dos::out(ctx, {port}, {});", self.get_op(instr, 1)));
+                } else {
+                    self.line(format!(
+                        "port_out({port}, ({}) as u32, {width});",
+                        self.get_op(instr, 1)
+                    ));
+                }
             }
 
             Lds | Les | Lfs | Lgs | Lss => {

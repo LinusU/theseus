@@ -644,6 +644,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_port_io() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0xec][..],
+                "ctx.cpu.regs.set_al(port_in(ctx.cpu.regs.get_dx(), 8) as u8);",
+            ),
+            (
+                &[0xe7, 0x80][..],
+                "port_out(0x80u16, (ctx.cpu.regs.eax) as u32, 32);",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
     fn codegen_registers_statically_imported_modules() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule {
