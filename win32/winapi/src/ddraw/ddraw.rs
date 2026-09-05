@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use runtime::*;
+use zerocopy::FromBytes;
 
 use super::types::*;
 use crate::{
@@ -133,6 +134,7 @@ impl DirectDraw {
             attachments: Vec::new(),
             pixels: None,
             palette: None,
+            clipper: None,
             src_color_key: None,
             dst_color_key: None,
         }));
@@ -187,6 +189,11 @@ pub struct Surface {
     pub pixels: Option<u32>,
 
     pub palette: Option<Rc<RefCell<Palette>>>,
+
+    /// The IDirectDrawClipper interface pointer attached through SetClipper.
+    /// Clipper objects are not modeled (they only affect windowed-mode blits),
+    /// so the pointer is tracked but never dereferenced.
+    pub clipper: Option<u32>,
 
     /// Pixel values that read as transparent when this surface is the source
     /// of a blit — how sprites get their transparent background.
@@ -346,6 +353,58 @@ impl Surface {
 
 pub struct Palette {
     pub entries: Vec<PALETTEENTRY>,
+}
+
+/// Shared body for `IDirectDraw::CreatePalette`/`IDirectDraw7::CreatePalette`:
+/// reads the caller's initial PALETTEENTRY table (or zero-initializes when
+/// absent), registers a palette object, and returns its interface pointer.
+/// `new_pointer` allocates the interface object with the right vtable.
+pub fn create_palette(
+    ctx: &mut Context,
+    flags: u32,
+    lp_entries: u32,
+    lplp_pal: u32,
+    new_pointer: impl FnOnce(&mut Context) -> u32,
+) -> DD {
+    if lplp_pal == 0 {
+        return DD::ERR_INVALIDPARAMS;
+    }
+    // DDPCAPS_8BIT/4BIT/2BIT/1BIT choose the table size; absent a depth flag
+    // the default is 256.
+    let count = if flags & DDPCAPS::_8BIT.bits() != 0 {
+        256
+    } else if flags & DDPCAPS::_4BIT.bits() != 0 {
+        16
+    } else if flags & DDPCAPS::_2BIT.bits() != 0 {
+        4
+    } else if flags & DDPCAPS::_1BIT.bits() != 0 {
+        2
+    } else {
+        256
+    };
+    let entries = if lp_entries == 0 {
+        vec![
+            PALETTEENTRY {
+                peRed: 0,
+                peGreen: 0,
+                peBlue: 0,
+                peFlags: 0,
+            };
+            count
+        ]
+    } else {
+        match <[PALETTEENTRY]>::ref_from_prefix_with_elems(&ctx.memory[lp_entries..], count) {
+            Ok((entries, _)) => entries.to_vec(),
+            Err(_) => return DD::ERR_INVALIDPARAMS,
+        }
+    };
+    let ptr = new_pointer(ctx);
+    state()
+        .palette
+        .borrow_mut()
+        .insert(ptr, Rc::new(RefCell::new(Palette { entries })));
+    ctx.memory.write::<u32>(lplp_pal, ptr);
+    DD::OK
 }
 
 pub fn get_pixel_format() -> DDPIXELFORMAT {

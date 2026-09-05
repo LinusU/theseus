@@ -132,19 +132,23 @@ pub mod IDirectDraw7 {
         _lplpClipper: u32,
         _pUnkOuter: u32,
     ) -> DD {
-        todo!()
+        // Clippers only constrain windowed-mode blits; the emulated display is
+        // exclusive-mode, so no clipper object model exists.
+        DD::ERR_NODIRECTDRAWHW
     }
 
     #[win32_derive::dllexport]
     pub fn CreatePalette(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _flags: u32,
-        _lpColorTable: u32,
-        _lplpPalette: u32,
+        flags: u32,
+        lpColorTable: u32,
+        lplpPalette: u32,
         _pUnkOuter: u32,
     ) -> DD {
-        todo!()
+        crate::ddraw::create_palette(ctx, flags, lpColorTable, lplpPalette, |ctx| {
+            crate::ddraw::ddraw1::IDirectDrawPalette::new(ctx, &mut kernel32::lock().process_heap)
+        })
     }
 
     #[win32_derive::dllexport]
@@ -176,7 +180,9 @@ pub mod IDirectDraw7 {
         _lpDDSurface: u32,
         _lplpDupDDSurface: u32,
     ) -> DD {
-        todo!()
+        // Surfaces own their pixel storage; there is no shared-backing model a
+        // duplicate could point at.
+        DD::ERR_CANTDUPLICATE
     }
 
     #[win32_derive::dllexport]
@@ -188,9 +194,39 @@ pub mod IDirectDraw7 {
         lpContext: u32,
         lpEnumCallback: u32,
     ) -> DD {
-        if lpSurfaceDesc2 != 0 {
-            todo!("EnumDisplayModes with a filter desc");
-        }
+        // A filter desc limits enumeration to modes matching its DDSD fields.
+        let filter = if lpSurfaceDesc2 != 0 {
+            let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpSurfaceDesc2..])
+            else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            if desc.dwSize != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
+                return DD::ERR_INVALIDPARAMS;
+            }
+            Some(desc)
+        } else {
+            None
+        };
+        let filter_matches =
+            |desc: &DDSURFACEDESC2, width: u32, height: u32, bpp: u32, refresh: u32| {
+                if desc.dwFlags.contains(DDSD::WIDTH) && desc.dwWidth != width {
+                    return false;
+                }
+                if desc.dwFlags.contains(DDSD::HEIGHT) && desc.dwHeight != height {
+                    return false;
+                }
+                if desc.dwFlags.contains(DDSD::PIXELFORMAT)
+                    && desc.ddpfPixelFormat.dwRGBBitCount != bpp
+                {
+                    return false;
+                }
+                if desc.dwFlags.contains(DDSD::REFRESHRATE)
+                    && desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle != refresh
+                {
+                    return false;
+                }
+                true
+            };
 
         const RESOLUTIONS: &[(u32, u32)] = &[(640, 480), (800, 600), (1024, 768)];
         const BIT_DEPTHS: &[u32] = &[8, 16, 32];
@@ -199,6 +235,11 @@ pub mod IDirectDraw7 {
         for &(width, height) in RESOLUTIONS {
             for &bpp in BIT_DEPTHS {
                 for &refresh in REFRESH_RATES {
+                    if let Some(filter) = &filter
+                        && !filter_matches(filter, width, height, bpp, refresh)
+                    {
+                        continue;
+                    }
                     let mut desc = DDSURFACEDESC2::default();
                     desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
                     desc.dwFlags = DDSD::WIDTH
@@ -1075,8 +1116,24 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetClipper(_ctx: &mut Context, _this: u32, _lplpDDClipper: u32) -> DD {
-        todo!()
+    pub fn GetClipper(ctx: &mut Context, this: u32, lplpDDClipper: u32) -> DD {
+        if lplpDDClipper == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        match surface.borrow().clipper {
+            Some(clipper) => {
+                ctx.memory.write::<u32>(lplpDDClipper, clipper);
+                DD::OK
+            }
+            None => {
+                ctx.memory.write::<u32>(lplpDDClipper, 0);
+                DD::ERR_NOCLIPPERATTACHED
+            }
+        }
     }
 
     #[win32_derive::dllexport]
@@ -1265,8 +1322,15 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(_ctx: &mut Context, _this: u32, _lpDDClipper: u32) -> DD {
-        todo!()
+    pub fn SetClipper(_ctx: &mut Context, this: u32, lpDDClipper: u32) -> DD {
+        let surfaces = state().surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        // The clipper pointer is opaque to us — CreateClipper never succeeds,
+        // so the only value a caller can legitimately pass is zero to detach.
+        surface.borrow_mut().clipper = (lpDDClipper != 0).then_some(lpDDClipper);
+        DD::OK
     }
 
     #[win32_derive::dllexport]

@@ -1,10 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
-
 use runtime::Context;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    ddraw::{DD, GUID, Palette, get_pixel_format, state, types::*},
+    ddraw::{DD, GUID, get_pixel_format, state, types::*},
     heap::Heap,
     kernel32, stub,
     user32::HWND,
@@ -98,29 +96,20 @@ pub mod IDirectDraw {
     pub fn CreatePalette(
         ctx: &mut Context,
         _this: u32,
-        flags: DDPCAPS,
+        flags: Result<DDPCAPS, u32>,
         lpEntries: u32,
         lplpPal: u32,
         pUnkOuter: u32,
     ) -> DD {
-        assert_eq!(pUnkOuter, 0);
-        assert!(flags.contains(DDPCAPS::_8BIT));
-
-        let mut kernel32 = kernel32::lock();
-        let ptr = IDirectDrawPalette::new(ctx, &mut kernel32.process_heap);
-
-        let entries = <[PALETTEENTRY]>::ref_from_prefix_with_elems(&ctx.memory[lpEntries..], 256)
-            .unwrap()
-            .0;
-        state().palette.borrow_mut().insert(
-            ptr,
-            Rc::new(RefCell::new(Palette {
-                entries: entries.into_iter().cloned().collect(),
-            })),
-        );
-        ctx.memory.write::<u32>(lplpPal, ptr);
-
-        DD::OK
+        if pUnkOuter != 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok(flags) = flags else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        crate::ddraw::create_palette(ctx, flags.bits(), lpEntries, lplpPal, |ctx| {
+            IDirectDrawPalette::new(ctx, &mut kernel32::lock().process_heap)
+        })
     }
 
     #[win32_derive::dllexport]
