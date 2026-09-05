@@ -14,31 +14,45 @@ pub enum CSTR {
 
 const NORM_IGNORECASE: u32 = 1;
 
+fn read_c_string(ctx: &Context, addr: u32) -> Option<Vec<u8>> {
+    let buf = &ctx.memory[addr..];
+    let len = buf.iter().position(|&byte| byte == 0)?;
+    Some(buf[..len].to_vec())
+}
+
 #[win32_derive::dllexport]
 pub fn lstrlenA(ctx: &mut Context, lpString: Ptr<u8>) -> i32 {
-    // A null string faults on Windows too, so let the null page guard catch it
-    // rather than inventing a length.
-    ctx.memory.read_str(lpString.addr).len() as i32
+    let Some(string) = read_c_string(ctx, lpString.addr) else {
+        log::error!("lstrlenA: unterminated string");
+        return 0;
+    };
+    string.len() as i32
 }
 
 #[win32_derive::dllexport]
 pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
-    let bytes = src.as_bytes();
-    ctx.memory[lpString1.addr..][..bytes.len()].copy_from_slice(bytes);
-    ctx.memory
-        .write::<u8>(lpString1.addr + bytes.len() as u32, 0);
+    let Some(src) = read_c_string(ctx, lpString2.addr) else {
+        log::error!("lstrcpyA: unterminated source string");
+        return 0;
+    };
+    ctx.memory[lpString1.addr..][..src.len()].copy_from_slice(&src);
+    ctx.memory.write::<u8>(lpString1.addr + src.len() as u32, 0);
     lpString1.addr
 }
 
 #[win32_derive::dllexport]
 pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
-    let dst_len = ctx.memory.read_str(lpString1.addr).len() as u32;
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
-    let bytes = src.as_bytes();
-    ctx.memory[lpString1.addr + dst_len..][..bytes.len()].copy_from_slice(bytes);
-    ctx.memory
-        .write::<u8>(lpString1.addr + dst_len + bytes.len() as u32, 0);
+    let Some(dst) = read_c_string(ctx, lpString1.addr) else {
+        log::error!("lstrcatA: unterminated destination string");
+        return 0;
+    };
+    let Some(src) = read_c_string(ctx, lpString2.addr) else {
+        log::error!("lstrcatA: unterminated source string");
+        return 0;
+    };
+    let dst_addr = lpString1.addr + dst.len() as u32;
+    ctx.memory[dst_addr..][..src.len()].copy_from_slice(&src);
+    ctx.memory.write::<u8>(dst_addr + src.len() as u32, 0);
     lpString1.addr
 }
 
@@ -60,11 +74,11 @@ fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
     if count < -1 {
         return None;
     }
-    Some(if count < 0 {
-        ctx.memory.read_str(addr).as_bytes().to_vec()
+    if count < 0 {
+        read_c_string(ctx, addr)
     } else {
-        ctx.memory[addr..][..count as usize].to_vec()
-    })
+        Some(ctx.memory[addr..][..count as usize].to_vec())
+    }
 }
 
 fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
@@ -164,6 +178,31 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn ansi_string_helpers_preserve_bytes_and_overlap() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..3].copy_from_slice(&[0x80, b'B', 0]);
+
+        assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x1000)), 2);
+        assert_eq!(
+            lstrcpyA(&mut ctx, Ptr::new(0x1001), Ptr::new(0x1000)),
+            0x1001
+        );
+        assert_eq!(&ctx.memory[0x1001..][..3], &[0x80, b'B', 0]);
+
+        ctx.memory[0x1100..][..3].copy_from_slice(&[0x80, b'C', 0]);
+        ctx.memory[0x1200..][..2].copy_from_slice(b"X\0");
+        assert_eq!(
+            lstrcatA(&mut ctx, Ptr::new(0x1200), Ptr::new(0x1100)),
+            0x1200
+        );
+        assert_eq!(&ctx.memory[0x1200..][..4], &[b'X', 0x80, b'C', 0]);
+
+        ctx.memory[0x3ff0..].fill(0xff);
+        assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x3ff0)), 0);
+        assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
     }
 
     #[test]
