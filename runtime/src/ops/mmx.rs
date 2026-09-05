@@ -730,6 +730,20 @@ pub fn phsubd(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
+/// PHSUBSW (SSSE3) subtracts adjacent 16-bit signed words horizontally,
+/// with signed saturation.
+pub fn phsubsw(dest: u64, src: u64) -> u64 {
+    let d: [i16; 4] = dest.unpack();
+    let s: [i16; 4] = src.unpack();
+    [
+        d[0].saturating_sub(d[1]) as u16,
+        d[2].saturating_sub(d[3]) as u16,
+        s[0].saturating_sub(s[1]) as u16,
+        s[2].saturating_sub(s[3]) as u16,
+    ]
+    .pack()
+}
+
 /// PSIGNB (SSSE3) applies the sign of each byte in `dest` to the
 /// corresponding byte in `src`.
 pub fn psignb(dest: u64, src: u64) -> u64 {
@@ -1063,10 +1077,10 @@ mod tests {
         pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, palignr, pavgb, pavgusb,
         pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
         pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
-        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubw, pi2fd, pi2fw, pinsrw,
-        pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw,
-        pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd,
-        psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubsw, phsubw, pi2fd, pi2fw,
+        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw,
+        pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
+        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1262,6 +1276,16 @@ mod tests {
         let c = 0x0000_0002_0000_0001u64;
         let d = 0x0000_0001_8000_0000u64;
         assert_eq!(phsubd(c, d), 0x7fff_ffff_ffff_ffff);
+    }
+
+    #[test]
+    fn phsubsw_saturates_adjacent_word_subs() {
+        // dest pairs: 0x7fff - 0xffff = 32767 - (-1) = 32768 -> 0x7fff;
+        //             0 - 0 = 0.
+        // src pairs: 1 - 2 = -1 (0xffff); -32768 - 1 saturates to 0x8000.
+        let a = 0x0000_0000_ffff_7fffu64;
+        let b = 0x0001_8000_0002_0001u64;
+        assert_eq!(phsubsw(a, b), 0x8000_ffff_0000_7fff);
     }
 
     #[test]

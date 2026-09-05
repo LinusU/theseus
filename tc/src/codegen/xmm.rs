@@ -482,8 +482,8 @@ impl<'a> CodeGen<'a> {
             // Packed integer add/sub and bitwise logic. These mnemonics are also
             // used by MMX, so the 128-bit XMM variants use an _xmm suffix.
             Paddb | Paddw | Paddd | Paddq | Psubb | Psubw | Psubd | Psubq | Pand | Pandn | Por
-            | Pxor | Phaddw | Phaddd | Phaddsw | Phsubw | Phsubd | Pmulhrsw | Psignb | Psignw
-            | Psignd => {
+            | Pxor | Phaddw | Phaddd | Phaddsw | Phsubw | Phsubd | Phsubsw | Pmulhrsw | Psignb
+            | Psignw | Psignd => {
                 let func = format!("{}_xmm", instr_name(instr));
                 self.line(self.xmm_set(
                     instr,

@@ -4055,6 +4055,42 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_phsubsw() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // phsubsw mm0, mm1 (0F 38 07 C1)
+            (
+                &[0x0f, 0x38, 0x07, 0xc1][..],
+                "ctx.cpu.mmx.mm0 = phsubsw(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // phsubsw xmm0, [eax] (66 0F 38 07 00)
+            (
+                &[0x66, 0x0f, 0x38, 0x07, 0x00],
+                "phsubsw_xmm(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax))",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_pmulhrsw() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

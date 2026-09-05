@@ -560,6 +560,24 @@ pub fn phsubd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     ]
 }
 
+/// PHSUBSW (SSSE3) subtracts adjacent 16-bit signed words horizontally, with
+/// signed saturation. The first four result words come from dest; the last
+/// four come from src.
+pub fn phsubsw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_words(dest).map(|w| w as i16);
+    let s = to_words(src).map(|w| w as i16);
+    from_words([
+        d[0].saturating_sub(d[1]) as u16,
+        d[2].saturating_sub(d[3]) as u16,
+        d[4].saturating_sub(d[5]) as u16,
+        d[6].saturating_sub(d[7]) as u16,
+        s[0].saturating_sub(s[1]) as u16,
+        s[2].saturating_sub(s[3]) as u16,
+        s[4].saturating_sub(s[5]) as u16,
+        s[6].saturating_sub(s[7]) as u16,
+    ])
+}
+
 pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_bytes(a);
     let b = to_bytes(b);
@@ -1442,6 +1460,15 @@ mod tests {
             phsubw_xmm(wa, wb),
             [0xffff_ffff, 0xffff_ffff, 0x7fff_0005, 0x0000_0000]
         );
+    }
+
+    #[test]
+    fn phsubsw_xmm_saturates_adjacent_word_subs() {
+        // dest pairs: 0x7fff - 0xffff -> 0x7fff; 0 - 0 = 0;
+        //             -32768 - 1 -> 0x8000; 1 - 2 -> 0xffff.
+        let dest = [0xffff_7fff, 0x0000_0000, 0x0001_8000, 0x0002_0001];
+        let src = [0; 4];
+        assert_eq!(phsubsw_xmm(dest, src), [0x0000_7fff, 0xffff_8000, 0, 0]);
     }
 
     #[test]
