@@ -303,7 +303,9 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn FlipToGDISurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        // GDI output already lands on the visible primary in the emulated
+        // single-window model, so there is nothing to flip.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -435,28 +437,63 @@ pub mod IDirectDraw7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFourCCCodes(_ctx: &mut Context, _this: u32, _lpNumCodes: u32, _lpCodes: u32) -> DD {
-        todo!()
+    pub fn GetFourCCCodes(ctx: &mut Context, _this: u32, lpNumCodes: u32, _lpCodes: u32) -> DD {
+        if lpNumCodes == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // The emulated hardware exposes no FOURCC surface formats.
+        ctx.memory.write::<u32>(lpNumCodes, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetGDISurface(_ctx: &mut Context, _this: u32, _lplpGDISurface: u32) -> DD {
-        todo!()
+    pub fn GetGDISurface(ctx: &mut Context, _this: u32, lplpGDISurface: u32) -> DD {
+        if lplpGDISurface == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // The surface GDI writes to is the primary, i.e. the window-backed one.
+        let surfaces = state().surf.borrow();
+        let gdi_surface = surfaces
+            .values()
+            .find(|s| matches!(s.borrow().target, crate::ddraw::Target::Window(_)))
+            .map(|s| s.borrow().addr);
+        match gdi_surface {
+            Some(addr) => {
+                ctx.memory.write::<u32>(lplpGDISurface, addr);
+                DD::OK
+            }
+            None => DD::ERR_NOTFOUND,
+        }
     }
 
     #[win32_derive::dllexport]
-    pub fn GetMonitorFrequency(_ctx: &mut Context, _this: u32, _lpdwFrequency: u32) -> DD {
-        todo!()
+    pub fn GetMonitorFrequency(ctx: &mut Context, _this: u32, lpdwFrequency: u32) -> DD {
+        if lpdwFrequency == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // The emulated display refreshes at the same 60 Hz reported by
+        // GetDisplayMode.
+        ctx.memory.write::<u32>(lpdwFrequency, 60);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetScanLine(_ctx: &mut Context, _this: u32, _lpdwScanLine: u32) -> DD {
-        todo!()
+    pub fn GetScanLine(ctx: &mut Context, _this: u32, lpdwScanLine: u32) -> DD {
+        if lpdwScanLine == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // There is no real raster; report the first line.
+        ctx.memory.write::<u32>(lpdwScanLine, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetVerticalBlankStatus(_ctx: &mut Context, _this: u32, _lpbIsInVB: u32) -> DD {
-        todo!()
+    pub fn GetVerticalBlankStatus(ctx: &mut Context, _this: u32, lpbIsInVB: u32) -> DD {
+        if lpbIsInVB == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        ctx.memory.write::<u32>(lpbIsInVB, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -572,7 +609,9 @@ pub mod IDirectDraw7 {
         _numEntries: u32,
         _flags: u32,
     ) -> DD {
-        todo!()
+        // Refresh-rate testing is not meaningful on the emulated display;
+        // report that no test could be initiated.
+        DD::ERR_TESTFINISHED
     }
 
     #[win32_derive::dllexport]
@@ -582,7 +621,8 @@ pub mod IDirectDraw7 {
         _flags: u32,
         _pSecondsUntilTimeout: u32,
     ) -> DD {
-        todo!()
+        // No StartModeTest sequence is ever in progress.
+        DD::ERR_TESTFINISHED
     }
 
     pub static mut VTABLE: u32 = 0;
@@ -1294,8 +1334,19 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDDInterface(_ctx: &mut Context, _this: u32, _lplpDD: u32) -> DD {
-        todo!()
+    pub fn GetDDInterface(ctx: &mut Context, _this: u32, lplpDD: u32) -> DD {
+        if lplpDD == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // There is a single DirectDraw object for the process.
+        let addr = state().ddraw.borrow().as_ref().map(|d| d.addr);
+        match addr {
+            Some(addr) => {
+                ctx.memory.write::<u32>(lplpDD, addr);
+                DD::OK
+            }
+            None => DD::ERR_NOTFOUND,
+        }
     }
 
     #[win32_derive::dllexport]
