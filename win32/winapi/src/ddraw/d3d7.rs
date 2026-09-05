@@ -2211,23 +2211,68 @@ fn rasterize(
         let min_y = min_y.min(t.rt_height as i32).max(0);
         let max_y = max_y.min(t.rt_height as i32);
 
+        // The covered pixels on each scanline form a contiguous span, so
+        // bound it by the edge intercepts and walk the barycentric edge
+        // functions incrementally instead of testing the whole bounding box.
+        // w0(x,y) = (b.x-x)(c.y-y) - (b.y-y)(c.x-x)
+        //         = (b.y-c.y)*x + (c.x-b.x)*y + (b.x*c.y - c.x*b.y)
+        // and likewise for w1 along edge c->a; w2 = area - w0 - w1.
+        let dw0dx = b.y - c.y;
+        let dw0dy = c.x - b.x;
+        let dw1dx = c.y - a.y;
+        let dw1dy = a.x - c.x;
+        let w0_const = b.x * c.y - c.x * b.y;
+        let w1_const = c.x * a.y - a.x * c.y;
+
         for py in min_y..max_y {
-            for px in min_x..max_x {
-                let px_f = px as f32 + 0.5;
-                let py_f = py as f32 + 0.5;
+            let py_f = py as f32 + 0.5;
 
-                // Barycentric weights using sub-triangle areas.
-                let w0 = (b.x - px_f) * (c.y - py_f) - (b.y - py_f) * (c.x - px_f);
-                let w1 = (c.x - px_f) * (a.y - py_f) - (c.y - py_f) * (a.x - px_f);
-                let w2 = area - w0 - w1;
-
-                if w0 * area < 0.0 || w1 * area < 0.0 || w2 * area < 0.0 {
+            // Scanline bounds from the triangle/edge crossings.
+            let mut span_lo = f32::INFINITY;
+            let mut span_hi = f32::NEG_INFINITY;
+            for [x1, y1, x2, y2] in [
+                [a.x, a.y, b.x, b.y],
+                [b.x, b.y, c.x, c.y],
+                [c.x, c.y, a.x, a.y],
+            ] {
+                if (y1 <= py_f) == (y2 <= py_f) {
                     continue;
                 }
+                let xi = x1 + (py_f - y1) * (x2 - x1) / (y2 - y1);
+                span_lo = span_lo.min(xi);
+                span_hi = span_hi.max(xi);
+            }
+            // A one-pixel margin keeps the inclusive edge test
+            // authoritative at the span boundaries.
+            let xs = ((span_lo - 0.5).floor() as i32 - 1).max(min_x);
+            let xe = ((span_hi - 0.5).ceil() as i32 + 1).min(max_x);
+            if xs >= xe {
+                continue;
+            }
 
+            // Edge functions at the first pixel center, stepped across the
+            // span by their constant x-derivatives.
+            let mut w0 = dw0dx * (xs as f32 + 0.5) + dw0dy * py_f + w0_const;
+            let mut w1 = dw1dx * (xs as f32 + 0.5) + dw1dy * py_f + w1_const;
+            let mut entered = false;
+            for px in xs..xe {
+                // Barycentric weights using sub-triangle areas.
+                let w2 = area - w0 - w1;
                 let alpha = w0 / area;
                 let beta = w1 / area;
                 let gamma = w2 / area;
+                let inside = w0 * area >= 0.0 && w1 * area >= 0.0 && w2 * area >= 0.0;
+                w0 += dw0dx;
+                w1 += dw1dx;
+                if !inside {
+                    // Coverage on a scanline is contiguous; nothing further
+                    // right can re-enter the triangle.
+                    if entered {
+                        break;
+                    }
+                    continue;
+                }
+                entered = true;
 
                 // Depth is linear in screen space for pre-transformed verts.
                 if zbuf_addr != 0 {
