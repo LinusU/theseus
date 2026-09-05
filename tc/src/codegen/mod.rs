@@ -1055,6 +1055,44 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_imul_imm8() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // imul eax, eax, 4
+            (&[0x6b, 0xc0, 0x04][..], "imul2_32(ctx.cpu.regs.eax, 0x4u32"),
+            // imul eax, eax, -4 (sign-extended imm8)
+            (
+                &[0x6b, 0xc0, 0xfc][..],
+                "imul2_32(ctx.cpu.regs.eax, 0xfffffffcu32",
+            ),
+            // imul ax, ax, -4 (sign-extended imm8)
+            (
+                &[0x66, 0x6b, 0xc0, 0xfc][..],
+                "imul2_16(ctx.cpu.regs.get_ax(), 0xfffcu16",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
