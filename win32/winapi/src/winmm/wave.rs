@@ -8,13 +8,50 @@ use std::{
 };
 
 use runtime::{Cont, Context};
-use zerocopy::FromBytes;
 
 use crate::{dllexport::win32flags, kernel32, winmm::state};
 
 const MMSYSERR_NOERROR: u32 = 0;
+const MMSYSERR_BADDEVICEID: u32 = 2;
 const MMSYSERR_INVALHANDLE: u32 = 5;
+const MMSYSERR_INVALPARAM: u32 = 11;
 const WAVERR_STILLPLAYING: u32 = 33;
+const WAVERR_UNPREPARED: u32 = 34;
+/// uDeviceID that asks for any capable device rather than a numbered one.
+const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
+
+/// Whether `addr..addr + bytes` is a guest range the waveOut API may touch:
+/// outside the null page and fully inside emulated memory.
+fn usable_range(ctx: &Context, addr: u32, bytes: u32) -> bool {
+    addr >= 0x1000
+        && (addr as usize)
+            .checked_add(bytes as usize)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
+/// Read a guest `T` from `addr`, or `None` when the range is null-page or
+/// outside emulated memory.
+fn guest_read<T: zerocopy::FromBytes>(ctx: &Context, addr: u32) -> Option<T> {
+    if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
+        return None;
+    }
+    <T>::read_from_prefix(&ctx.memory.bytes[addr as usize..])
+        .ok()
+        .map(|(value, _)| value)
+}
+
+/// Borrow a guest `T` at `addr` for mutation under the same rules.
+fn guest_mut<T>(ctx: &mut Context, addr: u32) -> Option<&mut T>
+where
+    T: zerocopy::FromBytes + zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
+{
+    if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
+        return None;
+    }
+    <T>::mut_from_prefix(&mut ctx.memory.bytes[addr as usize..])
+        .ok()
+        .map(|(value, _)| value)
+}
 
 /// What the waveOut API surface hands to the feeder thread.
 enum WaveMsg {
@@ -55,8 +92,15 @@ enum WAVE_FORMAT {
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutGetDevCapsA(ctx: &mut Context, _uDeviceID: u32, pwoc: u32, cbwoc: u32) -> u32 {
-    assert_eq!(cbwoc, std::mem::size_of::<WAVEOUTCAPS>() as u32);
+pub fn waveOutGetDevCapsA(ctx: &mut Context, uDeviceID: u32, pwoc: u32, cbwoc: u32) -> u32 {
+    if uDeviceID != WAVE_MAPPER && uDeviceID != 0 {
+        return MMSYSERR_BADDEVICEID;
+    }
+    if cbwoc < std::mem::size_of::<WAVEOUTCAPS>() as u32
+        || !usable_range(ctx, pwoc, std::mem::size_of::<WAVEOUTCAPS>() as u32)
+    {
+        return MMSYSERR_INVALPARAM;
+    }
 
     ctx.memory.write(
         pwoc,
@@ -129,10 +173,11 @@ fn reset(
         done.push(addr);
     }
     for addr in done {
-        let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[addr..])
-            .unwrap()
-            .0;
-        header.dwFlags.insert(WHDR::DONE);
+        if let Some(header) = guest_mut::<WAVEHDR>(ctx, addr) {
+            header.dwFlags.insert(WHDR::DONE);
+        } else {
+            log::error!("waveOut: unreadable WAVEHDR at {addr:#x}");
+        }
         if let Some(f) = callback {
             ctx.call32_x86(f, vec![1, MM_WOM::DONE as u32, callback_data, addr, 0]);
         }
@@ -180,9 +225,23 @@ fn thread_proc(
             };
             match msg {
                 WaveMsg::Block(addr) => {
-                    let header = <WAVEHDR>::ref_from_prefix(&ctx.memory[addr..]).unwrap().0;
-                    let buf = &ctx.memory[header.lpData..][..header.dwBufferLength as usize];
-                    stream.put_data(buf);
+                    // waveOutWrite validates the header before queueing, but the
+                    // guest can still scribble over it before we get here.
+                    let Some(header) = guest_read::<WAVEHDR>(ctx, addr) else {
+                        log::error!("waveOut: unreadable WAVEHDR at {addr:#x}");
+                        pending.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    };
+                    let (data, len) = (header.lpData as usize, header.dwBufferLength as usize);
+                    let Some(end) = data
+                        .checked_add(len)
+                        .filter(|&end| end <= ctx.memory.bytes.len())
+                    else {
+                        log::error!("waveOut: WAVEHDR buffer {data:#x}+{len:#x} out of range");
+                        pending.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    };
+                    stream.put_data(&ctx.memory.bytes[data..end]);
                     total_pending += header.dwBufferLength;
                     queued_blocks.push_back(QueuedBlock {
                         addr,
@@ -212,10 +271,11 @@ fn thread_proc(
                 queued_blocks.pop_front();
                 pending.fetch_sub(1, Ordering::SeqCst);
 
-                let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[addr..])
-                    .unwrap()
-                    .0;
-                header.dwFlags.insert(WHDR::DONE);
+                if let Some(header) = guest_mut::<WAVEHDR>(ctx, addr) {
+                    header.dwFlags.insert(WHDR::DONE);
+                } else {
+                    log::error!("waveOut: unreadable WAVEHDR at {addr:#x}");
+                }
 
                 if let Some(f) = callback {
                     let hwo = 1u32; // XXX
@@ -256,7 +316,7 @@ fn thread_proc(
 pub fn waveOutOpen(
     ctx: &mut Context,
     phwo: u32,
-    _uDeviceID: u32,
+    uDeviceID: u32,
     pwfx: u32,
     dwCallback: u32,
     dwInstance: u32,
@@ -266,9 +326,12 @@ pub fn waveOutOpen(
     const MMSYSERR_NOTSUPPORTED: u32 = 8;
     const MMSYSERR_INVALFLAG: u32 = 10;
 
-    let fmt = <WAVEFORMATEX>::read_from_prefix(&ctx.memory[pwfx..])
-        .unwrap()
-        .0;
+    if uDeviceID != WAVE_MAPPER && uDeviceID != 0 {
+        return MMSYSERR_BADDEVICEID;
+    }
+    let Some(fmt) = guest_read::<WAVEFORMATEX>(ctx, pwfx) else {
+        return MMSYSERR_INVALPARAM;
+    };
     if fmt.wFormatTag != 1 || fmt.wBitsPerSample != 16 {
         // The emulated device only supports 16-bit PCM.
         return WAVERR_BADFORMAT;
@@ -291,6 +354,9 @@ pub fn waveOutOpen(
     if matches!(callback, CALLBACK::WINDOW | CALLBACK::EVENT) {
         // The emulated stream only delivers function callbacks.
         return MMSYSERR_NOTSUPPORTED;
+    }
+    if !usable_range(ctx, phwo, 4) {
+        return MMSYSERR_INVALPARAM;
     }
 
     let stream = host::host().create_audio_stream(host::AudioSpec {
@@ -324,12 +390,16 @@ fn open_wave(hwo: u32) -> bool {
 
 #[win32_derive::dllexport]
 pub fn waveOutReset(_ctx: &mut Context, hwo: u32) -> u32 {
-    if !open_wave(hwo) {
+    let state = state();
+    if hwo != 1 {
         return MMSYSERR_INVALHANDLE;
     }
+    let Some(wave) = state.wave.as_ref() else {
+        return MMSYSERR_INVALHANDLE;
+    };
     // The feeder thread drains and returns pending blocks; a dead thread
     // just means the stream is already gone.
-    let _ = state().wave.as_ref().unwrap().sender.send(WaveMsg::Reset);
+    let _ = wave.sender.send(WaveMsg::Reset);
     MMSYSERR_NOERROR
 }
 
@@ -382,10 +452,12 @@ pub fn waveOutPrepareHeader(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) ->
     if !open_wave(hwo) {
         return MMSYSERR_INVALHANDLE;
     }
-    assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
-    let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[pwh..])
-        .unwrap()
-        .0;
+    if cbwh != std::mem::size_of::<WAVEHDR>() as u32 {
+        return MMSYSERR_INVALPARAM;
+    }
+    let Some(header) = guest_mut::<WAVEHDR>(ctx, pwh) else {
+        return MMSYSERR_INVALPARAM;
+    };
     header.dwFlags.remove(WHDR::DONE);
     header.dwFlags.insert(WHDR::PREPARED);
     MMSYSERR_NOERROR
@@ -396,26 +468,86 @@ pub fn waveOutUnprepareHeader(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) 
     if !open_wave(hwo) {
         return MMSYSERR_INVALHANDLE;
     }
-    assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
-    let header = <WAVEHDR>::mut_from_prefix(&mut ctx.memory[pwh..])
-        .unwrap()
-        .0;
+    if cbwh != std::mem::size_of::<WAVEHDR>() as u32 {
+        return MMSYSERR_INVALPARAM;
+    }
+    let Some(header) = guest_mut::<WAVEHDR>(ctx, pwh) else {
+        return MMSYSERR_INVALPARAM;
+    };
     header.dwFlags.remove(WHDR::PREPARED);
     MMSYSERR_NOERROR
 }
 
 #[win32_derive::dllexport]
-pub fn waveOutWrite(_ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
-    if !open_wave(hwo) {
+pub fn waveOutWrite(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
+    if cbwh != std::mem::size_of::<WAVEHDR>() as u32 {
+        return MMSYSERR_INVALPARAM;
+    }
+    let Some(header) = guest_read::<WAVEHDR>(ctx, pwh) else {
+        return MMSYSERR_INVALPARAM;
+    };
+    if !header.dwFlags.contains(WHDR::PREPARED) {
+        return WAVERR_UNPREPARED;
+    }
+    let mut state = state();
+    if hwo != 1 {
         return MMSYSERR_INVALHANDLE;
     }
-    assert_eq!(cbwh, std::mem::size_of::<WAVEHDR>() as u32);
-    let mut state = state();
-    let wave = state.wave.as_mut().unwrap();
+    let Some(wave) = state.wave.as_mut() else {
+        return MMSYSERR_INVALHANDLE;
+    };
     wave.pending.fetch_add(1, Ordering::SeqCst);
     if wave.sender.send(WaveMsg::Block(pwh)).is_err() {
         wave.pending.fetch_sub(1, Ordering::SeqCst);
         return MMSYSERR_INVALHANDLE;
     }
     MMSYSERR_NOERROR
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn wave_out_get_dev_caps_validates_device_and_buffer() {
+        let mut ctx = context();
+        let caps = std::mem::size_of::<WAVEOUTCAPS>() as u32;
+
+        // Unknown device ids are rejected; the mapper alias and device 0 pass.
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, 3, 0x1000, caps), 2);
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, WAVE_MAPPER, 0x1000, caps), 0);
+        // Short or unwritable buffers fail instead of panicking.
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0x1000, caps - 1), 11);
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0, caps), 11);
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0x3ff0, caps), 11);
+        assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0x2000, caps), 0);
+        assert_eq!(ctx.memory.read::<u16>(0x2000 + 44), 1); // wChannels: mono
+    }
+
+    #[test]
+    fn wave_out_calls_reject_bad_arguments_without_a_device() {
+        let mut ctx = context();
+        let hdr = std::mem::size_of::<WAVEHDR>() as u32;
+
+        assert_eq!(waveOutReset(&mut ctx, 1), 5); // no open stream
+        assert_eq!(waveOutClose(&mut ctx, 7), 5);
+        assert_eq!(waveOutWrite(&mut ctx, 1, 0x1000, hdr - 1), 11);
+        assert_eq!(waveOutWrite(&mut ctx, 1, 0, hdr), 11);
+        assert_eq!(waveOutWrite(&mut ctx, 1, 0x1000, hdr), 34); // not prepared
+        assert_eq!(waveOutPrepareHeader(&mut ctx, 1, 0x1000, hdr), 5);
+        assert_eq!(waveOutUnprepareHeader(&mut ctx, 1, 0x1000, hdr - 1), 5);
+    }
 }
