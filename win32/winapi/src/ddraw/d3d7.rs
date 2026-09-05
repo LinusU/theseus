@@ -14,6 +14,7 @@ use zerocopy::FromBytes;
 
 use super::types::{DD, DDPIXELFORMAT};
 use crate::{
+    RECT,
     ddraw::{GUID, state},
     heap::Heap,
     kernel32,
@@ -408,6 +409,11 @@ pub struct VertexBuffer {
 pub struct D3DState {
     pub devices: RefCell<HashMap<u32, Device>>,
     pub vertex_buffers: RefCell<HashMap<u32, VertexBuffer>>,
+    /// Texture surface addresses already reported as never-written, so the
+    /// rasterizer diagnostic logs each one only once.
+    unwritten_textures: RefCell<std::collections::HashSet<u32>>,
+    /// Texture surface addresses already dumped via THESEUS_TEX_DUMP.
+    dumped_textures: RefCell<std::collections::HashSet<u32>>,
     state_blocks: RefCell<std::collections::HashSet<u32>>,
     next_state_block: std::cell::Cell<u32>,
 }
@@ -1486,14 +1492,85 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn Load(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _lpDestTex: u32,
-        _lpDestPoint: u32,
-        _lpSrcTex: u32,
-        _lprcSrcRect: u32,
+        lpDestTex: u32,
+        lpDestPoint: u32,
+        lpSrcTex: u32,
+        lprcSrcRect: u32,
         _dwFlags: u32,
     ) -> DD {
+        // Both textures are IDirectDrawSurface7 interface addresses. Loading a
+        // level onto itself is a documented no-op.
+        if lpDestTex == lpSrcTex {
+            return DD::OK;
+        }
+        let (dst_rc, src_rc) = {
+            let surfaces = state().surf.borrow();
+            (
+                surfaces.get(&lpDestTex).cloned(),
+                surfaces.get(&lpSrcTex).cloned(),
+            )
+        };
+        let (Some(dst_rc), Some(src_rc)) = (dst_rc, src_rc) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+
+        // lpDestPoint is a POINT; null is the origin. A null rect means the
+        // whole source level.
+        let (mut dx, mut dy) = if lpDestPoint != 0 {
+            (
+                ctx.memory.read::<i32>(lpDestPoint),
+                ctx.memory.read::<i32>(lpDestPoint + 4),
+            )
+        } else {
+            (0, 0)
+        };
+        let mut src_rect = crate::ddraw::ddraw::read_rect(ctx, lprcSrcRect);
+
+        // Load cascades through every mip level the two chains have in
+        // common, halving the rect and point at each step.
+        let mut dst_level = dst_rc;
+        let mut src_level = src_rc;
+        loop {
+            let (w, h) = match &src_rect {
+                Some(r) => (r.right - r.left, r.bottom - r.top),
+                None => {
+                    let src = src_level.borrow();
+                    (src.width as i32, src.height as i32)
+                }
+            };
+            let dst_rect = RECT {
+                left: dx,
+                top: dy,
+                right: dx + w,
+                bottom: dy + h,
+            };
+            // Copy the addresses out first: `blit_copy` borrows both surfaces
+            // mutably, which would conflict with a `Ref` held across the call.
+            let dst_addr = dst_level.borrow().addr;
+            let src_addr = src_level.borrow().addr;
+            crate::ddraw::ddraw::blit_copy(ctx, dst_addr, Some(dst_rect), src_addr, src_rect, None);
+
+            let next = {
+                let dst = dst_level.borrow();
+                let src = src_level.borrow();
+                match (dst.attachments.first(), src.attachments.first()) {
+                    (Some(d), Some(s)) => (d.clone(), s.clone()),
+                    _ => break,
+                }
+            };
+            dst_level = next.0;
+            src_level = next.1;
+            src_rect = src_rect.map(|r| RECT {
+                left: r.left / 2,
+                top: r.top / 2,
+                right: r.right / 2,
+                bottom: r.bottom / 2,
+            });
+            dx /= 2;
+            dy /= 2;
+        }
         DD::OK
     }
 
@@ -1807,7 +1884,28 @@ fn rasterize(
         let (tex_w, tex_h, tex_bpp, tex_addr) = if let Some(ref s) = tex_surf {
             let s_borrow = s.borrow();
             let (w, h, bpp) = (s_borrow.width, s_borrow.height, s_borrow.bytes_per_pixel);
+            if s_borrow.pixels.is_none() && d3d_state().unwritten_textures.borrow_mut().insert(tex)
+            {
+                log::warn!("rasterize: texture {tex:#x} ({w}x{h}) was never locked or blitted");
+            }
+            let pixels_addr = s_borrow.pixels;
             drop(s_borrow);
+            // THESEUS_TEX_DUMP=<dir> writes each bound texture's pixel data
+            // once as a PPM, for diagnosing what the rasterizer samples.
+            if let (Some(addr), Ok(dir)) = (pixels_addr, std::env::var("THESEUS_TEX_DUMP"))
+                && bpp == 2
+                && d3d_state().dumped_textures.borrow_mut().insert(tex)
+            {
+                let path = format!("{dir}/tex_{tex:08x}.ppm");
+                let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                for i in 0..(w * h) {
+                    let p = ctx.memory.read::<u16>(addr + i * 2);
+                    out.push((((p >> 11) & 0x1f) << 3) as u8);
+                    out.push((((p >> 5) & 0x3f) << 2) as u8);
+                    out.push(((p & 0x1f) << 3) as u8);
+                }
+                let _ = std::fs::write(&path, out);
+            }
             let addr = s.borrow_mut().lock(&mut ctx.memory);
             (w, h, bpp, addr)
         } else {

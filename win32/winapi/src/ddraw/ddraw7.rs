@@ -170,12 +170,15 @@ pub mod IDirectDraw7 {
         });
         let s = surface.borrow();
         log::warn!(
-            "CreateSurface: {:#x} {}x{} {}bpp caps={:#x}",
+            "CreateSurface: {:#x} {}x{} {}bpp caps={:#x} flags={:#x} mips={} lpSurface={:#x}",
             s.addr,
             s.width,
             s.height,
             s.bytes_per_pixel,
-            s.caps.dwCaps.bits()
+            s.caps.dwCaps.bits(),
+            desc.dwFlags.bits(),
+            desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle,
+            desc.lpSurface,
         );
         ctx.memory.write(lplpDDSurface, s.addr);
 

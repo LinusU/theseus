@@ -410,6 +410,8 @@ impl Window {
 
     pub fn render(&mut self, surface: &mut Surface) {
         static DUMP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        static DUMP_EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        static FRAME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if let Some(path) = DUMP
             .get_or_init(|| {
                 std::env::var("THESEUS_FRAME_DUMP")
@@ -418,7 +420,21 @@ impl Window {
             })
             .as_deref()
         {
-            surface.dump(path);
+            // THESEUS_FRAME_DUMP_EVERY=<n> writes a numbered film strip
+            // (path.NNNNN.ppm) every n frames instead of overwriting `path`
+            // on each present.
+            let every = *DUMP_EVERY.get_or_init(|| {
+                std::env::var("THESEUS_FRAME_DUMP_EVERY")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            });
+            let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if every == 0 {
+                surface.dump(path);
+            } else if frame % every == 0 {
+                surface.dump(&format!("{path}.{frame:05}.ppm"));
+            }
         }
         if self.window.is_null() {
             return;
