@@ -88,6 +88,34 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("{func}({})", self.xmm_get(instr, 1))));
             }
 
+            // Packed single-precision comparisons. MINPS/MAXPS preserve the
+            // non-NaN operand when one is NaN; CMPPS uses the 3-bit predicate
+            // in the trailing immediate.
+            Minps | Maxps => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+            Cmpps => {
+                let pred = format!("{:#x}", instr.immediate8());
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "cmpps({}, {}, {pred})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             _ => return false,
         }
         true

@@ -57,3 +57,46 @@ pub fn rsqrtps(a: [u32; 4]) -> [u32; 4] {
 pub fn rcpps(a: [u32; 4]) -> [u32; 4] {
     unary_ps(a, |a| 1.0 / a)
 }
+
+pub fn minps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_ps(a, b, |a, b| {
+        if a.is_nan() {
+            b
+        } else if b.is_nan() {
+            a
+        } else {
+            a.min(b)
+        }
+    })
+}
+
+pub fn maxps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_ps(a, b, |a, b| {
+        if a.is_nan() {
+            b
+        } else if b.is_nan() {
+            a
+        } else {
+            a.max(b)
+        }
+    })
+}
+
+pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
+    std::array::from_fn(|i| {
+        let a = f32::from_bits(a[i]);
+        let b = f32::from_bits(b[i]);
+        let result = match predicate {
+            0 => a == b,
+            1 => a < b,
+            2 => a <= b,
+            3 => a.is_nan() || b.is_nan(),
+            4 => a != b,
+            5 => !(a < b),
+            6 => !(a <= b),
+            7 => !a.is_nan() && !b.is_nan(),
+            _ => false,
+        };
+        if result { 0xffff_ffff } else { 0 }
+    })
+}
