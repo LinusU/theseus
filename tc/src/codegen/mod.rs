@@ -1000,6 +1000,61 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_16_bit_operand_control_flow() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, wants) in [
+            // call rel16
+            (
+                &[0x66, 0xe8, 0x34, 0x12][..],
+                vec!["ctx.call16(", "Cont(unk_1238)"],
+            ),
+            // call ax
+            (
+                &[0x66, 0xff, 0xd0][..],
+                vec!["ctx.call16(", "ctx.indirect(ctx.cpu.regs.get_ax() as u32)"],
+            ),
+            // call word ptr [eax]
+            (
+                &[0x66, 0xff, 0x10][..],
+                vec!["ctx.call16(", "ctx.indirect(addr as u32)"],
+            ),
+            // jmp word ptr [eax]
+            (&[0x66, 0xff, 0x20][..], vec!["ctx.indirect(addr as u32)"]),
+            // jmp ax
+            (
+                &[0x66, 0xff, 0xe0][..],
+                vec!["ctx.indirect(ctx.cpu.regs.get_ax() as u32)"],
+            ),
+            // call far ptr16:16
+            (
+                &[0x66, 0x9a, 0x78, 0x56, 0x1b, 0x00][..],
+                vec!["ctx.callf16(", "0x1b"],
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            for want in wants {
+                assert!(
+                    codegen.buf.contains(want),
+                    "wanted {want:?} in {:?}",
+                    codegen.buf
+                );
+            }
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

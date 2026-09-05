@@ -51,7 +51,13 @@ impl<'a> CodeGen<'a> {
                     }
                     iced_x86::MemorySize::WordOffset => {
                         extra = Some(format!("let addr = ctx.memory.read::<u16>({addr});"));
-                        cont = "ctx.indirect16((ctx.cpu.regs.cs, addr).into())".into();
+                        cont = if self.module.bitness() == 16 {
+                            "ctx.indirect16((ctx.cpu.regs.cs, addr).into())".into()
+                        } else {
+                            // A 16-bit operand in flat code is an offset in
+                            // the flat code segment, not a segment pair.
+                            "ctx.indirect(addr as u32)".into()
+                        };
                     }
                     iced_x86::MemorySize::DwordOffset => {
                         extra = Some(format!("let addr = ctx.memory.read::<u32>({addr});"));
@@ -74,8 +80,10 @@ impl<'a> CodeGen<'a> {
                         reg = get_reg(instr.iced.op0_register())
                     );
                 } else {
+                    // The operand-size prefix can select a 16-bit register in
+                    // flat code, so zero-extend to the flat address width.
                     cont = format!(
-                        "ctx.indirect({reg})",
+                        "ctx.indirect({reg} as u32)",
                         reg = get_reg(instr.iced.op0_register())
                     );
                 }
@@ -109,22 +117,25 @@ impl<'a> CodeGen<'a> {
                     if let Some(extra) = extra {
                         self.line(extra);
                     }
-                    if let Some(seg) = seg {
-                        let call = if self.module.bitness() == 16 {
-                            "callf16"
-                        } else {
-                            "callf32"
-                        };
-                        self.line(format!(
-                            "ctx.{call}({ip:#x}, {seg}, {cont})",
-                            ip = instr.next_ip().local()
-                        ));
+                    // The operand-size prefix, not the module bitness, decides
+                    // how many bytes of return address a call pushes.
+                    let bitness = match instr.iced.code() {
+                        iced_x86::Code::Call_rel16
+                        | iced_x86::Code::Call_rm16
+                        | iced_x86::Code::Call_ptr1616
+                        | iced_x86::Code::Call_m1616 => 16,
+                        _ => 32,
+                    };
+                    let ip = instr.next_ip().local();
+                    let ret = if bitness == 16 {
+                        format!("{ip:#x}u32 as u16")
                     } else {
-                        self.line(format!(
-                            "ctx.call{bitness}({ip:#x}, {cont})",
-                            bitness = self.module.bitness(),
-                            ip = instr.next_ip().local()
-                        ));
+                        format!("{ip:#x}")
+                    };
+                    if let Some(seg) = seg {
+                        self.line(format!("ctx.callf{bitness}({ret}, {seg}, {cont})"));
+                    } else {
+                        self.line(format!("ctx.call{bitness}({ret}, {cont})"));
                     }
                 }
             }
