@@ -310,11 +310,20 @@ impl MainThread {
 pub struct Surface {
     /// null when running in headless mode
     texture: *mut sdl::render::SDL_Texture,
+    width: u32,
+    height: u32,
+    /// Most recent `set_pixels` upload, kept so `render` can dump the
+    /// presented frame even without a window.
+    last: Vec<u8>,
+    last_stride: u32,
 }
 
 impl Surface {
     /// pixels are RGBA in memory
     pub fn set_pixels(&mut self, pixels: &[u8], stride: u32) {
+        self.last.clear();
+        self.last.extend_from_slice(pixels);
+        self.last_stride = stride;
         if self.texture.is_null() {
             return;
         }
@@ -325,6 +334,26 @@ impl Surface {
                 pixels.as_ptr() as *const _,
                 stride as i32,
             ));
+        }
+    }
+
+    /// Write the last uploaded frame to `path` as a binary PPM.
+    fn dump(&self, path: &str) {
+        use std::io::Write;
+        let need = self.height.saturating_mul(self.last_stride) as usize;
+        if self.last_stride == 0 || self.last.len() < need {
+            return; // nothing presented yet
+        }
+        let mut out = Vec::with_capacity(self.width as usize * self.height as usize * 3);
+        out.extend_from_slice(format!("P6\n{} {}\n255\n", self.width, self.height).as_bytes());
+        for y in 0..self.height {
+            let row = &self.last[(y * self.last_stride) as usize..][..self.width as usize * 4];
+            for px in row.chunks_exact(4) {
+                out.extend_from_slice(&px[..3]);
+            }
+        }
+        if let Err(e) = std::fs::File::create(path).and_then(|mut f| f.write_all(&out)) {
+            log::warn!("frame dump to {path} failed: {e}");
         }
     }
 }
@@ -341,6 +370,10 @@ impl Window {
         if self.window.is_null() {
             return Surface {
                 texture: std::ptr::null_mut(),
+                width,
+                height,
+                last: Vec::new(),
+                last_stride: 0,
             };
         }
         unsafe {
@@ -352,7 +385,13 @@ impl Window {
                 width as i32,
                 height as i32,
             ));
-            Surface { texture }
+            Surface {
+                texture,
+                width,
+                height,
+                last: Vec::new(),
+                last_stride: 0,
+            }
         }
     }
 
@@ -370,6 +409,17 @@ impl Window {
     }
 
     pub fn render(&mut self, surface: &mut Surface) {
+        static DUMP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        if let Some(path) = DUMP
+            .get_or_init(|| {
+                std::env::var("THESEUS_FRAME_DUMP")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .as_deref()
+        {
+            surface.dump(path);
+        }
         if self.window.is_null() {
             return;
         }
