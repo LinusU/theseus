@@ -31,7 +31,16 @@ impl F80 {
         let value = match exponent {
             0..=0x7ffe => {
                 let exponent = exponent.max(1) as i32 - 16383;
-                (significand as f64) * 2f64.powi(-63) * 2f64.powi(exponent)
+                let significand = (significand as f64) * 2f64.powi(-63);
+                if exponent < -1022 {
+                    if exponent < -1074 {
+                        0.0
+                    } else {
+                        significand * 2f64.powi(-1022) * 2f64.powi(exponent + 1022)
+                    }
+                } else {
+                    significand * 2f64.powi(exponent)
+                }
             }
             0x7fff if significand == 1 << 63 => f64::INFINITY,
             0x7fff => f64::NAN,
@@ -378,6 +387,8 @@ mod tests {
         for value in [
             0.0,
             -0.0,
+            f64::from_bits(1),
+            -f64::from_bits(1),
             1.0,
             -2.5,
             f64::MIN_POSITIVE,
