@@ -101,5 +101,5 @@ pub fn init() {
 }
 
 pub fn host() -> &'static Host {
-    &*HOST
+    &HOST
 }
