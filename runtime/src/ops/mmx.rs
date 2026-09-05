@@ -678,6 +678,20 @@ pub fn palignr(dest: u64, src: u64, count: u8) -> u64 {
     (combined >> (count as u32 * 8)) as u64
 }
 
+/// PHADDSW (SSSE3) adds adjacent 16-bit signed words horizontally, with
+/// signed saturation.
+pub fn phaddsw(dest: u64, src: u64) -> u64 {
+    let d: [i16; 4] = dest.unpack();
+    let s: [i16; 4] = src.unpack();
+    [
+        d[0].saturating_add(d[1]) as u16,
+        d[2].saturating_add(d[3]) as u16,
+        s[0].saturating_add(s[1]) as u16,
+        s[2].saturating_add(s[3]) as u16,
+    ]
+    .pack()
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally.
 /// The result dwords come from the dest (first pair) and src (second pair).
 pub fn phaddd(dest: u64, src: u64) -> u64 {
@@ -977,10 +991,10 @@ mod tests {
         pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, palignr, pavgb, pavgusb,
         pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
         pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
-        pfrsqrt, pfsub, pfsubr, phaddd, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub,
-        pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb,
-        pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd,
-        punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw,
+        pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw,
+        pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
+        pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1163,6 +1177,15 @@ mod tests {
         let c = 0x0000_0002_0000_0001u64;
         let d = 0x0000_0001_8000_0000u64;
         assert_eq!(phaddd(c, d), 0x8000_0001_0000_0003);
+    }
+
+    #[test]
+    fn phaddsw_saturates_adjacent_word_adds() {
+        // 0x0001 + 0x0002 = 0x0003; 0x7fff + 0x0002 saturates to 0x7fff.
+        let a = 0x0002_7fff_0002_0001u64;
+        // 0x8000 (-32768) + 0xffff (-1) saturates to 0x8000; 0x0000 + 0x0001 = 0x0001.
+        let b = 0x0001_0000_ffff_8000u64;
+        assert_eq!(phaddsw(a, b), 0x0001_8000_7fff_0003);
     }
 
     #[test]

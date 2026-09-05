@@ -470,6 +470,23 @@ pub fn palignr_xmm(dest: [u32; 4], src: [u32; 4], count: u8) -> [u32; 4] {
     from_bytes(out)
 }
 
+/// PHADDSW (SSSE3) adds adjacent 16-bit signed words horizontally, with
+/// signed saturation.
+pub fn phaddsw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_words(dest).map(|w| w as i16);
+    let s = to_words(src).map(|w| w as i16);
+    from_words([
+        d[0].saturating_add(d[1]) as u16,
+        d[2].saturating_add(d[3]) as u16,
+        d[4].saturating_add(d[5]) as u16,
+        d[6].saturating_add(d[7]) as u16,
+        s[0].saturating_add(s[1]) as u16,
+        s[2].saturating_add(s[3]) as u16,
+        s[4].saturating_add(s[5]) as u16,
+        s[6].saturating_add(s[7]) as u16,
+    ])
+}
+
 /// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally. The first
 /// two result dwords come from dest; the last two come from src.
 pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
@@ -1344,6 +1361,14 @@ mod tests {
             phaddw_xmm(wa, wb),
             [0x0007_0003, 0x000f_000b, 0x8001_ffff, 0x0000_0000]
         );
+    }
+
+    #[test]
+    fn phaddsw_xmm_saturates_adjacent_word_adds() {
+        // words: 1+2=3, 0x7fff+2=0x7fff, 0x8000+0xffff=0x8000, 0+1=1.
+        let dest = [0x0002_0001, 0x0002_7fff, 0xffff_8000, 0x0001_0000];
+        let src = [0; 4];
+        assert_eq!(phaddsw_xmm(dest, src), [0x7fff_0003, 0x0001_8000, 0, 0]);
     }
 
     #[test]

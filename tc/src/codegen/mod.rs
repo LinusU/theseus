@@ -4086,6 +4086,42 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_phaddsw() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // phaddsw mm0, mm1 (0F 38 03 C1)
+            (
+                &[0x0f, 0x38, 0x03, 0xc1][..],
+                "ctx.cpu.mmx.mm0 = phaddsw(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // phaddsw xmm0, [eax] (66 0F 38 03 00)
+            (
+                &[0x66, 0x0f, 0x38, 0x03, 0x00],
+                "phaddsw_xmm(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax))",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_sse2_packed_integer_arithmetic() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
