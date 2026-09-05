@@ -2494,6 +2494,46 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fences_hints_and_mxcsr() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (&[0x0f, 0xae, 0xf8][..], "// 00000000 sfence"),
+            (&[0x0f, 0xae, 0xe8], "// 00000000 lfence"),
+            (&[0x0f, 0xae, 0xf0], "// 00000000 mfence"),
+            (&[0xf3, 0x90], "// 00000000 pause"),
+            (&[0x0f, 0x0d, 0x08], "// 00000000 prefetchw"), // prefetchw [eax]
+            (&[0x0f, 0xae, 0x39], "// 00000000 clflush"),   // clflush [ecx]
+            (
+                &[0x0f, 0xae, 0x19],
+                "ctx.memory.write::<u32>(ctx.cpu.regs.ecx, ctx.cpu.mxcsr);",
+            ), // stmxcsr [ecx]
+            (
+                &[0x0f, 0xae, 0x11],
+                "ctx.cpu.mxcsr = ctx.memory.read::<u32>(ctx.cpu.regs.ecx);",
+            ), // ldmxcsr [ecx]
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_pextrw_pinsrw_pshufw() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

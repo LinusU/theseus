@@ -344,6 +344,11 @@ mod tests {
     }
 
     #[test]
+    fn mxcsr_defaults_to_the_architectural_reset_value() {
+        assert_eq!(context().cpu.mxcsr, 0x1f80);
+    }
+
+    #[test]
     fn maskmovq_stores_only_masked_bytes_at_ds_edi() {
         let mut ctx = context();
         ctx.cpu.regs.edi = 0x100;

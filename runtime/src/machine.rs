@@ -1,12 +1,27 @@
 use crate::{Cont, ContFn, Flags, Memory, Regs, SegOfs, fpu::FPU, mmx::MMX, segofs};
 
-#[derive(Default)]
 pub struct CPU {
     pub regs: Regs,
     pub flags: Flags,
     pub fpu: FPU,
     pub mmx: MMX,
     pub real_mode: bool,
+    /// SSE MXCSR register, kept for stmxcsr/ldmxcsr state even though no SSE
+    /// unit is modeled.
+    pub mxcsr: u32,
+}
+
+impl Default for CPU {
+    fn default() -> Self {
+        Self {
+            regs: Regs::default(),
+            flags: Flags::default(),
+            fpu: FPU::default(),
+            mmx: MMX::default(),
+            real_mode: false,
+            mxcsr: 0x1f80,
+        }
+    }
 }
 
 impl CPU {

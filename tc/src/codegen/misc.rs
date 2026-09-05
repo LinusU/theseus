@@ -184,8 +184,13 @@ impl<'a> CodeGen<'a> {
             // UD2: the guaranteed-#UD instruction; MSVC emits it for
             // unreachable paths.
             Ud2 => self.line(format!("unhandled_interrupt(0x6, {:#x});", instr.ip32())),
-            // Prefetches are pure hints.
-            Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 => {}
+            // Prefetches, fences, PAUSE, and cache-line flushes are pure
+            // hints on the emulated host.
+            Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 | Prefetch | Prefetchw
+            | Prefetchwt1 | Sfence | Lfence | Mfence | Pause | Clflush | Clflushopt => {}
+            // No SSE unit is modeled, but the MXCSR value is real state.
+            Stmxcsr => self.line(self.set_op(instr, 0, "ctx.cpu.mxcsr".into())),
+            Ldmxcsr => self.line(format!("ctx.cpu.mxcsr = {};", self.get_op(instr, 0))),
             Cmpxchg8b => {
                 // Compare EDX:EAX with m64; on equal write ECX:EBX, else load
                 // EDX:EAX from memory. Only ZF is affected.
