@@ -2172,6 +2172,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_skips_register_self_moves() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // `mov edi,edi` / `mov ax,ax` are hot-patch padding: they emit only
+        // the instruction comment, while a real register move emits code.
+        for (bytes, emitted_lines) in [
+            (&[0x8b, 0xff][..], 1),       // mov edi,edi
+            (&[0x66, 0x8b, 0xc0][..], 1), // mov ax,ax
+            (&[0x8b, 0xf8][..], 2),       // mov edi,eax
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            let before = codegen.buf.len();
+            codegen.gen_instr(&instr).unwrap();
+            assert_eq!(codegen.buf[before..].lines().count(), emitted_lines);
+        }
+        assert!(codegen.buf.contains("ctx.cpu.regs.edi = ctx.cpu.regs.eax;"));
+        assert!(!codegen.buf.contains("ctx.cpu.regs.edi = ctx.cpu.regs.edi;"));
+    }
+
+    #[test]
     fn codegen_handles_fnstenv() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

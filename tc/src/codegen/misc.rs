@@ -31,9 +31,15 @@ impl<'a> CodeGen<'a> {
                     && [instr.op_register(0), instr.op_register(1)]
                         .iter()
                         .any(|r| r.is_cr() || r.is_dr() || r.is_tr());
+                // A register moved onto itself is a semantic no-op; compilers
+                // emit `mov edi,edi` as hot-patch padding, and codegen would
+                // otherwise produce a self-assignment.
+                let self_move = instr.op0_kind() == iced_x86::OpKind::Register
+                    && instr.op1_kind() == iced_x86::OpKind::Register
+                    && instr.op_register(0) == instr.op_register(1);
                 if privileged {
                     self.line(format!("unhandled_interrupt(0xd, {:#x});", instr.ip32()));
-                } else {
+                } else if !self_move {
                     self.line(self.set_op(instr, 0, self.get_op(instr, 1)))
                 }
             }
