@@ -1,14 +1,87 @@
-use runtime::Context;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 
-use crate::stub;
+use runtime::Context;
 
 pub type HKEY = u32;
 
+const ERROR_SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_MORE_DATA: u32 = 234;
+
+const REG_CREATED_NEW_KEY: u32 = 1;
+const REG_OPENED_EXISTING_KEY: u32 = 2;
+
+/// A minimal in-memory registry. Keys exist only after a successful
+/// RegCreateKeyEx; values persist for the life of the process.
+#[derive(Default)]
+struct Registry {
+    /// Open handles → normalized key path.
+    handles: HashMap<HKEY, String>,
+    /// Normalized key paths that exist.
+    keys: HashSet<String>,
+    /// (key path, value name) → (REG_* type, data).
+    values: HashMap<(String, String), (u32, Vec<u8>)>,
+    next_handle: u32,
+}
+
+static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(|| {
+    Mutex::new(Registry {
+        next_handle: 0xA000_0000,
+        ..Registry::default()
+    })
+});
+
+fn registry() -> std::sync::MutexGuard<'static, Registry> {
+    REGISTRY.lock().unwrap()
+}
+
+/// The normalized path a handle opens beneath: predefined roots keep their
+/// raw value, opened handles resolve to their key's path.
+fn key_path(reg: &Registry, hkey: HKEY) -> Option<String> {
+    if let Some(path) = reg.handles.get(&hkey) {
+        return Some(path.clone());
+    }
+    // Predefined roots (HKEY_CLASSES_ROOT ..= HKEY_PERFORMANCE_NLSTEXT) live
+    // at 0x8000000x and are always open.
+    if (0x8000_0000..=0x8000_000D).contains(&hkey) {
+        return Some(format!("ROOT{hKey:08X}", hKey = hkey));
+    }
+    None
+}
+
+fn open_key(reg: &mut Registry, path: String) -> HKEY {
+    let handle = reg.next_handle;
+    reg.next_handle += 1;
+    reg.handles.insert(handle, path);
+    handle
+}
+
+/// The caller-visible key path: base handle's path plus the subkey, with
+/// registry case-insensitivity folded in.
+fn subkey_path(reg: &Registry, hkey: HKEY, subkey: &str) -> Option<String> {
+    let base = key_path(reg, hkey)?;
+    Some(format!("{base}\\{}", subkey.to_uppercase()))
+}
+
+fn write_out<T>(ctx: &mut Context, addr: u32, value: T)
+where
+    T: zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
+{
+    if addr != 0 {
+        ctx.memory.write(addr, value);
+    }
+}
 
 #[win32_derive::dllexport]
-pub fn RegCloseKey(_ctx: &mut Context, _hKey: HKEY) -> u32 /* WIN32_ERROR */ {
-    stub!(0)
+pub fn RegCloseKey(_ctx: &mut Context, hKey: HKEY) -> u32 /* WIN32_ERROR */ {
+    let mut reg = registry();
+    if reg.handles.remove(&hKey).is_some() {
+        ERROR_SUCCESS
+    } else {
+        ERROR_INVALID_HANDLE
+    }
 }
 
 #[win32_derive::dllexport]
@@ -28,69 +101,177 @@ pub fn GetUserNameA(
     true
 }
 
+fn reg_create_key(
+    ctx: &mut Context,
+    hkey: HKEY,
+    subkey: String,
+    phk_result: u32,
+    lpdw_disposition: u32,
+) -> u32 {
+    let mut reg = registry();
+    let Some(path) = subkey_path(&reg, hkey, &subkey) else {
+        return ERROR_INVALID_HANDLE;
+    };
+    let existed = !reg.keys.insert(path.clone());
+    let handle = open_key(&mut reg, path);
+    write_out(ctx, phk_result, handle);
+    write_out(
+        ctx,
+        lpdw_disposition,
+        if existed {
+            REG_OPENED_EXISTING_KEY
+        } else {
+            REG_CREATED_NEW_KEY
+        },
+    );
+    ERROR_SUCCESS
+}
+
 #[win32_derive::dllexport]
 pub fn RegCreateKeyExW(
-    _ctx: &mut Context,
-    _hKey: HKEY,
-    _lpSubKey: u32, /* WSTR */
+    ctx: &mut Context,
+    hKey: HKEY,
+    lpSubKey: u32, /* WSTR */
     _Reserved: u32,
     _lpClass: u32,              /* WSTR */
     _dwOptions: u32,            /* REG_OPEN_CREATE_OPTIONS */
     _samDesired: u32,           /* REG_SAM_FLAGS */
     _lpSecurityAttributes: u32, /* SECURITY_ATTRIBUTES */
-    _phkResult: HKEY,
-    _lpdwDisposition: u32, /* REG_CREATE_KEY_DISPOSITION */
+    phkResult: u32,
+    lpdwDisposition: u32, /* REG_CREATE_KEY_DISPOSITION */
 ) -> u32 /* WIN32_ERROR */ {
-    stub!(0)
+    let subkey = ctx.memory.read_wstr(lpSubKey).to_string_lossy();
+    reg_create_key(ctx, hKey, subkey, phkResult, lpdwDisposition)
 }
 
 #[win32_derive::dllexport]
 pub fn RegOpenKeyExA(
-    _ctx: &mut Context,
-    _hKey: HKEY,
-    _lpSubKey: u32, /* STR */
+    ctx: &mut Context,
+    hKey: HKEY,
+    lpSubKey: u32, /* STR */
     _ulOptions: u32,
     _samDesired: u32, /* REG_SAM_FLAGS */
-    _phkResult: HKEY,
+    phkResult: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    stub!(0)
+    let subkey = ctx.memory.read_str(lpSubKey);
+    let mut reg = registry();
+    let Some(path) = subkey_path(&reg, hKey, subkey) else {
+        return ERROR_INVALID_HANDLE;
+    };
+    if !reg.keys.contains(&path) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    let handle = open_key(&mut reg, path);
+    write_out(ctx, phkResult, handle);
+    ERROR_SUCCESS
+}
+
+fn value_name(ctx: &Context, addr: u32) -> String {
+    if addr == 0 {
+        // A null name asks for the key's default value.
+        String::new()
+    } else {
+        ctx.memory.read_str(addr).to_uppercase()
+    }
+}
+
+fn reg_query_value(
+    ctx: &mut Context,
+    hkey: HKEY,
+    name: String,
+    lp_type: u32,
+    lp_data: u32,
+    lpcb_data: u32,
+) -> u32 {
+    let reg = registry();
+    let Some(path) = key_path(&reg, hkey) else {
+        return ERROR_INVALID_HANDLE;
+    };
+    let Some(&(typ, ref data)) = reg.values.get(&(path, name)) else {
+        return ERROR_FILE_NOT_FOUND;
+    };
+    write_out(ctx, lp_type, typ);
+    let room = if lpcb_data == 0 {
+        0
+    } else {
+        ctx.memory.read::<u32>(lpcb_data) as usize
+    };
+    if lp_data == 0 {
+        // A size query reports the needed byte count.
+        write_out(ctx, lpcb_data, data.len() as u32);
+        return ERROR_SUCCESS;
+    }
+    if room < data.len() {
+        write_out(ctx, lpcb_data, data.len() as u32);
+        return ERROR_MORE_DATA;
+    }
+    ctx.memory[lp_data..][..data.len()].copy_from_slice(data);
+    write_out(ctx, lpcb_data, data.len() as u32);
+    ERROR_SUCCESS
 }
 
 #[win32_derive::dllexport]
 pub fn RegQueryValueExA(
-    _ctx: &mut Context,
-    _hKey: HKEY,
-    _lpValueName: u32, /* STR */
+    ctx: &mut Context,
+    hKey: HKEY,
+    lpValueName: u32, /* STR */
     _lpReserved: u32,
-    _lpType: u32, /* REG_VALUE_TYPE */
-    _lpData: u32,
-    _lpcbData: u32,
+    lpType: u32, /* REG_VALUE_TYPE */
+    lpData: u32,
+    lpcbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    stub!(ERROR_FILE_NOT_FOUND)
+    let name = value_name(ctx, lpValueName);
+    reg_query_value(ctx, hKey, name, lpType, lpData, lpcbData)
 }
 
 #[win32_derive::dllexport]
 pub fn RegQueryValueExW(
-    _ctx: &mut Context,
-    _hKey: HKEY,
-    _lpValueName: u32, /* WSTR */
+    ctx: &mut Context,
+    hKey: HKEY,
+    lpValueName: u32, /* WSTR */
     _lpReserved: u32,
-    _lpType: u32, /* REG_VALUE_TYPE */
-    _lpData: u32,
-    _lpcbData: u32,
+    lpType: u32, /* REG_VALUE_TYPE */
+    lpData: u32,
+    lpcbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    stub!(ERROR_FILE_NOT_FOUND)
+    let name = if lpValueName == 0 {
+        String::new()
+    } else {
+        ctx.memory
+            .read_wstr(lpValueName)
+            .to_string_lossy()
+            .to_uppercase()
+    };
+    reg_query_value(ctx, hKey, name, lpType, lpData, lpcbData)
 }
 
 #[win32_derive::dllexport]
 pub fn RegSetValueExW(
-    _ctx: &mut Context,
-    _hKey: HKEY,
-    _lpValueName: u32, /* WSTR */
+    ctx: &mut Context,
+    hKey: HKEY,
+    lpValueName: u32, /* WSTR */
     _Reserved: u32,
-    _dwType: u32, /* REG_VALUE_TYPE */
-    _lpData: u32,
-    _cbData: u32,
+    dwType: u32, /* REG_VALUE_TYPE */
+    lpData: u32,
+    cbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    stub!(0)
+    let name = if lpValueName == 0 {
+        String::new()
+    } else {
+        ctx.memory
+            .read_wstr(lpValueName)
+            .to_string_lossy()
+            .to_uppercase()
+    };
+    let mut reg = registry();
+    let Some(path) = key_path(&reg, hKey) else {
+        return ERROR_INVALID_HANDLE;
+    };
+    let data = if lpData == 0 {
+        Vec::new()
+    } else {
+        ctx.memory[lpData..][..cbData as usize].to_vec()
+    };
+    reg.values.insert((path, name), (dwType, data));
+    ERROR_SUCCESS
 }
