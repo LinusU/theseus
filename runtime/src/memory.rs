@@ -73,9 +73,29 @@ impl<'a> Memory<'a> {
     pub fn read_str(&self, addr: u32) -> &str {
         self.check_access(addr);
         let buf = &self.bytes[addr as usize..];
-        let nul = buf.iter().position(|&c| c == 0).unwrap();
+        let Some(nul) = buf.iter().position(|&c| c == 0) else {
+            // A string that runs to the end of memory is malformed guest data;
+            // failing the read beats panicking the host.
+            log::error!(
+                "unterminated string at {addr:#x} (caller {})",
+                std::panic::Location::caller()
+            );
+            return "";
+        };
         let buf = &buf[..nul];
-        std::str::from_utf8(buf).unwrap()
+        match std::str::from_utf8(buf) {
+            Ok(str) => str,
+            // ANSI (CP-1252) strings may contain bytes that are not valid
+            // UTF-8; treat the read as a failure rather than panicking.
+            Err(err) => {
+                log::error!(
+                    "non-UTF-8 string at {addr:#x} (invalid byte at +{:#x}, caller {})",
+                    err.valid_up_to(),
+                    std::panic::Location::caller()
+                );
+                ""
+            }
+        }
     }
 
     /// This returns an allocated string rather than a reference due to alignment.
@@ -158,5 +178,32 @@ impl<'a> std::ops::IndexMut<std::ops::Range<u32>> for Memory<'a> {
     fn index_mut(&mut self, index: std::ops::Range<u32>) -> &mut Self::Output {
         self.check_access(index.start);
         &mut self.bytes[index.start as usize..index.end as usize]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_str_returns_guest_string() {
+        let memory = Memory::leak_new(0x2000);
+        memory.bytes[0x1000..0x1006].copy_from_slice(b"hello\0");
+        assert_eq!(memory.read_str(0x1000), "hello");
+    }
+
+    #[test]
+    fn read_str_does_not_panic_on_unterminated_string() {
+        let memory = Memory::leak_new(0x2000);
+        memory.bytes[0x1fff] = b'x';
+        // No NUL between 0x1fff and the end of memory.
+        assert_eq!(memory.read_str(0x1fff), "");
+    }
+
+    #[test]
+    fn read_str_does_not_panic_on_non_utf8_string() {
+        let memory = Memory::leak_new(0x2000);
+        memory.bytes[0x1000..0x1005].copy_from_slice(b"caf\xe9\0");
+        assert_eq!(memory.read_str(0x1000), "");
     }
 }
