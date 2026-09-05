@@ -141,6 +141,16 @@ impl FPU {
         self.st_top += 1;
     }
 
+    /// FDECSTP moves the TOP pointer down without writing a value;
+    /// the new ST(0) reads whatever the physical register last held.
+    pub fn dec_top(&mut self) {
+        if self.st_top == 0 {
+            Self::exception("fpu stack overflow");
+            return;
+        }
+        self.st_top -= 1;
+    }
+
     /// Index in self.st for a given ST0, ST1 etc reg.
     fn st_offset(&self, ofs: usize) -> usize {
         let new = self.st_top + ofs;

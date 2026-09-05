@@ -1266,6 +1266,54 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fpu_constants_and_stack_ops() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0xd9, 0xe9][..],
+                "ctx.cpu.fpu.push(std::f64::consts::LOG2_10);",
+            ), // fldl2t
+            (&[0xd9, 0xed], "ctx.cpu.fpu.push(std::f64::consts::LN_2);"), // fldln2
+            (&[0xd9, 0xfb], "ctx.cpu.fpu.push(fsincos_t.cos());"),        // fsincos
+            (&[0xd9, 0xf9], "(ctx.cpu.fpu.get(0) + 1.0).log2()"),         // fyl2xp1
+            (&[0xd9, 0xf5], "round_ties_even"),                           // fprem1
+            (&[0xd9, 0xd0], ""), // fnop (no output beyond the comment)
+            (&[0xd9, 0xf6], "ctx.cpu.fpu.dec_top();"), // fdecstp
+            (&[0xd9, 0xf7], "ctx.cpu.fpu.pop();"), // fincstp
+            // fisubr dword ptr [eax]: int - st0
+            (&[0xda, 0x28], "as i32 as f64 - ctx.cpu.fpu.get(0)"),
+            // fcmovb st0, st1
+            (
+                &[0xda, 0xc1],
+                "if ctx.cpu.flags.contains(Flags::CF) { ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(1)); }",
+            ),
+            // fcmovne st0, st1
+            (&[0xdb, 0xc9], "if !ctx.cpu.flags.contains(Flags::ZF)"),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            if !want.is_empty() {
+                assert!(
+                    codegen.buf.contains(want),
+                    "wanted {want:?} in {:?}",
+                    codegen.buf
+                );
+            }
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

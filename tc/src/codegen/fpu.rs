@@ -99,6 +99,8 @@ impl<'a> CodeGen<'a> {
             Fldz => self.line("ctx.cpu.fpu.push(0.0);"),
             Fld1 => self.line("ctx.cpu.fpu.push(1.0);"),
             Fldl2e => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG2_E);"),
+            Fldl2t => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG2_10);"),
+            Fldln2 => self.line("ctx.cpu.fpu.push(std::f64::consts::LN_2);"),
             Fldpi => self.line("ctx.cpu.fpu.push(std::f64::consts::PI);"),
             Fldlg2 => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG10_2);"),
 
@@ -174,14 +176,16 @@ impl<'a> CodeGen<'a> {
                 );
                 self.line(self.fpu_set_reg(0, expr));
             }
-            Fiadd | Fisub => {
+            Fiadd | Fisub | Fisubr => {
                 let size = op_size(instr, 0);
-                let operator = if instr.mnemonic() == Fiadd { "+" } else { "-" };
-                let expr = format!(
-                    "{} {operator} {} as i{size} as f64",
-                    self.fpu_get_reg(0),
-                    self.get_op(instr, 0)
-                );
+                let int = format!("{} as i{size} as f64", self.get_op(instr, 0));
+                let st = self.fpu_get_reg(0);
+                let expr = match instr.mnemonic() {
+                    Fiadd => format!("{st} + {int}"),
+                    Fisub => format!("{st} - {int}"),
+                    Fisubr => format!("{int} - {st}"),
+                    _ => unreachable!(),
+                };
                 self.line(self.fpu_set_reg(0, expr));
             }
             Fidiv | Fidivr => {
@@ -199,6 +203,17 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_reg(
                     0,
                     format!("{} % {}", self.fpu_get_reg(0), self.fpu_get_reg(1)),
+                ));
+            }
+            Fprem1 => {
+                // IEEE remainder: ST0 - round_ties_even(ST0/ST1) * ST1.
+                self.line(self.fpu_set_reg(
+                    0,
+                    format!(
+                        "{x} - ({x} / {y}).round_ties_even() * {y}",
+                        x = self.fpu_get_reg(0),
+                        y = self.fpu_get_reg(1)
+                    ),
                 ));
             }
 
@@ -237,6 +252,14 @@ impl<'a> CodeGen<'a> {
             Fcos => {
                 self.line(self.fpu_set_reg(0, format!("{}.cos()", self.fpu_get_reg(0))));
             }
+            Fsincos => {
+                self.line("let fsincos_t = ctx.cpu.fpu.get(0);");
+                self.line("ctx.cpu.fpu.set(0, fsincos_t.sin());");
+                self.line("ctx.cpu.fpu.push(fsincos_t.cos());");
+            }
+            Fnop => {}
+            Fdecstp => self.line("ctx.cpu.fpu.dec_top();"),
+            Fincstp => self.line("ctx.cpu.fpu.pop();"),
             Fsqrt => {
                 self.line(self.fpu_set_reg(0, format!("{}.sqrt()", self.fpu_get_reg(0))));
             }
@@ -367,6 +390,31 @@ impl<'a> CodeGen<'a> {
                 self.line("let t = ctx.cpu.fpu.get(1) * ctx.cpu.fpu.get(0).log2();");
                 self.line("ctx.cpu.fpu.pop();");
                 self.line("ctx.cpu.fpu.set(0, t);");
+            }
+            Fyl2xp1 => {
+                self.line("let t = ctx.cpu.fpu.get(1) * (ctx.cpu.fpu.get(0) + 1.0).log2();");
+                self.line("ctx.cpu.fpu.pop();");
+                self.line("ctx.cpu.fpu.set(0, t);");
+            }
+
+            // FCMOVcc: conditional floating-point move on CPU flags.
+            Fcmovb | Fcmovnb | Fcmove | Fcmovne | Fcmovbe | Fcmovnbe | Fcmovu | Fcmovnu => {
+                assert_eq!(instr.op_count(), 2);
+                let cond = match instr.mnemonic() {
+                    Fcmovb => "ctx.cpu.flags.contains(Flags::CF)",
+                    Fcmovnb => "!ctx.cpu.flags.contains(Flags::CF)",
+                    Fcmove => "ctx.cpu.flags.contains(Flags::ZF)",
+                    Fcmovne => "!ctx.cpu.flags.contains(Flags::ZF)",
+                    Fcmovbe => "ctx.cpu.flags.intersects(Flags::CF | Flags::ZF)",
+                    Fcmovnbe => "!ctx.cpu.flags.intersects(Flags::CF | Flags::ZF)",
+                    Fcmovu => "ctx.cpu.flags.contains(Flags::PF)",
+                    Fcmovnu => "!ctx.cpu.flags.contains(Flags::PF)",
+                    _ => unreachable!(),
+                };
+                self.line(format!(
+                    "if {cond} {{ ctx.cpu.fpu.set(0, {}); }}",
+                    self.fpu_get_op(instr, 1)
+                ));
             }
             _ => return false,
         }
