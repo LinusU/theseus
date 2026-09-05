@@ -563,6 +563,57 @@ pub fn pswapd(x: u64) -> u64 {
     [x[1], x[0]].pack()
 }
 
+/// PSHUFB (SSSE3) shuffles the bytes of `x` using the control mask. Each
+/// control byte's low three bits select a source byte; if the high bit is
+/// set the result byte is zero.
+pub fn pshufb(x: u64, control: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let c: [u8; 8] = control.unpack();
+    [
+        if c[0] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[0] & 0x7) as usize]
+        },
+        if c[1] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[1] & 0x7) as usize]
+        },
+        if c[2] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[2] & 0x7) as usize]
+        },
+        if c[3] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[3] & 0x7) as usize]
+        },
+        if c[4] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[4] & 0x7) as usize]
+        },
+        if c[5] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[5] & 0x7) as usize]
+        },
+        if c[6] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[6] & 0x7) as usize]
+        },
+        if c[7] & 0x80 != 0 {
+            0
+        } else {
+            x[(c[7] & 0x7) as usize]
+        },
+    ]
+    .pack()
+}
+
 /// PF2ID (3DNow!) converts two packed single-precision floats to two
 /// 32-bit signed integers using round-to-zero with saturation.
 pub fn pf2id(x: u64) -> u64 {
@@ -851,8 +902,8 @@ mod tests {
         pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc,
         pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub, pfsubr, pi2fd, pi2fw, pinsrw,
         pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq,
-        psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
-        pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb,
+        psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -999,6 +1050,18 @@ mod tests {
         assert_eq!(pmulhrw(0x0000_0000_0000_8000, 2), 0xfffe);
         // 0x7fff * 0x7fff = 0x3fff_0001; + 0x4000 = 0x3fff_4001; bits [30:15] = 0x7ffe.
         assert_eq!(pmulhrw(0x7fff, 0x7fff), 0x0000_0000_0000_7ffe);
+    }
+
+    #[test]
+    fn pshufb_shuffles_and_zeros_mmx_bytes() {
+        // Source bytes 0..7. Control selects source byte i from each lane.
+        let src = 0x0706_0504_0302_0100;
+        let control = 0x0001_0203_0405_0607; // each lane i selects byte (7-i)
+        assert_eq!(pshufb(src, control), 0x0001_0203_0405_0607); // reversed
+
+        // High bit zeroes the lane; lane 0 selects source[1], others zero.
+        let mixed = 0x0000_0000_0000_8001;
+        assert_eq!(pshufb(src, mixed), 0x0000_0000_0000_0001);
     }
 
     #[test]

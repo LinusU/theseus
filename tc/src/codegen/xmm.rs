@@ -453,6 +453,19 @@ impl<'a> CodeGen<'a> {
                 let src = self.xmm_get(instr, 1);
                 self.line(self.xmm_set(instr, 0, format!("pshufd_xmm({src}, {imm})")));
             }
+            // PSHUFB uses the destination as the source bytes and the second
+            // operand as the 128-bit control mask.
+            Pshufb => {
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "pshufb_xmm({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
             Pshuflw | Pshufhw => {
                 let func = format!("{}_xmm", instr_name(instr));
                 let imm = format!("{:#x}", instr.immediate8());

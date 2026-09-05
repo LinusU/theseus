@@ -384,6 +384,23 @@ pub fn pshuflw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
     from_words(out)
 }
 
+/// PSHUFB (SSSE3) shuffles the bytes of `dst` using the 128-bit control
+/// mask. Each control byte's low four bits select a source byte; if the high
+/// bit is set the result byte is zero.
+pub fn pshufb_xmm(dst: [u32; 4], control: [u32; 4]) -> [u32; 4] {
+    let dst = to_bytes(dst);
+    let c = to_bytes(control);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = if c[i] & 0x80 != 0 {
+            0
+        } else {
+            dst[(c[i] & 0x0f) as usize]
+        };
+    }
+    from_bytes(out)
+}
+
 pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_bytes(a);
     let b = to_bytes(b);
@@ -1200,6 +1217,19 @@ mod tests {
             pinsrw_xmm(xmm, 0xabcd, 7),
             [0x0004_0003, 0x0002_0001, 0x0008_0007, 0xabcd_0005]
         );
+    }
+
+    #[test]
+    fn pshufb_xmm_shuffles_and_zeros_bytes() {
+        // Source bytes 0..15 packed into four u32s.
+        let src = [0x0302_0100, 0x0706_0504, 0x0b0a_0908, 0x0f0e_0d0c];
+        // Control that reverses the 16 bytes.
+        let control = [0x0c0d_0e0f, 0x0809_0a0b, 0x0405_0607, 0x0001_0203];
+        assert_eq!(pshufb_xmm(src, control), control); // reversed == control
+
+        // Zero every lane with the high bit, except lane 12 which selects byte 1.
+        let mixed = [0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_8001];
+        assert_eq!(pshufb_xmm(src, mixed), [0, 0, 0, 1]);
     }
 
     #[test]

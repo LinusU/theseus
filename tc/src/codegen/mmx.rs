@@ -131,6 +131,7 @@ impl<'a> CodeGen<'a> {
                 | Pmulhuw
                 | Pmuludq
                 | Psadbw
+                | Pshufb
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
@@ -281,6 +282,19 @@ impl<'a> CodeGen<'a> {
                         "pshufw({}, {})",
                         self.mmx_get(instr, 1),
                         self.get_op(instr, 2)
+                    ),
+                ));
+            }
+            // PSHUFB uses the destination as the source bytes and the second
+            // operand as the 64-bit control mask.
+            Pshufb => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!(
+                        "pshufb({}, {})",
+                        self.mmx_get(instr, 0),
+                        self.mmx_get(instr, 1)
                     ),
                 ));
             }
