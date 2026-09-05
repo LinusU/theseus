@@ -29,8 +29,11 @@ impl<T: zerocopy::FromBytes> Ptr<T> {
             memory.null_ptr(self.addr);
             return None;
         }
-        let bytes = &memory[self.addr..][..std::mem::size_of::<T>()];
-        Some(<T>::read_from_bytes(bytes).unwrap())
+        let bytes = memory
+            .bytes
+            .get(self.addr as usize..)
+            .and_then(|bytes| bytes.get(..std::mem::size_of::<T>()))?;
+        <T>::read_from_bytes(bytes).ok()
     }
 }
 
@@ -47,9 +50,11 @@ impl<T: zerocopy::IntoBytes + zerocopy::Immutable> Ptr<T> {
             memory.null_ptr(self.addr);
             return None;
         }
-        let bytes = &mut memory[self.addr..][..std::mem::size_of::<T>()];
-        value.write_to(bytes).unwrap();
-        Some(())
+        let bytes = memory
+            .bytes
+            .get_mut(self.addr as usize..)
+            .and_then(|bytes| bytes.get_mut(..std::mem::size_of::<T>()))?;
+        value.write_to(bytes).ok()
     }
 }
 
