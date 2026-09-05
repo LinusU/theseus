@@ -45,16 +45,17 @@ pub fn _except_handler3(_ctx: &mut Context) {
 }
 
 #[win32_derive::dllexport]
-pub fn _exit(_ctx: &mut Context) {
-    todo!()
+pub fn _exit(_ctx: &mut Context, status: i32) {
+    std::process::exit(status);
 }
 
 #[win32_derive::dllexport]
 pub fn _initterm(_ctx: &mut Context) {}
 
 #[win32_derive::dllexport]
-pub fn exit(_ctx: &mut Context) {
-    todo!()
+pub fn exit(_ctx: &mut Context, status: i32) {
+    // No CRT atexit-handler model exists; exit forwards to the host directly.
+    std::process::exit(status);
 }
 
 // MSDN: "Calling rand before any call to srand generates the same sequence as calling srand with seed passed as 1."
