@@ -131,10 +131,10 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             | iced_x86::Mnemonic::Insd
             | iced_x86::Mnemonic::Outsb
             | iced_x86::Mnemonic::Outsw
-            | iced_x86::Mnemonic::Outsd => {
-                if !self.traverse.module.is_dos() {
-                    anyhow::bail!("port I/O instruction in non-DOS code");
-                }
+            | iced_x86::Mnemonic::Outsd
+                if !self.traverse.module.is_dos() =>
+            {
+                anyhow::bail!("port I/O instruction in non-DOS code");
             }
             iced_x86::Mnemonic::INVALID => anyhow::bail!("invalid instruction"),
             _ => {}
@@ -295,7 +295,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             return Ok(());
         }
 
-        if let Some(addr) = is_abs_memory_ref(&instr) {
+        if let Some(addr) = is_abs_memory_ref(instr) {
             // `jmp [addr]` for some constant addr
             if let Some(imp) = self.traverse.iat_refs.get(&addr) {
                 // `call [foo@IAT]` means `call foo`, the IAT is the pointer to the real function.
@@ -310,7 +310,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 }
                 log::warn!("{ip} {instr}  ; indirect via memory");
             }
-        } else if let Some((table, index)) = is_jump_table_ref(&instr) {
+        } else if let Some((table, index)) = is_jump_table_ref(instr) {
             let count = self.index_bounds.get(&index.full_register()).copied();
             self.found_tables.push((table, count));
         } else {

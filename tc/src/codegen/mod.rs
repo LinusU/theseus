@@ -94,7 +94,7 @@ impl<'a> CodeGen<'a> {
             // 16-bit segments handled in gen_addr(), not here
             match instr.memory_segment() {
                 CS | DS | ES | GS | SS => {}
-                FS => expr.push(format!("ctx.cpu.regs.fs_base")),
+                FS => expr.push("ctx.cpu.regs.fs_base".to_string()),
                 None => {}
                 r => todo!("{r:?} in {instr}"),
             }
@@ -111,7 +111,7 @@ impl<'a> CodeGen<'a> {
                     instr.memory_index_scale()
                 ));
             } else {
-                expr.push(format!("{}", get_reg(instr.memory_index()),));
+                expr.push(get_reg(instr.memory_index()));
             }
         }
         let offset = instr.memory_displacement32();
@@ -123,7 +123,7 @@ impl<'a> CodeGen<'a> {
             .enumerate()
             .map(|(i, e)| {
                 if i == 0 {
-                    format!("{e}")
+                    e
                 } else {
                     format!(".wrapping_add({e})")
                 }
@@ -334,14 +334,14 @@ impl<'a> CodeGen<'a> {
     fn gen_instr(&mut self, instr: &Instr) -> anyhow::Result<()> {
         // log::info!("gen: {:08x} {}", instr.iced.ip32(), instr.iced);
         self.line(format!("// {} {}", instr.ip, instr.iced));
-        if self.codegen_control_flow(instr) {
-        } else if self.codegen_math(&instr.iced) {
-        } else if self.codegen_string(&instr.iced) {
-        } else if self.codegen_misc(&instr.iced) {
-        } else if self.codegen_fpu(&instr.iced) {
-        } else if self.codegen_mmx(&instr.iced) {
-        } else if self.codegen_xmm(&instr.iced) {
-        } else {
+        if !self.codegen_control_flow(instr)
+            && !self.codegen_math(&instr.iced)
+            && !self.codegen_string(&instr.iced)
+            && !self.codegen_misc(&instr.iced)
+            && !self.codegen_fpu(&instr.iced)
+            && !self.codegen_mmx(&instr.iced)
+            && !self.codegen_xmm(&instr.iced)
+        {
             anyhow::bail!("{:?} not implemented", instr.iced.mnemonic());
         }
         Ok(())
@@ -473,7 +473,7 @@ regs.esp = {stack_pointer:#x};
         let mut boundaries = vec![0usize];
         for &addr in &addrs {
             let block = self.blocks.get(&addr).unwrap();
-            self.gen_block(&block);
+            self.gen_block(block);
             boundaries.push(self.buf.len());
         }
         for addr in self.unknown.iter().copied().collect::<Vec<_>>() {

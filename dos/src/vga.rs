@@ -14,8 +14,7 @@ impl VGA {
     pub fn new() -> Self {
         let mut window = host::host().create_window("VGA", 320, 200);
         let surface = window.create_surface(320, 200);
-        let mut pixels32 = vec![];
-        pixels32.resize(320 * 200 * 4, 0);
+        let pixels32 = vec![0; 320 * 200 * 4];
         VGA {
             window,
             surface,

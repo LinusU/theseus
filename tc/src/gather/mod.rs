@@ -141,7 +141,7 @@ impl<'a> Traverse<'a> {
                         },
                     );
                 }
-                self.iat_refs.insert(import.iat_addr, &import);
+                self.iat_refs.insert(import.iat_addr, import);
             }
         }
 
@@ -233,12 +233,11 @@ impl<'a> Traverse<'a> {
         // If this ip is contained within an existing block, it means it is a
         // jmp within some other code.
         // Re-queue the other block for re-parsing after this one so that it can be split.
-        if let Some(baddr) = self.find_containing_block(addr) {
-            if let Some(block) = self.blocks.remove(&baddr) {
-                if let BlockType::Instrs(instrs) = &block.ty {
-                    self.queue.enqueue(instrs[0].ip);
-                }
-            }
+        if let Some(baddr) = self.find_containing_block(addr)
+            && let Some(block) = self.blocks.remove(&baddr)
+            && let BlockType::Instrs(instrs) = &block.ty
+        {
+            self.queue.enqueue(instrs[0].ip);
         }
 
         match self.decode_one(ip) {

@@ -9,7 +9,7 @@ pub struct Report {
     pub iat: Vec<IATEntry>,
 }
 
-fn table<'a>(header: &[&str], rows: impl Iterator<Item = Vec<String>>) -> String {
+fn table(header: &[&str], rows: impl Iterator<Item = Vec<String>>) -> String {
     let mut out = String::new();
     out.push_str("<table>");
     out.push_str("<tr>");
@@ -29,7 +29,7 @@ fn table<'a>(header: &[&str], rows: impl Iterator<Item = Vec<String>>) -> String
 }
 
 impl Report {
-    pub fn to_html(mut self) -> String {
+    pub fn into_html(mut self) -> String {
         self.iat.sort_by_key(|e| e.addr);
 
         let style = [

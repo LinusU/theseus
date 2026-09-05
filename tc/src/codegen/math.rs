@@ -71,9 +71,9 @@ impl<'a> CodeGen<'a> {
                 let size2 = size * 2;
                 self.line(format!("let res = mul(ctx.cpu.regs.eax as u{size} as u{size2}, {} as u{size2}, &mut ctx.cpu.flags);", self.get_op(instr, 0)));
                 match size {
-                    8 => self.line(format!("ctx.cpu.regs.set_ax(res);")),
-                    16 => self.line(format!("ctx.cpu.regs.set_dx_ax(res);")),
-                    32 => self.line(format!("ctx.cpu.regs.set_edx_eax(res);")),
+                    8 => self.line("ctx.cpu.regs.set_ax(res);"),
+                    16 => self.line("ctx.cpu.regs.set_dx_ax(res);"),
+                    32 => self.line("ctx.cpu.regs.set_edx_eax(res);"),
                     _ => unreachable!(),
                 }
             }
@@ -84,8 +84,8 @@ impl<'a> CodeGen<'a> {
                 let size2 = size * 2;
                 let x = match size {
                     8 => get_reg(iced_x86::Register::AX),
-                    16 => format!("ctx.cpu.regs.get_dx_ax()"),
-                    32 => format!("ctx.cpu.regs.get_edx_eax()"),
+                    16 => "ctx.cpu.regs.get_dx_ax()".to_string(),
+                    32 => "ctx.cpu.regs.get_edx_eax()".to_string(),
                     _ => unreachable!(),
                 };
                 let y = format!("{} as u{size2}", self.get_op(instr, 0));
@@ -95,7 +95,7 @@ impl<'a> CodeGen<'a> {
                 self.line(format!(
                     "if divisor == 0 || dividend / divisor > u{size}::MAX as u{size2} {{ {trap}; }}"
                 ));
-                self.line("let (quot, rem) = div(dividend, divisor);".to_string());
+                self.line("let (quot, rem) = div(dividend, divisor);");
                 match size {
                     8 => {
                         self.line("ctx.cpu.regs.set_al(quot as u8);");
@@ -152,9 +152,9 @@ impl<'a> CodeGen<'a> {
                 let size = op_size(instr, 0);
                 let size2 = size * 2;
                 let x = match size {
-                    8 => format!("ctx.cpu.regs.get_ax() as i16"),
-                    16 => format!("ctx.cpu.regs.get_dx_ax() as i32"),
-                    32 => format!("ctx.cpu.regs.get_edx_eax() as i64"),
+                    8 => "ctx.cpu.regs.get_ax() as i16".to_string(),
+                    16 => "ctx.cpu.regs.get_dx_ax() as i32".to_string(),
+                    32 => "ctx.cpu.regs.get_edx_eax() as i64".to_string(),
                     _ => unreachable!(),
                 };
                 let y = format!("{} as i{size} as i{size2}", self.get_op(instr, 0));

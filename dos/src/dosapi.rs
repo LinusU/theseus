@@ -34,7 +34,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             let buf = &buf[..end];
             //trace!("write_stdout", buf);
             use std::io::Write;
-            std::io::stdout().lock().write(buf).unwrap();
+            std::io::stdout().lock().write_all(buf).unwrap();
             ctx.cpu.regs.set_al(b'$');
         }
         // write to interrupt table
@@ -90,7 +90,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 return None;
             };
             let handle = state.files.len() as u8;
-            let _ = state.files.push(File { buf, ofs: 0 });
+            state.files.push(File { buf, ofs: 0 });
             ctx.cpu.regs.set_ax(handle as u16);
             ctx.cpu.flags.remove(runtime::Flags::CF);
         }

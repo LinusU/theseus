@@ -175,7 +175,7 @@ impl Block {
 }
 
 pub fn write_if_changed(path: &str, contents: &[u8]) -> anyhow::Result<()> {
-    let existing = std::fs::read(&path).unwrap_or_default();
+    let existing = std::fs::read(path).unwrap_or_default();
     if existing != contents {
         std::fs::write(path, contents)?;
     }
@@ -195,8 +195,8 @@ impl State {
             if !addr.starts_with('0') {
                 continue;
             }
-            let addr = u32::from_str_radix(&addr, 16)
-                .map_err(|err| anyhow::anyhow!(format!("{addr:?}: {err}")))?;
+            let addr = u32::from_str_radix(addr, 16)
+                .map_err(|err| anyhow::anyhow!("{addr:?}: {err}"))?;
             self.addr_info.insert(
                 addr,
                 AddrInfo {
@@ -330,8 +330,8 @@ impl State {
         self.report = report;
     }
 
-    pub fn generate(mut self, trace: bool, out_dir: &str) -> anyhow::Result<()> {
-        let mut codegen = codegen::CodeGen::new(&mut self, trace);
+    pub fn generate(self, trace: bool, out_dir: &str) -> anyhow::Result<()> {
+        let mut codegen = codegen::CodeGen::new(&self, trace);
         codegen.gen_file(out_dir)?;
 
         let data_dir = format!("{out_dir}/data");
@@ -347,7 +347,7 @@ impl State {
         let mut report = self.report;
         report.name = out_dir.to_string();
         let report_path = format!("{out_dir}/report.html");
-        write_if_changed(&report_path, report.to_html().as_bytes())?;
+        write_if_changed(&report_path, report.into_html().as_bytes())?;
 
         fn link_path(path: &str) -> String {
             let abs_path = std::env::current_dir()

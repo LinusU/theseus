@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 mod dosapi;
 mod timer;
 mod vga;
@@ -44,7 +46,7 @@ impl From<IVTEntry> for (u16, u16) {
 }
 
 pub fn ivt<'a>(mem: &'a mut Memory) -> &'a mut [IVTEntry] {
-    <[IVTEntry]>::mut_from_prefix_with_elems(&mut mem.bytes, 0x400)
+    <[IVTEntry]>::mut_from_prefix_with_elems(mem.bytes, 0x400)
         .unwrap()
         .0
 }
@@ -193,11 +195,13 @@ pub fn run(exe: &EXEData) {
 static STATE: LazyLock<SingleThreader<RefCell<State>>> =
     LazyLock::new(|| SingleThreader::new(RefCell::new(State::new())));
 
+pub type ReadFileFn = Box<dyn FnMut(&str) -> Option<Vec<u8>>>;
+
 pub struct State {
     psp_segment: u16,
     pit: PIT,
     vga: Option<VGA>,
-    pub read_file: Option<Box<dyn FnMut(&str) -> Option<Vec<u8>>>>,
+    pub read_file: Option<ReadFileFn>,
     files: Vec<dosapi::File>,
 }
 
@@ -305,8 +309,7 @@ pub fn out(ctx: &mut Context, port: u16, data: u8) {
 pub fn dump_com(ctx: &mut Context) -> &[u8] {
     let data = &ctx.memory[segofs(DOSBOX_SEG, 0x100)..];
     let end = data.iter().rposition(|&x| x != 0);
-    let data = &data[..end.unwrap() + 1];
-    data
+    &data[..end.unwrap() + 1]
 }
 
 impl State {

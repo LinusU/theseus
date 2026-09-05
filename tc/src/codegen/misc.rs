@@ -120,7 +120,7 @@ impl<'a> CodeGen<'a> {
                     self.line(format!("let addr = {addr};"));
                     self.line(format!("let value = ctx.memory.read::<u{size}>(addr);"));
                     if operation == "bt" {
-                        self.line(format!("bt(value, bit, &mut ctx.cpu.flags);"));
+                        self.line("bt(value, bit, &mut ctx.cpu.flags);");
                     } else {
                         self.line(format!(
                             "ctx.memory.write::<u{size}>(addr, {operation}(value, bit, &mut ctx.cpu.flags));"
