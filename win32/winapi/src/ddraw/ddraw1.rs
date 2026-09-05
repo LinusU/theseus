@@ -3,6 +3,7 @@ use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     ddraw::{DD, GUID, get_pixel_format, state, types::*},
+    gdi32::HDC,
     heap::Heap,
     kernel32, stub,
     user32::HWND,
@@ -579,13 +580,17 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddAttachedSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn AddAttachedSurface(ctx: &mut Context, this: u32, lpDDSAttachedSurface: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::AddAttachedSurface(
+            ctx,
+            this,
+            lpDDSAttachedSurface,
+        )
     }
 
     #[win32_derive::dllexport]
-    pub fn AddOverlayDirtyRect(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn AddOverlayDirtyRect(ctx: &mut Context, this: u32, lpRect: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::AddOverlayDirtyRect(ctx, this, lpRect)
     }
 
     #[win32_derive::dllexport]
@@ -610,8 +615,20 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn BltBatch(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn BltBatch(
+        ctx: &mut Context,
+        this: u32,
+        lpDDBltBatch: u32,
+        dwCount: u32,
+        dwFlags: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::BltBatch(
+            ctx,
+            this,
+            lpDDBltBatch,
+            dwCount,
+            dwFlags,
+        )
     }
 
     #[win32_derive::dllexport]
@@ -628,18 +645,106 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn DeleteAttachedSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn DeleteAttachedSurface(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpDDSAttachedSurface: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::DeleteAttachedSurface(
+            ctx,
+            this,
+            dwFlags,
+            lpDDSAttachedSurface,
+        )
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumAttachedSurfaces(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumAttachedSurfaces(
+        ctx: &mut Context,
+        this: u32,
+        lpContext: u32,
+        lpEnumSurfacesCallback: u32,
+    ) -> DD {
+        if lpEnumSurfacesCallback == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let attached: Vec<u32> = {
+            let surfaces = state().surf.borrow();
+            let Some(surface) = surfaces.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            surface
+                .borrow()
+                .attachments
+                .iter()
+                .map(|s| s.borrow().addr)
+                .collect()
+        };
+        for addr in attached {
+            let desc = {
+                let surfaces = state().surf.borrow();
+                let Some(surface) = surfaces.get(&addr) else {
+                    continue;
+                };
+                let surface = surface.borrow();
+                let bpp = surface.bytes_per_pixel * 8;
+                let pixel_format = if bpp == 8 {
+                    DDPIXELFORMAT {
+                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                        dwFlags: 0x40 | 0x20, // DDPF_RGB | DDPF_PALETTEINDEXED8
+                        dwFourCC: 0,
+                        dwRGBBitCount: 8,
+                        dwRBitMask: 0,
+                        dwGBitMask: 0,
+                        dwBBitMask: 0,
+                        dwRGBAlphaBitMask: 0,
+                    }
+                } else {
+                    get_pixel_format()
+                };
+                DDSURFACEDESC {
+                    dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                    dwWidth: surface.width,
+                    dwHeight: surface.height,
+                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                    ddpfPixelFormat: pixel_format,
+                    ..DDSURFACEDESC::default()
+                }
+            };
+            let desc_addr = kernel32::lock()
+                .process_heap
+                .alloc(&mut ctx.memory, desc.dwSize);
+            desc.write_to_prefix(&mut ctx.memory[desc_addr..]).unwrap();
+            let callback = ctx.indirect(lpEnumSurfacesCallback);
+            ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
+            let ret = ctx.cpu.regs.eax;
+            kernel32::lock()
+                .process_heap
+                .free(&mut ctx.memory, desc_addr);
+            if ret == 0 {
+                return DD::OK; // DDENUMRET_CANCEL
+            }
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumOverlayZOrders(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumOverlayZOrders(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpContext: u32,
+        lpfnCallback: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::EnumOverlayZOrders(
+            ctx,
+            this,
+            dwFlags,
+            lpContext,
+            lpfnCallback,
+        )
     }
 
     #[win32_derive::dllexport]
@@ -664,33 +769,39 @@ pub mod IDirectDrawSurface {
     pub fn GetAttachedSurface(
         ctx: &mut Context,
         this: u32,
-        _lpDDSCaps: u32,
+        lpDDSCaps: u32,
         lplpDDAttachedSurface: u32,
     ) -> DD {
-        let surfaces = state().surf.borrow_mut();
-        let surface = surfaces.get(&this).unwrap().borrow();
-        ctx.memory.write(
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetAttachedSurface(
+            ctx,
+            this,
+            lpDDSCaps,
             lplpDDAttachedSurface,
-            surface.attached.as_ref().unwrap().borrow().addr,
-        );
+        )
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetBltStatus(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetBltStatus(ctx, this, dwFlags)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetCaps(ctx: &mut Context, this: u32, lpDDSCaps: u32) -> DD {
+        if lpDDSCaps == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory
+            .write::<u32>(lpDDSCaps, surface.borrow().caps.dwCaps.bits());
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetBltStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetCaps(ctx: &mut Context, _this: u32, lpDDSCaps: u32) -> DD {
-        let caps = DDSCAPS::BACKBUFFER | DDSCAPS::COMPLEX | DDSCAPS::FLIP | DDSCAPS::VIDEOMEMORY;
-        ctx.memory.write::<u32>(lpDDSCaps, caps.bits());
-        DD::OK
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetClipper(ctx: &mut Context, this: u32, lplpDDClipper: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetClipper(ctx, this, lplpDDClipper)
     }
 
     #[win32_derive::dllexport]
@@ -704,23 +815,23 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetDC(ctx, this, lphDC)
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFlipStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetFlipStatus(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetFlipStatus(ctx, this, dwFlags)
     }
 
     #[win32_derive::dllexport]
-    pub fn GetOverlayPosition(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetOverlayPosition(ctx: &mut Context, this: u32, lplX: u32, lplY: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetOverlayPosition(ctx, this, lplX, lplY)
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPalette(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::GetPalette(ctx, this, lplpDDPalette)
     }
 
     #[win32_derive::dllexport]
@@ -765,13 +876,7 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(
-        _ctx: &mut Context,
-        _this: u32,
-        _lpDD: u32,
-        _dwFlags: u32,
-        _lpDDColorTable: u32,
-    ) -> DD {
+    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _lpDDSurfaceDesc: u32) -> DD {
         // Nothing to do: the object is fully constructed when it's created.
         DD::OK
     }
@@ -806,23 +911,23 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn ReleaseDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn ReleaseDC(ctx: &mut Context, this: u32, hDC: HDC) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::ReleaseDC(ctx, this, hDC)
     }
 
     #[win32_derive::dllexport]
-    pub fn Restore(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn Restore(ctx: &mut Context, this: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::Restore(ctx, this)
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetClipper(ctx: &mut Context, this: u32, lpDDClipper: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::SetClipper(ctx, this, lpDDClipper)
     }
 
     #[win32_derive::dllexport]
-    pub fn SetOverlayPosition(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetOverlayPosition(ctx: &mut Context, this: u32, lX: i32, lY: i32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::SetOverlayPosition(ctx, this, lX, lY)
     }
 
     #[win32_derive::dllexport]
@@ -846,18 +951,44 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlay(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlay(
+        ctx: &mut Context,
+        this: u32,
+        lpSrcRect: u32,
+        lpDDDestSurface: u32,
+        lpDestRect: u32,
+        dwFlags: u32,
+        lpDDOverlayFx: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::UpdateOverlay(
+            ctx,
+            this,
+            lpSrcRect,
+            lpDDDestSurface,
+            lpDestRect,
+            dwFlags,
+            lpDDOverlayFx,
+        )
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayDisplay(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlayDisplay(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::UpdateOverlayDisplay(ctx, this, dwFlags)
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayZOrder(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlayZOrder(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpDDSurfaceReference: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDrawSurface7::UpdateOverlayZOrder(
+            ctx,
+            this,
+            dwFlags,
+            lpDDSurfaceReference,
+        )
     }
 
     pub static mut VTABLE: u32 = 0;
