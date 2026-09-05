@@ -554,27 +554,39 @@ fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
 
 impl Host {
     pub fn poll(&self) -> Option<host::Message> {
-        // Debug aid: synthesize one key press so scripted or headless runs can
-        // exercise the target's input path. THESEUS_INJECT_VKEY is a hex VK_*
-        // code, THESEUS_INJECT_AT_MS the delay before the press.
-        static INJECT: std::sync::OnceLock<Option<(u8, u32)>> = std::sync::OnceLock::new();
+        // Debug aid: synthesize key presses so scripted or headless runs can
+        // exercise the target's input path. THESEUS_INJECT_VKEY is a
+        // comma-separated list of hex VK_* codes, THESEUS_INJECT_AT_MS the
+        // delay before the first press; keys are tapped 300ms apart.
+        static INJECT: std::sync::OnceLock<Option<(Vec<u8>, u32)>> = std::sync::OnceLock::new();
         static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-        if let Some((vkey, at_ms)) = *INJECT.get_or_init(|| {
-            let vkey = std::env::var("THESEUS_INJECT_VKEY").ok()?;
-            let vkey = u8::from_str_radix(vkey.trim_start_matches("0x"), 16).ok()?;
-            inject_vkey(vkey)?; // unsupported keys inject nothing
+        if let Some((vkeys, at_ms)) = INJECT.get_or_init(|| {
+            let vkeys = std::env::var("THESEUS_INJECT_VKEY").ok()?;
+            let vkeys = vkeys
+                .split(',')
+                .map(|s| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
+                .collect::<Option<Vec<u8>>>()?
+                .into_iter()
+                .filter(|v| inject_vkey(*v).is_some())
+                .collect::<Vec<u8>>();
             let at_ms = std::env::var("THESEUS_INJECT_AT_MS").ok()?.parse().ok()?;
-            Some((vkey, at_ms))
+            Some((vkeys, at_ms))
         }) {
             use std::sync::atomic::Ordering::Relaxed;
-            let phase = PHASE.load(Relaxed);
-            if phase == 0 && self.time() >= at_ms {
-                PHASE.store(1, Relaxed);
-                return Some(host::Message::KeyDown(inject_vkey(vkey).unwrap()));
-            }
-            if phase == 1 && self.time() >= at_ms + 100 {
-                PHASE.store(2, Relaxed);
-                return Some(host::Message::KeyUp(inject_vkey(vkey).unwrap()));
+            let phase = PHASE.load(Relaxed) as usize;
+            let key = phase / 2;
+            let down = phase % 2 == 0;
+            if key < vkeys.len() {
+                let at = at_ms + key as u32 * 300 + if down { 0 } else { 100 };
+                if self.time() >= at {
+                    PHASE.store(phase as u8 + 1, Relaxed);
+                    let msg = inject_vkey(vkeys[key]).unwrap();
+                    return Some(if down {
+                        host::Message::KeyDown(msg)
+                    } else {
+                        host::Message::KeyUp(msg)
+                    });
+                }
             }
         }
         self.main_thread.get().poll()

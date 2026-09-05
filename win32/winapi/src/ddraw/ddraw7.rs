@@ -250,14 +250,55 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn EnumSurfaces(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _flags: u32,
+        flags: u32,
         _lpSurfaceDesc2: u32,
-        _lpContext: u32,
-        _lpEnumCallback: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
     ) -> DD {
-        todo!()
+        // DDENUMSURFACES match flags describe surfaces that *could* be
+        // created; only DOESEXIST reports live ones. The teardown path wants
+        // every live surface, so matching is not implemented.
+        const DDENUMSURFACES_DOESEXIST: u32 = 0x1;
+        if flags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumCallback == 0 {
+            return DD::OK;
+        }
+        // Snapshot the list: the callback may release surfaces mid-walk.
+        let addrs: Vec<u32> = state().surf.borrow().keys().copied().collect();
+        for addr in addrs {
+            let desc = {
+                let surfaces = state().surf.borrow();
+                let Some(surface) = surfaces.get(&addr) else {
+                    continue;
+                };
+                let surface = surface.borrow();
+                DDSURFACEDESC2 {
+                    dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                    dwHeight: surface.height,
+                    dwWidth: surface.width,
+                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                    ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
+                    ..Default::default()
+                }
+            };
+            let desc_addr = kernel32::lock().process_heap.alloc(
+                &mut ctx.memory,
+                std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            );
+            ctx.memory.write(desc_addr, desc);
+            let callback = ctx.indirect(lpEnumCallback);
+            ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
+            let ret = ctx.cpu.regs.eax;
+            kernel32::lock()
+                .process_heap
+                .free(&mut ctx.memory, desc_addr);
+            if ret == 0 {
+                return DD::OK; // DDENUMRET_CANCEL
+            }
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
