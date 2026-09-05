@@ -33,6 +33,22 @@ pub fn shl<I: Int + num_traits::WrappingShl>(x: I, y: u8, flags: &mut Flags) -> 
     val
 }
 
+pub fn shld16(x: u16, y: u16, count: u8, flags: &mut Flags) -> u16 {
+    let count = u32::from(count % 16);
+    if count == 0 {
+        return x;
+    }
+    flags.set(Flags::CF, ((x >> (16 - count)) & 1) != 0);
+    if count == 1 {
+        flags.set(Flags::OF, (x >> 15) != ((x >> 14) & 1));
+    }
+    let result = (((x as u32) << count) | ((y as u32) >> (16 - count))) as u16;
+    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::SF, (result >> 15) != 0);
+    flags.set(Flags::ZF, result == 0);
+    result
+}
+
 pub fn shld(x: u32, y: u32, count: u8, flags: &mut Flags) -> u32 {
     let count = count % 32;
     if count == 0 {
@@ -47,6 +63,22 @@ pub fn shld(x: u32, y: u32, count: u8, flags: &mut Flags) -> u32 {
     let result = (x << count) | (y >> (32 - count));
     flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
     flags.set(Flags::SF, (result >> 31) != 0);
+    flags.set(Flags::ZF, result == 0);
+    result
+}
+
+pub fn shrd16(x: u16, y: u16, count: u8, flags: &mut Flags) -> u16 {
+    let count = u32::from(count % 16);
+    if count == 0 {
+        return x;
+    }
+    flags.set(Flags::CF, ((x >> (count - 1)) & 1) != 0);
+    let result = (((x as u32) >> count) | ((y as u32) << (16 - count))) as u16;
+    if count == 1 {
+        flags.set(Flags::OF, ((x >> 15) & 1) != ((result >> 15) & 1));
+    }
+    flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
+    flags.set(Flags::SF, (result >> 15) != 0);
     flags.set(Flags::ZF, result == 0);
     result
 }
@@ -217,6 +249,20 @@ mod tests {
             0x8123_4567
         );
         assert_eq!("CF SF", flags.to_string());
+    }
+
+    #[test]
+    fn shld16_uses_the_16_bit_source_boundary() {
+        let mut flags = Flags::default();
+        assert_eq!(super::shld16(0x8001, 0xffff, 1, &mut flags), 0x0003);
+        assert_eq!("CF PF OF", flags.to_string());
+    }
+
+    #[test]
+    fn shrd16_uses_the_16_bit_source_boundary() {
+        let mut flags = Flags::default();
+        assert_eq!(super::shrd16(0x0001, 0x0003, 1, &mut flags), 0x8000);
+        assert_eq!("CF PF SF OF", flags.to_string());
     }
 
     #[test]

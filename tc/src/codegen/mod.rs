@@ -644,6 +644,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_16_bit_double_shifts() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x0f, 0xa4, 0xd8, 0x01][..],
+                "shld16(ctx.cpu.regs.get_ax()",
+            ),
+            (
+                &[0x0f, 0xac, 0xd8, 0x01][..],
+                "shrd16(ctx.cpu.regs.get_ax()",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(16, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Seg((0, 0).into()),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
     fn codegen_handles_port_io() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

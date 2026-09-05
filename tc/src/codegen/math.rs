@@ -38,13 +38,17 @@ impl<'a> CodeGen<'a> {
                 let op0 = self.get_op(instr, 0);
                 let op1 = self.get_op(instr, 1);
                 let op2 = self.get_op(instr, 2);
+                let op = match (instr.mnemonic(), op_size(instr, 0)) {
+                    (Shld, 16) => "shld16",
+                    (Shrd, 16) => "shrd16",
+                    (Shld, 32) => "shld",
+                    (Shrd, 32) => "shrd",
+                    (mnemonic, size) => unreachable!("{mnemonic:?} with {size}-bit operand"),
+                };
                 self.line(self.set_op(
                     instr,
                     0,
-                    format!(
-                        "{op}({op0}, {op1}, {op2}, &mut ctx.cpu.flags)",
-                        op = instr_name(instr)
-                    ),
+                    format!("{op}({op0}, {op1}, {op2}, &mut ctx.cpu.flags)"),
                 ));
             }
 
