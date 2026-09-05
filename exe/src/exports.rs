@@ -29,7 +29,7 @@ impl IMAGE_EXPORT_DIRECTORY {
     }
 
     /// Returns an iterator of function addresses in ordinal order.
-    pub fn fns<'a>(&self, image: &'a [u8]) -> impl Iterator<Item = u32> {
+    pub fn fns(&self, image: &[u8]) -> impl Iterator<Item = u32> {
         iter_pod_n::<u32>(image, self.AddressOfFunctions, self.NumberOfFunctions)
     }
 
