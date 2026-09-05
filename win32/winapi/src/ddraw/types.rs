@@ -10,6 +10,7 @@ pub enum DD {
     OK = 0,
     E_NOINTERFACE = 0x80004002,
     ERR_GENERIC = 0x80004005,
+    ERR_INVALIDPARAMS = 0x80070057,
     ERR_NOCOLORKEY = 0x887600d4,
 }
 
@@ -43,8 +44,6 @@ pub struct DDSCAPS2 {
     pub dwCaps3: u32,
     pub dwCaps4: u32,
 }
-
-impl Copy for DDSCAPS2 {}
 
 win32flags! {
     pub struct DDSCAPS {
@@ -542,15 +541,7 @@ pub struct DDDEVICEIDENTIFIER {
 #[derive(
     Debug,
     Clone,
-    zerocopy::FromBytes,
-    zerocopy::IntoBytes,
-    zerocopy::Immutable,
-    zerocopy::KnownLayout,
-)]
-#[repr(C, packed)]
-#[derive(
-    Debug,
-    Clone,
+    Copy,
     zerocopy::FromBytes,
     zerocopy::IntoBytes,
     zerocopy::Immutable,
@@ -616,6 +607,15 @@ pub struct DDCAPS_DX7 {
     pub ddsCaps: DDSCAPS2,
 }
 
+#[repr(C, packed)]
+#[derive(
+    Debug,
+    Clone,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
+    zerocopy::KnownLayout,
+)]
 pub struct DDDEVICEIDENTIFIER2 {
     pub szDriver: [u8; 512],
     pub szDescription: [u8; 512],
