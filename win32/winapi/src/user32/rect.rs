@@ -23,7 +23,9 @@ pub fn ClientToScreen(_ctx: &mut Context, _hWnd: HWND, _lpPoint: Ptr<POINT>) -> 
 
 #[win32_derive::dllexport]
 pub fn PtInRect(ctx: &mut Context, lprc: Ptr<RECT>, x: i32, y: i32) -> bool {
-    let rect = lprc.read(&ctx.memory).unwrap();
+    let Some(rect) = lprc.read(&ctx.memory) else {
+        return false;
+    };
     let point = POINT { x, y };
     rect.contains(point)
 }
@@ -46,6 +48,5 @@ pub fn SetRect(
             bottom: yBottom,
         },
     )
-    .unwrap();
-    true
+    .is_some()
 }

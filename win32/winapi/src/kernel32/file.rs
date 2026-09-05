@@ -260,7 +260,17 @@ pub fn ReadFile(
     lpNumberOfBytesRead: Ptr<u32>,
     lpOverlapped: Ptr<()>,
 ) -> bool {
-    assert_eq!(lpOverlapped.addr, 0);
+    if lpOverlapped.addr != 0 {
+        // Overlapped I/O is not modeled.
+        return false;
+    }
+    if lpBuffer.addr < 0x1000
+        || (lpBuffer.addr as usize)
+            .checked_add(nNumberOfBytesToRead as usize)
+            .is_none_or(|end| end > ctx.memory.bytes.len())
+    {
+        return false;
+    }
     let mut kernel32 = lock();
     let Some(Object::File(file)) = kernel32.objects.get_mut(hFile) else {
         log::warn!("ReadFile({hFile:?}): unknown handle");
@@ -280,9 +290,7 @@ pub fn ReadFile(
     }
     drop(kernel32);
     if lpNumberOfBytesRead.addr != 0 {
-        lpNumberOfBytesRead
-            .write(&mut ctx.memory, total as u32)
-            .unwrap();
+        let _ = lpNumberOfBytesRead.write(&mut ctx.memory, total as u32);
     }
     true
 }
@@ -296,14 +304,22 @@ pub fn WriteFile(
     lpNumberOfBytesWritten: Ptr<u32>,
     lpOverlapped: Ptr<()>,
 ) -> u32 {
-    assert_eq!(lpOverlapped.addr, 0);
+    if lpOverlapped.addr != 0 {
+        // Overlapped I/O is not modeled.
+        return 0;
+    }
+    if lpBuffer.addr < 0x1000
+        || (lpBuffer.addr as usize)
+            .checked_add(nNumberOfBytesToWrite as usize)
+            .is_none_or(|end| end > ctx.memory.bytes.len())
+    {
+        return 0;
+    }
     if hFile == STDOUT_HFILE || hFile == STDERR_HFILE {
         let buf = &ctx.memory[lpBuffer.addr..][..nNumberOfBytesToWrite as usize];
         host::host().console_write(buf);
         if lpNumberOfBytesWritten.addr != 0 {
-            lpNumberOfBytesWritten
-                .write(&mut ctx.memory, nNumberOfBytesToWrite)
-                .unwrap();
+            let _ = lpNumberOfBytesWritten.write(&mut ctx.memory, nNumberOfBytesToWrite);
         }
         return 1;
     }
@@ -318,9 +334,7 @@ pub fn WriteFile(
         Ok(()) => {
             drop(kernel32);
             if lpNumberOfBytesWritten.addr != 0 {
-                lpNumberOfBytesWritten
-                    .write(&mut ctx.memory, nNumberOfBytesToWrite)
-                    .unwrap();
+                let _ = lpNumberOfBytesWritten.write(&mut ctx.memory, nNumberOfBytesToWrite);
             }
             1
         }

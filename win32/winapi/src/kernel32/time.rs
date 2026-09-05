@@ -46,16 +46,12 @@ fn current_system_time() -> SYSTEMTIME {
 
 #[win32_derive::dllexport]
 pub fn GetLocalTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
-    lpSystemTime
-        .write(&mut ctx.memory, current_system_time())
-        .unwrap();
+    let _ = lpSystemTime.write(&mut ctx.memory, current_system_time());
 }
 
 #[win32_derive::dllexport]
 pub fn GetSystemTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
-    lpSystemTime
-        .write(&mut ctx.memory, current_system_time())
-        .unwrap();
+    let _ = lpSystemTime.write(&mut ctx.memory, current_system_time());
 }
 
 #[win32_derive::dllexport]

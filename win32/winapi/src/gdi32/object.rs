@@ -113,7 +113,9 @@ pub fn GetObjectA(ctx: &mut Context, handle: HGDIOBJ, size: u32, lpOut: Ptr<BITM
     let Object::Bitmap(bitmap) = object else {
         return 0;
     };
-    assert!(size == std::mem::size_of::<BITMAP>() as u32);
+    if size < std::mem::size_of::<BITMAP>() as u32 {
+        return 0;
+    }
     let fields = BITMAP {
         bmType: 0,
         bmWidth: bitmap.width,
@@ -123,7 +125,9 @@ pub fn GetObjectA(ctx: &mut Context, handle: HGDIOBJ, size: u32, lpOut: Ptr<BITM
         bmBitsPixel: bitmap.bit_count as u16,
         bmBits: 0,
     };
-    lpOut.write(&mut ctx.memory, fields).unwrap();
+    if lpOut.write(&mut ctx.memory, fields).is_none() {
+        return 0;
+    }
     size
 }
 

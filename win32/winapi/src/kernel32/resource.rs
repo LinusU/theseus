@@ -54,9 +54,9 @@ pub fn FindResourceW(
     } else {
         exe::ResourceName::Name(&ctx.memory.read_wstr(lpType.addr))
     };
-    let buf = kernel32::lock()
-        .find_resource(ctx, _hModule, typ, name)
-        .unwrap();
+    let Some(buf) = kernel32::lock().find_resource(ctx, _hModule, typ, name) else {
+        return 0;
+    };
     unsafe { buf.as_ptr().byte_offset_from(ctx.memory.as_ptr()) as u32 }
 }
 

@@ -470,8 +470,8 @@ pub fn MoveToEx(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lppt: Ptr<POINT>) -
         return false;
     };
     dc.pos = POINT { x, y };
-    if lppt.addr != 0 {
-        lppt.write(&mut ctx.memory, dc.pos).unwrap();
+    if lppt.addr != 0 && lppt.write(&mut ctx.memory, dc.pos).is_none() {
+        return false;
     }
     true
 }

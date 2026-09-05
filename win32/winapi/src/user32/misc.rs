@@ -55,7 +55,9 @@ pub fn DrawTextA(
         }
         ctx.memory[lpchText.addr..][..count].to_vec()
     };
-    let rect = lprc.read(&ctx.memory).unwrap();
+    let Some(rect) = lprc.read(&ctx.memory) else {
+        return 0;
+    };
     let mut max_width = 0;
     let mut line_height = 0;
     let mut line_count = 0;
