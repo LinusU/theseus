@@ -101,7 +101,10 @@ fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32, accepted: 
         ctx.memory.write::<u32>(ppv, 0);
         return E_NOINTERFACE;
     }
-    let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory).unwrap();
+    let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+        ctx.memory.write::<u32>(ppv, 0);
+        return E_POINTER;
+    };
     if iid == IID_IUnknown || accepted.contains(&iid) {
         ctx.memory.write::<u32>(ppv, this);
         DI_OK
@@ -293,7 +296,9 @@ pub mod IDirectInput {
         lplpDirectInputDevice: u32,
         _pUnkOuter: u32,
     ) -> u32 {
-        let guid = crate::Ptr::<GUID>::new(lpGUID).read(&ctx.memory).unwrap();
+        let Some(guid) = crate::Ptr::<GUID>::new(lpGUID).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
         let kind = if guid == GUID_SysKeyboard {
             DeviceKind::Keyboard
         } else if guid == GUID_SysMouse {
@@ -338,7 +343,9 @@ pub mod IDirectInput {
         if rguid == 0 {
             return DIERR_INVALIDPARAM;
         }
-        let guid = crate::Ptr::<GUID>::new(rguid).read(&ctx.memory).unwrap();
+        let Some(guid) = crate::Ptr::<GUID>::new(rguid).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
         if guid == GUID_SysKeyboard
             || guid == GUID_SysMouse
             || guid == GUID_Joystick
