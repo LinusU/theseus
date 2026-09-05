@@ -792,14 +792,13 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("let ptr = ctx.memory.read::<u64>(ctx.cpu.regs.eax);")
+                .contains("let ptr_offset = ctx.memory.read::<u32>(ctx.cpu.regs.eax);")
         );
-        assert!(
-            codegen
-                .buf
-                .contains("ctx.cpu.regs.es = (ptr >> 32) as u16;")
-        );
-        assert!(codegen.buf.contains("ctx.cpu.regs.eax = ptr as u32;"));
+        assert!(codegen.buf.contains(
+            "let ptr_segment = ctx.memory.read::<u16>(ctx.cpu.regs.eax.wrapping_add(4u32));"
+        ));
+        assert!(codegen.buf.contains("ctx.cpu.regs.es = ptr_segment;"));
+        assert!(codegen.buf.contains("ctx.cpu.regs.eax = ptr_offset;"));
         assert!(!codegen.buf.contains("todo!"));
     }
 

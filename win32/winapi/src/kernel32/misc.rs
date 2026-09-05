@@ -62,7 +62,12 @@ pub fn IsProcessorFeaturePresent(_ctx: &mut Context, ProcessorFeature: u32) -> b
 pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -> bool {
     let name = b"THESEUS";
     let size = nSize.read(&ctx.memory).unwrap_or(0);
-    if (size as usize) < name.len() + 1 {
+    let output_len = name.len() + 1;
+    if (size as usize) < output_len
+        || (lpBuffer.addr as usize)
+            .checked_add(output_len)
+            .is_none_or(|end| end > ctx.memory.bytes.len())
+    {
         return false;
     }
     ctx.memory[lpBuffer.addr..][..name.len()].copy_from_slice(name);
@@ -418,7 +423,7 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SYSTEM_INFO, lstrcpyW, lstrlenW, processor_feature_present};
+    use super::{GetComputerNameA, SYSTEM_INFO, lstrcpyW, lstrlenW, processor_feature_present};
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -445,6 +450,18 @@ mod tests {
         assert!(processor_feature_present(8));
         assert!(!processor_feature_present(6));
         assert!(!processor_feature_present(u32::MAX));
+    }
+
+    #[test]
+    fn computer_name_rejects_truncated_output() {
+        let mut ctx = context();
+        ctx.memory.write::<u32>(0x1000, 8);
+
+        assert!(!GetComputerNameA(
+            &mut ctx,
+            Ptr::new(0x3fff),
+            Ptr::new(0x1000),
+        ));
     }
 
     #[test]
