@@ -138,22 +138,46 @@ impl Bitmap {
         &mut memory.bytes[self.pixels_range()]
     }
 
+    /// A degenerate bitmap returned when a header can't be parsed: no pixels
+    /// and no dimensions, so readers get empty output rather than a panic.
+    fn degenerate() -> (Self, &'static [u8]) {
+        (
+            Bitmap {
+                width: 0,
+                height: 0,
+                is_bottom_up: false,
+                bit_count: 32,
+                palette: Box::new([]),
+                pixels: 0,
+            },
+            &[],
+        )
+    }
+
     // TODO: when parsing a bitmap from memory it's unclear how much memory we'll need
     // to read until we've read the bitmap header.  This means the caller cannot know how
     // big of a slice to provide.
     pub fn parse(buf: &[u8]) -> (Self, &[u8]) {
         use zerocopy::FromBytes;
-        let (header_size, _) = <u32>::read_from_prefix(buf).unwrap();
+        let Some((header_size, _)) = <u32>::read_from_prefix(buf).ok() else {
+            return Self::degenerate();
+        };
         match header_size {
             12 => {
                 let (header, rest) = BITMAPCOREHEADER::read_from_prefix(buf).unwrap();
                 Self::parseBMPv2(&header, rest)
             }
-            40 => {
-                let (header, rest) = BITMAPINFOHEADER::read_from_prefix(buf).unwrap();
-                Self::parseBMPv3(&header, rest)
+            // V3 and later headers share the BITMAPINFOHEADER prefix.
+            40.. => {
+                let Some((header, _)) = BITMAPINFOHEADER::read_from_prefix(buf).ok() else {
+                    return Self::degenerate();
+                };
+                Self::parseBMPv3(&header, &buf[header_size as usize..])
             }
-            _ => unimplemented!("unimplemented bitmap header size {}", header_size),
+            _ => {
+                log::warn!("unsupported bitmap header size {header_size}");
+                Self::degenerate()
+            }
         }
     }
 
@@ -184,8 +208,21 @@ impl Bitmap {
 
     /// buf is the bytes following the header.
     fn parseBMPv3<'a>(header: &BITMAPINFOHEADER, buf: &'a [u8]) -> (Self, &'a [u8]) {
-        if header.biCompression != BI::RGB as u32 {
-            todo!("compression {:?}", header.biCompression);
+        let mut buf = buf;
+        match header.biCompression {
+            x if x == BI::RGB as u32 => {}
+            x if x == BI::BITFIELDS as u32 => {
+                // Three u32 channel masks precede the palette; the reader
+                // assumes the usual RGB555 layout for 16bpp data.
+                let Some((_, rest)) = <[u32]>::ref_from_prefix_with_elems(buf, 3).ok() else {
+                    return Self::degenerate();
+                };
+                buf = rest;
+            }
+            compression => {
+                log::warn!("unsupported bitmap compression {compression}");
+                return Self::degenerate();
+            }
         }
         let palette_len = if header.biClrUsed > 0 {
             header.biClrUsed as usize
@@ -195,14 +232,18 @@ impl Bitmap {
             0 // >8bpp BI_RGB bitmaps have no color table
         };
 
-        let (palette, buf) = <[[u8; 4]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBQUAD
+        let Some((palette, buf)) = <[[u8; 4]]>::ref_from_prefix_with_elems(buf, palette_len).ok()
+        else {
+            return Self::degenerate();
+        };
         let palette = palette
             .into_iter()
             .map(|&[b, g, r, _]| COLORREF::from_rgb(r, g, b))
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let pixels = &buf[..(header.height() as usize * header.stride())];
+        let need = header.height() as usize * header.stride();
+        let pixels = buf.get(..need).unwrap_or(buf);
         let bitmap = Bitmap {
             width: header.biWidth,
             height: header.height(),
@@ -215,6 +256,16 @@ impl Bitmap {
     }
 
     pub fn read_pixels(&self, pixels: &[u8], y: u32, x1: u32, x2: u32, dst: &mut [u8]) {
+        // Degenerate or truncated bitmaps may not have a full row available.
+        if pixels.len() < (y + 1) as usize * self.stride() as usize {
+            return;
+        }
+        let palette = |index: usize| {
+            self.palette
+                .get(index)
+                .copied()
+                .unwrap_or(COLORREF::from_rgb(0, 0, 0))
+        };
         match self.bit_count {
             32 => {
                 let len = ((x2 - x1) * 4) as usize;
@@ -223,18 +274,18 @@ impl Bitmap {
             8 => {
                 let src = &pixels[(y * self.stride()) as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
-                    let color = self.palette[src[srci as usize] as usize];
+                    let color = palette(src[srci as usize] as usize);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
             4 => {
                 let src = &pixels[(y * self.stride()) as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
-                    let color = self.palette[if srci % 2 == 0 {
+                    let color = palette(if srci % 2 == 0 {
                         src[(srci / 2) as usize] >> 4
                     } else {
                         src[(srci / 2) as usize] & 0xf
-                    } as usize];
+                    } as usize);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
@@ -242,7 +293,7 @@ impl Bitmap {
                 let src = &pixels[(y * self.stride()) as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let bit = 7 - (srci % 8);
-                    let color = self.palette[((src[(srci / 8) as usize] >> bit) & 1) as usize];
+                    let color = palette(((src[(srci / 8) as usize] >> bit) & 1) as usize);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
@@ -268,7 +319,12 @@ impl Bitmap {
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
-            _ => todo!("{}", self.bit_count),
+            bit_count => {
+                log::warn!("unsupported bitmap bit count {bit_count}; writing black");
+                let len = ((x2 - x1) * 4) as usize;
+                let dst_len = dst.len();
+                dst[..len.min(dst_len)].fill(0);
+            }
         }
     }
 }

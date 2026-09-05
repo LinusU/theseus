@@ -696,7 +696,10 @@ pub fn blt(
                         ctx.memory.write::<u32>(start + x * 4, color);
                     }
                 }
-                _ => todo!("Blt colorfill bpp {bpp}"),
+                _ => {
+                    log::warn!("Blt colorfill unsupported bpp {bpp}");
+                    return DD::ERR_GENERIC;
+                }
             }
         }
         dst.present(&mut ctx.memory);
