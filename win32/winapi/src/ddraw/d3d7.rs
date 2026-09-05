@@ -901,10 +901,10 @@ pub mod IDirect3DDevice7 {
                 }
             }
             2 => {
-                let r = (dwColor >> 16) & 0xFF;
-                let g = (dwColor >> 8) & 0xFF;
-                let b = dwColor & 0xFF;
-                let pixel = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+                let r = ((dwColor >> 16) & 0xFF) as u16;
+                let g = ((dwColor >> 8) & 0xFF) as u16;
+                let b = (dwColor & 0xFF) as u16;
+                let pixel: u16 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
                 let bytes = pixel.to_le_bytes();
                 let pixels = &mut ctx.memory[addr..][..size];
                 for chunk in pixels.chunks_exact_mut(2) {
