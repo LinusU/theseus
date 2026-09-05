@@ -125,8 +125,8 @@ fn find_string(ctx: &Context, hInstance: HINSTANCE, uID: u32) -> Option<&[u8]> {
     // Each block is a sequence of two byte length-prefixed strings.
     // Iterate through them to find the requested index.
     for i in 0.. {
-        let (len, rest) = <u16>::read_from_prefix(block).unwrap();
-        let (cur, next) = rest.split_at(len as usize * 2);
+        let (len, rest) = <u16>::read_from_prefix(block).ok()?;
+        let (cur, next) = rest.split_at_checked(len as usize * 2)?;
         if i == index {
             return Some(cur);
         }
@@ -189,15 +189,32 @@ pub fn LoadStringW(
 ) -> i32 {
     // GetModuleHandle(null) hands back the image base, so a program asking for
     // its own resources passes either that or null.
-    assert!(cchBufferMax > 0);
+    if cchBufferMax <= 0 || lpBuffer.addr < 0x1000 {
+        return 0;
+    }
     let Some(bytes) = find_string(ctx, hInstance, uID) else {
-        panic!();
+        return 0;
     };
-    let buf = Vec::from(bytes);
-    let out = &mut ctx.memory[lpBuffer.addr..][..cchBufferMax as usize * 2];
-    // TODO: handle case where buf.len() > cchBufferMax
-    out[..buf.len()].copy_from_slice(&buf);
-    buf.len() as i32 / 2
+    let bytes = Vec::from(bytes);
+    // Copy at most cchBufferMax-1 UTF-16 units and nul-terminate, like
+    // LoadStringA and the real API.
+    let units = bytes.len() / 2;
+    let copy_units = units.min(cchBufferMax as usize - 1);
+    let copy_bytes = copy_units * 2;
+    let Some(end) = lpBuffer
+        .addr
+        .checked_add(copy_bytes as u32 + 2)
+        .map(|end| end as usize)
+    else {
+        return 0;
+    };
+    if end > ctx.memory.bytes.len() {
+        return 0;
+    }
+    ctx.memory[lpBuffer.addr..][..copy_bytes].copy_from_slice(&bytes[..copy_bytes]);
+    ctx.memory
+        .write::<u16>(lpBuffer.addr + copy_bytes as u32, 0);
+    copy_units as i32
 }
 
 #[cfg(test)]
