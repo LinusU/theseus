@@ -15,6 +15,13 @@ fn reg_to_index(register: iced_x86::Register) -> usize {
     }
 }
 
+fn is_16_bit_fpu_state(instr: &iced_x86::Instruction) -> bool {
+    matches!(
+        instr.memory_size(),
+        iced_x86::MemorySize::FpuEnv14 | iced_x86::MemorySize::FpuState94
+    )
+}
+
 impl<'a> CodeGen<'a> {
     fn fpu_get_mem(&self, instr: &iced_x86::Instruction) -> String {
         let addr = self.gen_addr(instr);
@@ -268,27 +275,47 @@ impl<'a> CodeGen<'a> {
                 assert_eq!(instr.op_count(), 1);
                 self.line(self.set_op(instr, 0, "ctx.cpu.fpu.status()".into()));
             }
-            Fnstenv => {
+            Fstenv | Fnstenv => {
+                let func = if is_16_bit_fpu_state(instr) {
+                    "store_env16"
+                } else {
+                    "store_env"
+                };
                 self.line(format!(
-                    "ctx.cpu.fpu.store_env(&mut ctx.memory, {});",
+                    "ctx.cpu.fpu.{func}(&mut ctx.memory, {});",
                     self.gen_addr(instr)
                 ));
             }
             Fldenv => {
+                let func = if is_16_bit_fpu_state(instr) {
+                    "load_env16"
+                } else {
+                    "load_env"
+                };
                 self.line(format!(
-                    "ctx.cpu.fpu.load_env(&ctx.memory, {});",
+                    "ctx.cpu.fpu.{func}(&ctx.memory, {});",
                     self.gen_addr(instr)
                 ));
             }
-            Fnsave => {
+            Fsave | Fnsave => {
+                let func = if is_16_bit_fpu_state(instr) {
+                    "save16"
+                } else {
+                    "save"
+                };
                 self.line(format!(
-                    "ctx.cpu.fpu.save(&mut ctx.memory, {});",
+                    "ctx.cpu.fpu.{func}(&mut ctx.memory, {});",
                     self.gen_addr(instr)
                 ));
             }
             Frstor => {
+                let func = if is_16_bit_fpu_state(instr) {
+                    "restore16"
+                } else {
+                    "restore"
+                };
                 self.line(format!(
-                    "ctx.cpu.fpu.restore(&ctx.memory, {});",
+                    "ctx.cpu.fpu.{func}(&ctx.memory, {});",
                     self.gen_addr(instr)
                 ));
             }

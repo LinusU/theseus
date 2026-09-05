@@ -231,10 +231,17 @@ impl FPU {
         memory.write(addr.wrapping_add(24), 0u16);
     }
 
-    pub fn load_env(&mut self, memory: &crate::Memory<'_>, addr: u32) {
-        self.control = memory.read(addr);
-        let status: u16 = memory.read(addr.wrapping_add(4));
-        let tag: u16 = memory.read(addr.wrapping_add(8));
+    pub fn store_env16(&self, memory: &mut crate::Memory<'_>, addr: u32) {
+        memory.write(addr, self.control);
+        memory.write(addr.wrapping_add(2), self.status());
+        memory.write(addr.wrapping_add(4), self.tag_word());
+        memory.write(addr.wrapping_add(6), 0u16);
+        memory.write(addr.wrapping_add(8), 0u16);
+        memory.write(addr.wrapping_add(10), 0u16);
+        memory.write(addr.wrapping_add(12), 0u16);
+    }
+
+    fn load_status(&mut self, status: u16, tag: u16) {
         self.condition = status & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits();
         self.st_top = if tag == u16::MAX {
             8
@@ -248,6 +255,20 @@ impl FPU {
         } else {
             std::cmp::Ordering::Greater
         };
+    }
+
+    pub fn load_env(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.control = memory.read(addr);
+        let status: u16 = memory.read(addr.wrapping_add(4));
+        let tag: u16 = memory.read(addr.wrapping_add(8));
+        self.load_status(status, tag);
+    }
+
+    pub fn load_env16(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.control = memory.read(addr);
+        let status: u16 = memory.read(addr.wrapping_add(2));
+        let tag: u16 = memory.read(addr.wrapping_add(4));
+        self.load_status(status, tag);
     }
 
     pub fn init(&mut self) {
@@ -268,11 +289,31 @@ impl FPU {
         self.init();
     }
 
+    pub fn save16(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        self.store_env16(memory, addr);
+        for (index, value) in self.st.iter().enumerate() {
+            memory.write(
+                addr.wrapping_add(14 + index as u32 * 10),
+                F80::from_f64(*value),
+            );
+        }
+        self.init();
+    }
+
     pub fn restore(&mut self, memory: &crate::Memory<'_>, addr: u32) {
         self.load_env(memory, addr);
         for (index, value) in self.st.iter_mut().enumerate() {
             *value = memory
                 .read::<F80>(addr.wrapping_add(28 + index as u32 * 10))
+                .to_f64();
+        }
+    }
+
+    pub fn restore16(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        self.load_env16(memory, addr);
+        for (index, value) in self.st.iter_mut().enumerate() {
+            *value = memory
+                .read::<F80>(addr.wrapping_add(14 + index as u32 * 10))
                 .to_f64();
         }
     }
@@ -416,6 +457,28 @@ mod tests {
         fpu.restore(&memory, 0x1000);
 
         assert_eq!(fpu.st_top, 8);
+    }
+
+    #[test]
+    fn real_mode_fsave_uses_the_14_byte_environment() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.control = 0x027f;
+        fpu.push(1.25);
+        fpu.push(-2.5);
+        fpu.set_cmp(std::cmp::Ordering::Less);
+
+        fpu.save16(&mut memory, 0x1000);
+
+        assert_eq!(memory.read::<u16>(0x1000), 0x027f);
+        assert_eq!(memory.read::<u16>(0x1002), 6 << 11 | Status::C0.bits());
+        assert_eq!(memory.read::<u16>(0x1004), 0x0fff);
+        assert_eq!(fpu.st_top, 8);
+
+        fpu.restore16(&memory, 0x1000);
+        assert_eq!(fpu.get(0), -2.5);
+        assert_eq!(fpu.get(1), 1.25);
+        assert_eq!(fpu.condition, Status::C0.bits());
     }
 
     #[test]

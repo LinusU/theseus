@@ -943,6 +943,31 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_16_bit_fpu_environment() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want, memory_size) in [
+            ([0xd9, 0x30], "store_env16", iced_x86::MemorySize::FpuEnv14),
+            ([0xd9, 0x20], "load_env16", iced_x86::MemorySize::FpuEnv14),
+            ([0xdd, 0x30], "save16", iced_x86::MemorySize::FpuState94),
+            ([0xdd, 0x20], "restore16", iced_x86::MemorySize::FpuState94),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Seg((0, 0).into()),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            assert_eq!(instr.iced.memory_size(), memory_size);
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
     fn codegen_handles_fninit() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
