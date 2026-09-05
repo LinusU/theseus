@@ -122,7 +122,7 @@ pub fn CreateDirectoryA(
 ) -> bool {
     let name = ctx.memory.read_str(lpPathName.addr).to_owned();
     let path = resolve_path(&name);
-    match host::fs::create_dir(&path) {
+    match host::fs::create_dir_all(&path) {
         Ok(()) => true,
         // Callers probe-create their save dirs every run; a pre-existing
         // directory is the documented failure case, not a problem.
