@@ -124,6 +124,12 @@ fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> 
     )
 }
 
+fn char_type_output_fits(ctx: &Context, addr: u32, count: usize) -> bool {
+    (addr as usize)
+        .checked_add(count.checked_mul(2).unwrap_or(usize::MAX))
+        .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
 #[win32_derive::dllexport]
 pub fn GetStringTypeA(
     ctx: &mut Context,
@@ -140,6 +146,9 @@ pub fn GetStringTypeA(
     let Some(src) = read_string_type_a(ctx, lpSrcStr.addr, cchSrc) else {
         return false;
     };
+    if !char_type_output_fits(ctx, lpCharType.addr, src.len()) {
+        return false;
+    }
     for (i, c) in src.into_iter().enumerate() {
         ctx.memory.write::<u16>(
             lpCharType.addr + (i * 2) as u32,
@@ -176,6 +185,9 @@ pub fn GetStringTypeW(
     let Some(src) = read_string_type_w(ctx, lpSrcStr.addr, cchSrc) else {
         return false;
     };
+    if !char_type_output_fits(ctx, lpCharType.addr, src.len()) {
+        return false;
+    }
     for (i, c) in src.into_iter().enumerate() {
         ctx.memory.write::<u16>(
             lpCharType.addr + (i * 2) as u32,
@@ -504,6 +516,28 @@ mod tests {
             0
         );
         assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
+    }
+
+    #[test]
+    fn string_type_rejects_truncated_output() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            1,
+            Ptr::new(0x1000),
+            2,
+            Ptr::new(0x3fff),
+        ));
+        assert!(!GetStringTypeW(
+            &mut ctx,
+            1,
+            Ptr::new(0x1000),
+            1,
+            Ptr::new(0x3fff),
+        ));
     }
 
     #[test]
