@@ -2,9 +2,13 @@ use runtime::Context;
 
 use crate::stub;
 
+// Exception filter return values used in `__except` expressions.
+const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+
 #[win32_derive::dllexport]
-pub fn _XcptFilter(_ctx: &mut Context) {
-    todo!()
+pub fn _XcptFilter(_ctx: &mut Context, _xcptnum: u32, _pxcptinfoptrs: u32) -> i32 {
+    // No per-signal disposition is modeled; continue searching.
+    EXCEPTION_CONTINUE_SEARCH
 }
 
 #[win32_derive::dllexport]
@@ -26,8 +30,8 @@ pub fn __p__fmode(_ctx: &mut Context) -> u32 {
 pub fn __set_app_type(_ctx: &mut Context, _at: i32) {}
 
 #[win32_derive::dllexport]
-pub fn __setusermatherr(_ctx: &mut Context) {
-    todo!()
+pub fn __setusermatherr(_ctx: &mut Context, _pf: u32) {
+    // No user math-error handler is modeled; the default remains in effect.
 }
 
 // data:
@@ -39,9 +43,19 @@ pub fn _controlfp(_ctx: &mut Context) -> u32 {
     stub!(0)
 }
 
+// Exception disposition returned by language-specific SEH handlers.
+const EXCEPTION_CONTINUE_SEARCH_DISPOSITION: i32 = 1;
+
 #[win32_derive::dllexport]
-pub fn _except_handler3(_ctx: &mut Context) {
-    todo!()
+pub fn _except_handler3(
+    _ctx: &mut Context,
+    _exception_record: u32,
+    _registration_frame: u32,
+    _context: u32,
+    _dispatcher: u32,
+) -> i32 {
+    // No SEH scope table is modeled; continue searching for a handler.
+    EXCEPTION_CONTINUE_SEARCH_DISPOSITION
 }
 
 #[win32_derive::dllexport]
