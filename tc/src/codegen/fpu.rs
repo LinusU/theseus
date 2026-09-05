@@ -254,21 +254,44 @@ impl<'a> CodeGen<'a> {
             Fxam => {
                 self.line("ctx.cpu.fpu.examine();");
             }
-            Fcom | Fcomp => {
+            Fcom | Fcomp | Fucom | Fucomp => {
                 let (arg0, arg1) = match instr.op_count() {
                     1 => (self.fpu_get_reg(0), self.fpu_get_op(instr, 0)),
                     2 => (self.fpu_get_op(instr, 0), self.fpu_get_op(instr, 1)),
                     _ => unreachable!(),
                 };
                 self.line(format!("ctx.cpu.fpu.compare({arg0}, {arg1});"));
-                if instr.mnemonic() == Fcomp {
+                if matches!(instr.mnemonic(), Fcomp | Fucomp) {
                     self.line("ctx.cpu.fpu.pop();");
                 }
             }
-            Fcompp => {
+            Fcompp | Fucompp => {
                 self.line("ctx.cpu.fpu.compare(ctx.cpu.fpu.get(0), ctx.cpu.fpu.get(1));");
                 self.line("ctx.cpu.fpu.pop();");
                 self.line("ctx.cpu.fpu.pop();");
+            }
+            Ficom | Ficomp => {
+                let size = op_size(instr, 0);
+                self.line(format!(
+                    "ctx.cpu.fpu.compare(ctx.cpu.fpu.get(0), {} as i{size} as f64);",
+                    self.get_op(instr, 0)
+                ));
+                if instr.mnemonic() == Ficomp {
+                    self.line("ctx.cpu.fpu.pop();");
+                }
+            }
+            // FCOMI family reports through EFLAGS (ZF/PF/CF), not the FPU
+            // status word.
+            Fcomi | Fcomip | Fucomi | Fucomip => {
+                assert_eq!(instr.op_count(), 2);
+                self.line(format!(
+                    "ctx.cpu.fpu.compare_flags({}, {}, &mut ctx.cpu.flags);",
+                    self.fpu_get_op(instr, 0),
+                    self.fpu_get_op(instr, 1)
+                ));
+                if matches!(instr.mnemonic(), Fcomip | Fucomip) {
+                    self.line("ctx.cpu.fpu.pop();");
+                }
             }
 
             Fstsw | Fnstsw => {

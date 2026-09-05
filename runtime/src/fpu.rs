@@ -183,6 +183,20 @@ impl FPU {
         self.set_cmp(cmp);
     }
 
+    /// FCOMI/FUCOMI-family compares report through EFLAGS rather than the
+    /// FPU status word: unordered sets ZF=PF=CF, less sets CF, equal sets ZF.
+    pub fn compare_flags(&self, left: f64, right: f64, flags: &mut crate::Flags) {
+        let (zf, pf, cf) = match left.partial_cmp(&right) {
+            Some(std::cmp::Ordering::Equal) => (true, false, false),
+            Some(std::cmp::Ordering::Less) => (false, false, true),
+            Some(std::cmp::Ordering::Greater) => (false, false, false),
+            None => (true, true, true),
+        };
+        flags.set(crate::Flags::ZF, zf);
+        flags.set(crate::Flags::PF, pf);
+        flags.set(crate::Flags::CF, cf);
+    }
+
     pub fn examine(&mut self) {
         if self.st_top == 8 {
             self.condition = (Status::C0 | Status::C3).bits();
@@ -521,5 +535,24 @@ mod tests {
 
         assert_eq!(memory.read::<u16>(0x1000), 0);
         assert_eq!(fpu.control & 0x003f, 0x003f);
+    }
+
+    #[test]
+    fn compare_flags_reports_through_eflags() {
+        use crate::Flags;
+        let fpu = FPU::default();
+        let mut flags = Flags::empty();
+
+        fpu.compare_flags(1.0, 2.0, &mut flags);
+        assert_eq!(flags, Flags::CF);
+
+        fpu.compare_flags(2.0, 2.0, &mut flags);
+        assert_eq!(flags, Flags::ZF);
+
+        fpu.compare_flags(3.0, 2.0, &mut flags);
+        assert_eq!(flags, Flags::empty());
+
+        fpu.compare_flags(f64::NAN, 2.0, &mut flags);
+        assert_eq!(flags, Flags::ZF | Flags::PF | Flags::CF);
     }
 }
