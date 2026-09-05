@@ -154,8 +154,12 @@ pub fn GetProcessHeap(_ctx: &mut Context) -> HANDLE {
 }
 
 #[win32_derive::dllexport]
-pub fn TerminateProcess(_ctx: &mut Context, _hProcess: HANDLE, _uExitCode: u32) -> bool {
-    todo!();
+pub fn TerminateProcess(_ctx: &mut Context, hProcess: HANDLE, uExitCode: u32) -> bool {
+    if hProcess != CURRENT_PROCESS_HANDLE {
+        // No other process objects exist; CreateProcessA explicitly fails.
+        return false;
+    }
+    std::process::exit(uExitCode as i32);
 }
 
 #[win32_derive::dllexport]
