@@ -47,6 +47,30 @@ const IID_IUnknown: GUID = GUID::new(
     0x0000,
     [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
 );
+const IID_IDirectInputA: GUID = GUID::new(
+    0x89521360,
+    0xAA8A,
+    0x11CF,
+    [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
+const IID_IDirectInput2A: GUID = GUID::new(
+    0x5944E662,
+    0xAA8A,
+    0x11CF,
+    [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
+const IID_IDirectInputDeviceA: GUID = GUID::new(
+    0x5944E680,
+    0xC92E,
+    0x11CF,
+    [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
+const IID_IDirectInputDevice2A: GUID = GUID::new(
+    0x5944E682,
+    0xC92E,
+    0x11CF,
+    [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
 
 const DI_OK: u32 = 0;
 /// More events were buffered than the app's buffer could hold.
@@ -67,8 +91,9 @@ const E_NOTIMPL: u32 = 0x80004001;
 /// DIERR_UNSUPPORTED aliases E_NOINTERFACE in the DirectInput headers.
 const DIERR_UNSUPPORTED: u32 = E_NOINTERFACE;
 
-/// Shared COM identity check: the object answers for IID_IUnknown only.
-fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+/// Shared COM identity check: the object answers for `IID_IUnknown` and any
+/// interface GUIDs in `accepted`.
+fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32, accepted: &[GUID]) -> u32 {
     if ppv == 0 {
         return E_POINTER;
     }
@@ -77,7 +102,7 @@ fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
         return E_NOINTERFACE;
     }
     let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory).unwrap();
-    if iid == IID_IUnknown {
+    if iid == IID_IUnknown || accepted.contains(&iid) {
         ctx.memory.write::<u32>(ppv, this);
         DI_OK
     } else {
@@ -228,7 +253,13 @@ pub mod IDirectInput {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
-        query_interface(ctx, this, riid, ppv)
+        query_interface(
+            ctx,
+            this,
+            riid,
+            ppv,
+            &[IID_IDirectInputA, IID_IDirectInput2A],
+        )
     }
 
     #[win32_derive::dllexport]
@@ -384,7 +415,13 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
-        query_interface(ctx, this, riid, ppv)
+        query_interface(
+            ctx,
+            this,
+            riid,
+            ppv,
+            &[IID_IDirectInputDeviceA, IID_IDirectInputDevice2A],
+        )
     }
 
     #[win32_derive::dllexport]
@@ -816,16 +853,30 @@ mod tests {
     }
 
     #[test]
-    fn query_interface_answers_for_iunknown_only() {
+    fn query_interface_answers_for_iunknown_and_accepted_iids() {
         let mut ctx = context();
         write_guid(&mut ctx, 0x1000, &IID_IUnknown);
         write_guid(&mut ctx, 0x1020, &GUID_SysMouse);
+        write_guid(&mut ctx, 0x1030, &IID_IDirectInput2A);
+        write_guid(&mut ctx, 0x1040, &IID_IDirectInputDevice2A);
 
         assert_eq!(
             IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0x1100),
             DI_OK
         );
         assert_eq!(ctx.memory.read::<u32>(0x1100), 0x2000);
+
+        assert_eq!(
+            IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1030, 0x1100),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1100), 0x2000);
+
+        assert_eq!(
+            IDirectInputDevice::QueryInterface(&mut ctx, 0x2100, 0x1040, 0x1200),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1200), 0x2100);
 
         assert_eq!(
             IDirectInputDevice::QueryInterface(&mut ctx, 0x2100, 0x1020, 0x1200),
