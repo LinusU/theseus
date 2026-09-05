@@ -128,7 +128,7 @@ impl State {
         }));
         *self.window.borrow_mut() = Some(window.clone());
         self.message_queue.borrow_mut().window = Some(window);
-        stub!(hwnd)
+        hwnd
     }
 }
 
@@ -245,8 +245,19 @@ pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: i3
 }
 
 #[win32_derive::dllexport]
-pub fn DestroyWindow(_ctx: &mut Context, _hWnd: HWND) -> bool {
-    stub!(true)
+pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    let state = state();
+    let matches = state
+        .window
+        .borrow()
+        .as_ref()
+        .is_some_and(|window| window.borrow().hwnd == hWnd);
+    if !matches {
+        return false;
+    }
+    state.window.borrow_mut().take();
+    state.message_queue.borrow_mut().window = None;
+    true
 }
 
 #[win32_derive::dllexport]
@@ -378,7 +389,9 @@ pub struct WndClass {
 impl State {
     pub fn register_class(&self, wnd_class: WndClass) -> u16 {
         *self.wndclass.borrow_mut() = Some(wnd_class);
-        0
+        let atom = self.next_class_atom.get();
+        self.next_class_atom.set(atom + 1);
+        atom
     }
 }
 
@@ -455,8 +468,7 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
     state().register_class(WndClass {
         wndproc: ctx.indirect(wndclass.lpfnWndProc),
         background,
-    });
-    stub!(1)
+    })
 }
 
 #[win32_derive::dllexport]
@@ -628,8 +640,8 @@ pub fn EnableWindow(_ctx: &mut Context, _hWnd: HWND, _bEnable: bool) -> bool {
 }
 
 #[win32_derive::dllexport]
-pub fn SetCursor(_ctx: &mut Context, _hCursor: u32) -> u32 {
-    stub!(0)
+pub fn SetCursor(_ctx: &mut Context, hCursor: u32) -> u32 {
+    state().set_cursor(hCursor)
 }
 
 #[win32_derive::dllexport]

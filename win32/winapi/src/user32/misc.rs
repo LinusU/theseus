@@ -184,7 +184,7 @@ pub fn ChangeDisplaySettingsA(ctx: &mut Context, lpDevMode: Ptr<u8>, _dwFlags: u
 
 #[win32_derive::dllexport]
 pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
-    if bShow { stub!(1) } else { stub!(0) }
+    state().show_cursor(bShow)
 }
 
 #[win32_derive::dllexport]
@@ -198,7 +198,9 @@ pub fn CreateCursor(
     _pvANDPlane: Ptr<u8>,
     _pvXORPlane: Ptr<u8>,
 ) -> HCURSOR {
-    stub!(0)
+    // The bitmask isn't rendered, but the caller needs a real handle to
+    // pass back to SetCursor.
+    state().new_cursor()
 }
 
 #[win32_derive::dllexport]

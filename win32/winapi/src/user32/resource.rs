@@ -4,13 +4,15 @@ use super::*;
 use crate::{Ptr, dllexport::win32flags, gdi32, handle::HANDLE, kernel32, stub};
 
 #[win32_derive::dllexport]
-pub fn LoadCursorA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpCursorName: Ptr<u8>) -> HCURSOR {
-    stub!(0)
+pub fn LoadCursorA(_ctx: &mut Context, hInstance: HINSTANCE, lpCursorName: Ptr<u8>) -> HCURSOR {
+    // Cursor handles are opaque: the guest only ever hands them back to
+    // SetCursor, so a stable handle per resource name is enough.
+    state().load_cursor(hInstance, lpCursorName.addr)
 }
 
 #[win32_derive::dllexport]
-pub fn LoadIconA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpIconName: Ptr<u8>) -> HICON {
-    stub!(0)
+pub fn LoadIconA(_ctx: &mut Context, hInstance: HINSTANCE, lpIconName: Ptr<u8>) -> HICON {
+    state().load_icon(hInstance, lpIconName.addr)
 }
 
 #[derive(Debug, PartialEq, Eq, win32_derive::ABIEnum)]
@@ -84,19 +86,19 @@ pub fn LoadAcceleratorsW(
 #[win32_derive::dllexport]
 pub fn LoadCursorW(
     _ctx: &mut Context,
-    _hInstance: HINSTANCE,
-    _lpCursorName: Ptr<u16>, /* WSTR */
+    hInstance: HINSTANCE,
+    lpCursorName: Ptr<u16>, /* WSTR */
 ) -> HCURSOR {
-    stub!(0)
+    state().load_cursor(hInstance, lpCursorName.addr)
 }
 
 #[win32_derive::dllexport]
 pub fn LoadIconW(
     _ctx: &mut Context,
-    _hInstance: HINSTANCE,
-    _lpIconName: Ptr<u16>, /* WSTR */
+    hInstance: HINSTANCE,
+    lpIconName: Ptr<u16>, /* WSTR */
 ) -> HICON {
-    stub!(0)
+    state().load_icon(hInstance, lpIconName.addr)
 }
 
 #[win32_derive::dllexport]
