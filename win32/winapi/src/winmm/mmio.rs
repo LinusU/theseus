@@ -30,6 +30,15 @@ win32flags! {
 const FOURCC_RIFF: u32 = u32::from_le_bytes(*b"RIFF");
 const FOURCC_LIST: u32 = u32::from_le_bytes(*b"LIST");
 
+/// Whether `addr..addr + bytes` is a range the mmio API may touch: outside
+/// the null page and fully inside emulated memory.
+fn guest_fits(ctx: &Context, addr: u32, bytes: u32) -> bool {
+    addr >= 0x1000
+        && (addr as usize)
+            .checked_add(bytes as usize)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
+}
+
 /// MMCKINFO, the chunk descriptor mmioDescend fills in and mmioAscend reads.
 #[repr(C)]
 #[derive(
@@ -202,6 +211,9 @@ pub fn mmioRead(ctx: &mut Context, hmmio: u32, pch: u32, cch: u32) -> i32 {
     };
     let end = (file.pos + cch as usize).min(file.data.len());
     let read = end - file.pos;
+    if read > 0 && !guest_fits(ctx, pch, read as u32) {
+        return MMIO_FAILURE;
+    }
     ctx.memory[pch..][..read].copy_from_slice(&file.data[file.pos..end]);
     file.pos = end;
     read as i32
@@ -229,6 +241,12 @@ pub fn mmioSeek(_ctx: &mut Context, hmmio: u32, lOffset: i32, iOrigin: i32) -> i
 
 #[win32_derive::dllexport]
 pub fn mmioDescend(ctx: &mut Context, hmmio: u32, lpck: u32, lpckParent: u32, wFlags: MMIO) -> u32 {
+    const MMCKINFO_SIZE: u32 = std::mem::size_of::<MMCKINFO>() as u32;
+    if !guest_fits(ctx, lpck, MMCKINFO_SIZE)
+        || (lpckParent != 0 && !guest_fits(ctx, lpckParent, MMCKINFO_SIZE))
+    {
+        return MMIOERR_CANNOTOPEN;
+    }
     let mut want = ctx.memory.read::<MMCKINFO>(lpck);
     // A parent chunk bounds the search to its contents.
     let parent_end = if lpckParent != 0 {
@@ -294,6 +312,9 @@ pub fn mmioDescend(ctx: &mut Context, hmmio: u32, lpck: u32, lpckParent: u32, wF
 
 #[win32_derive::dllexport]
 pub fn mmioAscend(ctx: &mut Context, hmmio: u32, lpck: u32, _wFlags: u32) -> u32 {
+    if !guest_fits(ctx, lpck, std::mem::size_of::<MMCKINFO>() as u32) {
+        return MMIOERR_CANNOTOPEN;
+    }
     let chunk = ctx.memory.read::<MMCKINFO>(lpck);
     let mut end = chunk.dwDataOffset.saturating_add(chunk.cksize) as usize;
     end += end % 2;
@@ -311,7 +332,12 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
     let Some((buffer, pos, len)) = ensure_buffer(ctx, hmmio) else {
         return MMIOERR_CANNOTOPEN;
     };
-    let Ok(info) = <MMIOINFO>::mut_from_prefix(&mut ctx.memory[lpmmioinfo..]) else {
+    let info = ctx
+        .memory
+        .bytes
+        .get_mut(lpmmioinfo as usize..)
+        .and_then(|bytes| <MMIOINFO>::mut_from_prefix(bytes).ok());
+    let Some(info) = info else {
         return MMIOERR_CANNOTOPEN;
     };
     let info = info.0;
@@ -334,7 +360,12 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
 /// Take back the file position the caller advanced through pchNext.
 #[win32_derive::dllexport]
 pub fn mmioSetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32) -> u32 {
-    let Ok((info, _)) = <MMIOINFO>::ref_from_prefix(&ctx.memory[lpmmioinfo..]) else {
+    let info = ctx
+        .memory
+        .bytes
+        .get(lpmmioinfo as usize..)
+        .and_then(|bytes| <MMIOINFO>::ref_from_prefix(bytes).ok());
+    let Some((info, _)) = info else {
         return MMIOERR_CANNOTOPEN;
     };
     let (next, buffer) = (info.pchNext, info.pchBuffer);
@@ -353,7 +384,12 @@ pub fn mmioAdvance(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
     let Some((buffer, _, len)) = ensure_buffer(ctx, hmmio) else {
         return MMIOERR_CANNOTOPEN;
     };
-    let Ok((info, _)) = <MMIOINFO>::ref_from_prefix(&ctx.memory[lpmmioinfo..]) else {
+    let info = ctx
+        .memory
+        .bytes
+        .get(lpmmioinfo as usize..)
+        .and_then(|bytes| <MMIOINFO>::ref_from_prefix(bytes).ok());
+    let Some((info, _)) = info else {
         return MMIOERR_CANNOTOPEN;
     };
     let pos = info.pchNext.saturating_sub(buffer).min(len);
@@ -365,11 +401,54 @@ pub fn mmioAdvance(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
         file.pos = pos as usize;
     }
 
-    let Ok(info) = <MMIOINFO>::mut_from_prefix(&mut ctx.memory[lpmmioinfo..]) else {
+    let info = ctx
+        .memory
+        .bytes
+        .get_mut(lpmmioinfo as usize..)
+        .and_then(|bytes| <MMIOINFO>::mut_from_prefix(bytes).ok());
+    let Some(info) = info else {
         return MMIOERR_CANNOTOPEN;
     };
     let info = info.0;
     info.pchNext = buffer + pos;
     info.pchEndRead = buffer + len;
     MMSYSERR_NOERROR
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn mmio_calls_reject_out_of_range_guest_pointers() {
+        let mut ctx = context();
+        let oob = ctx.memory.bytes.len() as u32; // just past the end
+
+        assert_eq!(mmioRead(&mut ctx, 7, 0x1000, 16), MMIO_FAILURE);
+        assert_eq!(
+            mmioDescend(&mut ctx, 7, 0, 0, MMIO::empty()),
+            MMIOERR_CANNOTOPEN
+        );
+        assert_eq!(
+            mmioDescend(&mut ctx, 7, oob, 0, MMIO::empty()),
+            MMIOERR_CANNOTOPEN
+        );
+        assert_eq!(mmioAscend(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioSetInfo(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioAdvance(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioGetInfo(&mut ctx, 7, 0x1000, 0), MMIOERR_CANNOTOPEN);
+    }
 }
