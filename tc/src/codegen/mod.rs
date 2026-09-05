@@ -1441,7 +1441,7 @@ mod tests {
         };
 
         codegen.gen_instr(&instr).unwrap();
-        assert!(!codegen.buf.contains("not implemented"));
+        assert!(codegen.buf.contains("unhandled_interrupt"));
     }
 
     #[test]
@@ -1458,7 +1458,7 @@ mod tests {
         };
 
         codegen.gen_instr(&instr).unwrap();
-        assert!(!codegen.buf.contains("not implemented"));
+        assert!(codegen.buf.contains("unhandled_interrupt"));
     }
 
     #[test]

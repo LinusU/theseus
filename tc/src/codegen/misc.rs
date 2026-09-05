@@ -143,7 +143,8 @@ impl<'a> CodeGen<'a> {
                 }
             }
             Rdtsc => self.line("ctx.cpu.regs.set_edx_eax(rdtsc());"),
-            Int1 | Int3 => {}
+            Int1 => self.line(format!("unhandled_interrupt(0x1, {:#x});", instr.ip32())),
+            Int3 => self.line(format!("unhandled_interrupt(0x3, {:#x});", instr.ip32())),
             Pushf => self.line("ctx.push16(ctx.cpu.flags.bits() as u16 | 2);"),
             Popf => {
                 self.line("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32 & !2);")
