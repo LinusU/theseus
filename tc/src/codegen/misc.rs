@@ -201,6 +201,10 @@ impl<'a> CodeGen<'a> {
                 assert_eq!(instr.op_count(), 1);
                 self.line(format!("ctx.aad({});", self.get_op(instr, 0)));
             }
+            Aam => {
+                assert_eq!(instr.op_count(), 1);
+                self.line(format!("ctx.aam({});", self.get_op(instr, 0)));
+            }
             Daa => self.line("ctx.daa();"),
             Das => self.line("ctx.das();"),
 

@@ -217,6 +217,17 @@ impl Context {
         self.cpu.flags.set(Flags::PF, value.count_ones() % 2 == 0);
     }
 
+    pub fn aam(&mut self, base: u8) {
+        assert_ne!(base, 0, "AAM with a zero base raises divide error");
+        let value = self.cpu.regs.get_al();
+        self.cpu.regs.set_ah(value / base);
+        self.cpu.regs.set_al(value % base);
+        let result = self.cpu.regs.get_al();
+        self.cpu.flags.set(Flags::SF, result & 0x80 != 0);
+        self.cpu.flags.set(Flags::ZF, result == 0);
+        self.cpu.flags.set(Flags::PF, result.count_ones() % 2 == 0);
+    }
+
     pub fn daa(&mut self) {
         let al = self.cpu.regs.get_al();
         let old_cf = self.cpu.flags.contains(Flags::CF);
@@ -363,6 +374,35 @@ mod tests {
         assert_eq!(ctx.cpu.regs.get_ax(), 0);
         assert!(ctx.cpu.flags.contains(Flags::ZF | Flags::PF));
         assert!(!ctx.cpu.flags.contains(Flags::SF));
+    }
+
+    #[test]
+    fn aam_splits_binary_value_into_digits() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_ax(0x12_21);
+        ctx.cpu.flags.insert(Flags::CF | Flags::AF | Flags::OF);
+
+        ctx.aam(10);
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 0x0303);
+        assert!(!ctx.cpu.flags.intersects(Flags::SF | Flags::ZF));
+        assert!(
+            ctx.cpu
+                .flags
+                .contains(Flags::PF | Flags::CF | Flags::AF | Flags::OF)
+        );
+    }
+
+    #[test]
+    fn aam_supports_non_decimal_bases() {
+        let mut ctx = context();
+        ctx.cpu.regs.set_al(0xff);
+
+        ctx.aam(16);
+
+        assert_eq!(ctx.cpu.regs.get_ax(), 0x0f0f);
+        assert!(ctx.cpu.flags.contains(Flags::PF));
+        assert!(!ctx.cpu.flags.intersects(Flags::SF | Flags::ZF));
     }
 
     #[test]
