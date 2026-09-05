@@ -469,6 +469,42 @@ pub fn pmaxub(x: u64, y: u64) -> u64 {
     out.pack()
 }
 
+/// PSADBW sums the absolute differences of all eight byte lanes into the
+/// low word; the upper lanes are zeroed.
+pub fn psadbw(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    let sum: u16 = (0..8).map(|i| x[i].abs_diff(y[i]) as u16).sum();
+    sum as u64
+}
+
+/// PMULHW keeps the high signed word of each lane product.
+pub fn pmulhw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    let mut out = [0i16; 4];
+    for i in 0..4 {
+        out[i] = ((x[i] as i32 * y[i] as i32) >> 16) as i16;
+    }
+    out.pack()
+}
+
+/// PMULHUW keeps the high unsigned word of each lane product.
+pub fn pmulhuw(x: u64, y: u64) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    let y: [u16; 4] = y.unpack();
+    let mut out = [0u16; 4];
+    for i in 0..4 {
+        out[i] = ((x[i] as u32 * y[i] as u32) >> 16) as u16;
+    }
+    out.pack()
+}
+
+/// PMULUDQ multiplies the low unsigned dword of each operand into a qword.
+pub fn pmuludq(x: u64, y: u64) -> u64 {
+    (x as u32 as u64) * (y as u32 as u64)
+}
+
 /// PMOVMSKB packs the sign bit of each byte lane: bit i = byte i's MSB.
 pub fn pmovmskb(x: u64) -> u32 {
     x.to_le_bytes()
@@ -608,9 +644,9 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw,
-        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pshufw, pslld, psllw, psrad,
-        psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, punpckhbw, punpckhwd, punpckldq,
-        punpcklwd,
+        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhuw, pmulhw, pmuludq,
+        psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
+        punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -725,6 +761,22 @@ mod tests {
             pmaxub(0x00ff_0000_0000_ff80, 0x7f00_ffff_ffff_0080),
             0x7fff_ffff_ffff_ff80
         );
+    }
+
+    #[test]
+    fn psadbw_sums_byte_differences_and_pmul_keeps_high_lanes() {
+        // Byte lanes [1..8] vs reversed: diffs sum to 32 in the low word.
+        assert_eq!(psadbw(0x0807_0605_0403_0201, 0x0102_0304_0506_0708), 0x20);
+        assert_eq!(psadbw(u64::MAX, 0), 8 * 0xff);
+        // -32768 * -32768 = 0x4000_0000, high word 0x4000.
+        assert_eq!(pmulhw(0x0000_0000_0000_8000, 0x0000_0000_0000_8000), 0x4000);
+        // -1 * 2 = -2; its high word is -1.
+        assert_eq!(pmulhw(0xffff, 2), 0xffff);
+        // 0xffff * 0xffff = 0xfffe_0001, high word 0xfffe.
+        assert_eq!(pmulhuw(0xffff, 0xffff), 0xfffe);
+        assert_eq!(pmuludq(0xffff_ffff, 0xffff_ffff), 0xffff_fffe_0000_0001);
+        // Only the low dword of each operand participates.
+        assert_eq!(pmuludq(0x1234_5678_ffff_ffff, 2), 0x1_ffff_fffe);
     }
 
     #[test]
