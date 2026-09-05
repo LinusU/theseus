@@ -7,7 +7,8 @@
 //! producing pixels.
 
 use std::cell::{OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 
 use runtime::*;
 use zerocopy::FromBytes;
@@ -1206,6 +1207,9 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         };
         device.render_states.insert(dwState, dwValue);
+        if !HANDLED_RENDER_STATES.contains(&dwState) {
+            warn_unhandled_render_state(dwState, dwValue);
+        }
         DD::OK
     }
 
@@ -1547,6 +1551,9 @@ pub mod IDirect3DDevice7 {
         device
             .texture_stage_states
             .insert((dwStage, dwState), dwValue);
+        if dwStage != 0 || !HANDLED_TEXTURE_STAGE_STATES.contains(&dwState) {
+            warn_unhandled_texture_stage_state(dwStage, dwState, dwValue);
+        }
         DD::OK
     }
 
@@ -1955,6 +1962,40 @@ const D3DRENDERSTATE_ALPHAFUNC: u32 = 25;
 const D3DRENDERSTATE_ALPHABLENDENABLE: u32 = 27;
 const D3DCULL_CW: u32 = 2;
 const D3DCULL_CCW: u32 = 3;
+
+const HANDLED_RENDER_STATES: &[u32] = &[
+    D3DRENDERSTATE_ZENABLE,
+    D3DRENDERSTATE_ZWRITEENABLE,
+    D3DRENDERSTATE_ALPHATESTENABLE,
+    D3DRENDERSTATE_SRCBLEND,
+    D3DRENDERSTATE_DESTBLEND,
+    D3DRENDERSTATE_CULLMODE,
+    D3DRENDERSTATE_ZFUNC,
+    D3DRENDERSTATE_ALPHAREF,
+    D3DRENDERSTATE_ALPHAFUNC,
+    D3DRENDERSTATE_ALPHABLENDENABLE,
+];
+
+const HANDLED_TEXTURE_STAGE_STATES: &[u32] = &[16, 17, 18];
+
+static WARNED_RENDER_STATES: LazyLock<Mutex<HashSet<u32>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+static WARNED_TEXTURE_STAGE_STATES: LazyLock<Mutex<HashSet<(u32, u32)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn warn_unhandled_render_state(dw_state: u32, dw_value: u32) {
+    let mut warned = WARNED_RENDER_STATES.lock().unwrap();
+    if warned.insert(dw_state) {
+        log::warn!("unhandled D3DRENDERSTATE({dw_state}) = {dw_value}");
+    }
+}
+
+fn warn_unhandled_texture_stage_state(dw_stage: u32, dw_state: u32, dw_value: u32) {
+    let mut warned = WARNED_TEXTURE_STAGE_STATES.lock().unwrap();
+    if warned.insert((dw_stage, dw_state)) {
+        log::warn!("unhandled D3DTSS stage={dw_stage} state={dw_state} = {dw_value}");
+    }
+}
 
 /// Pack a [0,1] depth into a 16-bit z-buffer word.
 fn z_to_u16(z: f32) -> u16 {
