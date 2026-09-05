@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use runtime::*;
 use zerocopy::FromBytes;
 
-use super::types::{DD, DDPIXELFORMAT};
+use super::types::{DD, DDPIXELFORMAT, DDSCAPS};
 use crate::{
     RECT,
     ddraw::{GUID, state},
@@ -888,11 +888,12 @@ pub mod IDirect3DDevice7 {
         _lpRects: u32,
         dwFlags: u32,
         dwColor: u32,
-        _dvZ: u32,
+        dvZ: u32,
         _dwStencil: u32,
     ) -> DD {
         const D3DCLEAR_TARGET: u32 = 0x00000001;
-        if dwFlags & D3DCLEAR_TARGET == 0 {
+        const D3DCLEAR_ZBUFFER: u32 = 0x00000002;
+        if dwFlags & (D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER) == 0 {
             return DD::OK;
         }
         let surface_addr = {
@@ -909,6 +910,30 @@ pub mod IDirect3DDevice7 {
             };
             surf.clone()
         };
+        if dwFlags & D3DCLEAR_ZBUFFER != 0 {
+            // The z-buffer is the DDSCAPS_ZBUFFER surface attached to the
+            // render target; store dvZ packed to its 16-bit depth.
+            let zbuf = {
+                let rt = surf.borrow();
+                rt.attachments
+                    .iter()
+                    .find(|s| s.borrow().caps.dwCaps.contains(DDSCAPS::ZBUFFER))
+                    .cloned()
+            };
+            if let Some(zbuf) = zbuf {
+                let mut zbuf = zbuf.borrow_mut();
+                let addr = zbuf.lock(&mut ctx.memory);
+                let size = (zbuf.width * zbuf.height * zbuf.bytes_per_pixel) as usize;
+                let z = z_to_u16(f32::from_bits(dvZ));
+                let pixels = &mut ctx.memory[addr..][..size];
+                for chunk in pixels.chunks_exact_mut(2) {
+                    chunk.copy_from_slice(&z.to_le_bytes());
+                }
+            }
+        }
+        if dwFlags & D3DCLEAR_TARGET == 0 {
+            return DD::OK;
+        }
         let mut surface = surf.borrow_mut();
         let addr = surface.lock(&mut ctx.memory);
         let size = (surface.width * surface.height * surface.bytes_per_pixel) as usize;
@@ -1827,6 +1852,32 @@ fn read_vertex(mem: &Memory, addr: u32) -> RhwVertex {
     }
 }
 
+// D3DRENDERSTATETYPE values the rasterizer acts on.
+const D3DRENDERSTATE_ZENABLE: u32 = 7;
+const D3DRENDERSTATE_ZWRITEENABLE: u32 = 14;
+const D3DRENDERSTATE_CULLMODE: u32 = 22;
+const D3DRENDERSTATE_ZFUNC: u32 = 23;
+const D3DCULL_CW: u32 = 2;
+const D3DCULL_CCW: u32 = 3;
+
+/// Pack a [0,1] depth into a 16-bit z-buffer word.
+fn z_to_u16(z: f32) -> u16 {
+    (z.clamp(0.0, 1.0) * 65535.0) as u16
+}
+
+fn z_passes(zfunc: u32, new: u16, cur: u16) -> bool {
+    match zfunc {
+        1 => false,      // D3DCMP_NEVER
+        2 => new < cur,  // D3DCMP_LESS
+        3 => new == cur, // D3DCMP_EQUAL
+        4 => new <= cur, // D3DCMP_LESSEQUAL
+        5 => new > cur,  // D3DCMP_GREATER
+        6 => new != cur, // D3DCMP_NOTEQUAL
+        7 => new >= cur, // D3DCMP_GREATEREQUAL
+        _ => true,       // D3DCMP_ALWAYS
+    }
+}
+
 fn argb_to_565(c: u32) -> u16 {
     let r = ((c >> 16) & 0xff) as u16;
     let g = ((c >> 8) & 0xff) as u16;
@@ -1862,13 +1913,47 @@ fn rasterize(
         return;
     }
 
-    let (rt_addr, rt_width, rt_height, rt_bpp, tex_addr, tex_width, tex_height, tex_bpp) = {
+    #[allow(clippy::too_many_arguments)]
+    struct Targets {
+        rt_addr: u32,
+        rt_width: u32,
+        rt_height: u32,
+        rt_bpp: u32,
+        tex_addr: u32,
+        tex_width: u32,
+        tex_height: u32,
+        tex_bpp: u32,
+        zbuf_addr: u32,
+        cull: u32,
+        zenable: u32,
+        zwrite: u32,
+        zfunc: u32,
+    }
+
+    let t = 'targets: {
         let devices = d3d_state().devices.borrow();
         let Some(device) = devices.get(&this) else {
             return;
         };
         let rt = device.render_target;
         let tex = *device.textures.get(&0).unwrap_or(&0);
+        // D3D7 defaults: cull CCW; z test on, writes on, less-or-equal.
+        let cull = *device
+            .render_states
+            .get(&D3DRENDERSTATE_CULLMODE)
+            .unwrap_or(&D3DCULL_CCW);
+        let zenable = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ZENABLE)
+            .unwrap_or(&1);
+        let zwrite = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ZWRITEENABLE)
+            .unwrap_or(&1);
+        let zfunc = *device
+            .render_states
+            .get(&D3DRENDERSTATE_ZFUNC)
+            .unwrap_or(&4);
 
         let surfs = state().surf.borrow();
         let rt_surf = surfs.get(&rt).cloned();
@@ -1880,6 +1965,12 @@ fn rasterize(
         };
         let rt = rt_surf.borrow();
         let (rt_w, rt_h, rt_bpp) = (rt.width, rt.height, rt.bytes_per_pixel);
+        // The z-buffer rides along as an attached DDSCAPS_ZBUFFER surface.
+        let zbuf_surf = rt
+            .attachments
+            .iter()
+            .find(|s| s.borrow().caps.dwCaps.contains(DDSCAPS::ZBUFFER))
+            .cloned();
 
         let (tex_w, tex_h, tex_bpp, tex_addr) = if let Some(ref s) = tex_surf {
             let s_borrow = s.borrow();
@@ -1915,19 +2006,39 @@ fn rasterize(
         // Lock the render target now so its pixel address is known.
         drop(rt);
         let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory);
+        let zbuf_addr = zbuf_surf
+            .map(|z| z.borrow_mut().lock(&mut ctx.memory))
+            .unwrap_or(0);
 
-        (rt_addr, rt_w, rt_h, rt_bpp, tex_addr, tex_w, tex_h, tex_bpp)
+        break 'targets Targets {
+            rt_addr,
+            rt_width: rt_w,
+            rt_height: rt_h,
+            rt_bpp,
+            tex_addr,
+            tex_width: tex_w,
+            tex_height: tex_h,
+            tex_bpp,
+            zbuf_addr,
+            cull,
+            zenable,
+            zwrite,
+            zfunc,
+        };
     };
 
-    if rt_bpp != 2 || (tex_addr != 0 && tex_bpp != 2) {
+    if t.rt_bpp != 2 || (t.tex_addr != 0 && t.tex_bpp != 2) {
         return;
     }
-    if rt_addr == 0 || dwVertexCount < 3 {
+    if t.rt_addr == 0 || dwVertexCount < 3 {
         return;
     }
 
     let vsize = vertex_size(dwVertexTypeDesc);
-    let stride = rt_width * rt_bpp;
+    let stride = t.rt_width * t.rt_bpp;
+    // Z-testing is only meaningful when a z-buffer is actually attached.
+    let zbuf_addr = if t.zenable != 0 { t.zbuf_addr } else { 0 };
+    let zstride = t.rt_width * 2;
 
     // Build the list of triangles for a D3DPT_TRIANGLESTRIP, alternating
     // the vertex order so every triangle has the same winding.
@@ -1958,22 +2069,28 @@ fn rasterize(
         let b = read_vertex(&ctx.memory, lpvVertices + tri[1] * vsize);
         let c = read_vertex(&ctx.memory, lpvVertices + tri[2] * vsize);
 
-        // Compute the 2D bounding box, clamped to the render target.
-        let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
-        let max_x = a.x.max(b.x).max(c.x).ceil() as i32;
-        let min_x = min_x.min(rt_width as i32).max(0);
-        let max_x = max_x.min(rt_width as i32);
-
-        let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
-        let max_y = a.y.max(b.y).max(c.y).ceil() as i32;
-        let min_y = min_y.min(rt_height as i32).max(0);
-        let max_y = max_y.min(rt_height as i32);
-
-        // Triangle area in screen space.
+        // Triangle area in screen space; in the y-down convention a positive
+        // signed area is the clockwise (front) face.
         let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
         if area == 0.0 {
             continue;
         }
+        match t.cull {
+            D3DCULL_CW if area > 0.0 => continue,
+            D3DCULL_CCW if area < 0.0 => continue,
+            _ => {}
+        }
+
+        // Compute the 2D bounding box, clamped to the render target.
+        let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
+        let max_x = a.x.max(b.x).max(c.x).ceil() as i32;
+        let min_x = min_x.min(t.rt_width as i32).max(0);
+        let max_x = max_x.min(t.rt_width as i32);
+
+        let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
+        let max_y = a.y.max(b.y).max(c.y).ceil() as i32;
+        let min_y = min_y.min(t.rt_height as i32).max(0);
+        let max_y = max_y.min(t.rt_height as i32);
 
         for py in min_y..max_y {
             for px in min_x..max_x {
@@ -1993,30 +2110,34 @@ fn rasterize(
                 let beta = w1 / area;
                 let gamma = w2 / area;
 
-                // Perspective-correct texture coordinate interpolation.
-                let u = if tex_addr != 0 {
-                    let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
-                    if w_sum != 0.0 {
-                        (alpha * a.u_w + beta * b.u_w + gamma * c.u_w) / w_sum
-                    } else {
-                        alpha * a.u + beta * b.u + gamma * c.u
+                // Depth is linear in screen space for pre-transformed verts.
+                if zbuf_addr != 0 {
+                    let z = z_to_u16(alpha * a.z + beta * b.z + gamma * c.z);
+                    let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
+                    if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
+                        continue;
                     }
+                    if t.zwrite != 0 {
+                        ctx.memory.write::<u16>(zaddr, z);
+                    }
+                }
+
+                // Perspective-correct texture coordinate interpolation.
+                let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
+                let persp = t.tex_addr != 0 && w_sum != 0.0;
+                let u = if persp {
+                    (alpha * a.u_w + beta * b.u_w + gamma * c.u_w) / w_sum
                 } else {
                     alpha * a.u + beta * b.u + gamma * c.u
                 };
-                let v = if tex_addr != 0 {
-                    let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
-                    if w_sum != 0.0 {
-                        (alpha * a.v_w + beta * b.v_w + gamma * c.v_w) / w_sum
-                    } else {
-                        alpha * a.v + beta * b.v + gamma * c.v
-                    }
+                let v = if persp {
+                    (alpha * a.v_w + beta * b.v_w + gamma * c.v_w) / w_sum
                 } else {
                     alpha * a.v + beta * b.v + gamma * c.v
                 };
 
-                let color = if tex_addr != 0 {
-                    sample_565(&ctx.memory, tex_addr, tex_width, tex_height, u, v)
+                let color = if t.tex_addr != 0 {
+                    sample_565(&ctx.memory, t.tex_addr, t.tex_width, t.tex_height, u, v)
                         .unwrap_or(argb_to_565(0xff_00_00_00))
                 } else {
                     let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32
@@ -2036,7 +2157,7 @@ fn rasterize(
                     ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
                 };
 
-                let pixel_addr = rt_addr + py as u32 * stride + px as u32 * 2;
+                let pixel_addr = t.rt_addr + py as u32 * stride + px as u32 * 2;
                 ctx.memory.write::<u16>(pixel_addr, color);
             }
         }
