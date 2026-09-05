@@ -183,8 +183,14 @@ pub fn SelectObject(_ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
         return HGDIOBJ::null();
     }
     let state = &mut *gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
-    let object = state.objects.get(h).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        log::warn!("SelectObject: unknown HDC {hdc:?}");
+        return HGDIOBJ::null();
+    };
+    let Some(object) = state.objects.get(h) else {
+        log::warn!("SelectObject: unknown object {h:?}");
+        return HGDIOBJ::null();
+    };
     match object {
         Object::Bitmap(bitmap) => {
             let prev = dc.bitmap.0;

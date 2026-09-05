@@ -590,45 +590,64 @@ impl Host {
             }
         }
 
-        // Debug aid: synthesize a single left mouse click for headless/scripted
-        // runs. THESEUS_INJECT_CLICK is "x,y" and THESEUS_INJECT_CLICK_MS is
-        // the delay before the move; down/up follow 50ms apart.
-        static CLICK_INJECT: std::sync::OnceLock<Option<((u32, u32), u32)>> =
+        // Debug aid: synthesize one or more left mouse clicks for headless/
+        // scripted runs. THESEUS_INJECT_CLICK is a ';'-separated list of "x,y"
+        // positions, THESEUS_INJECT_CLICK_MS is the delay before the first move,
+        // and THESEUS_INJECT_CLICK_GAP (default 500ms) is the pause between clicks.
+        // For each click the host emits move, left down, and left up 50ms apart.
+        static CLICK_INJECT: std::sync::OnceLock<Option<(Vec<(u32, u32)>, u32, u32)>> =
             std::sync::OnceLock::new();
-        static CLICK_PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-        if let Some(((x, y), at_ms)) = CLICK_INJECT.get_or_init(|| {
+        static CLICK_PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        if let Some((clicks, at_ms, gap)) = CLICK_INJECT.get_or_init(|| {
             let s = std::env::var("THESEUS_INJECT_CLICK").ok()?;
-            let (x, y) = s.split_once(',')?;
-            let x = x.trim().parse().ok()?;
-            let y = y.trim().parse().ok()?;
+            let clicks: Vec<(u32, u32)> = s
+                .split(';')
+                .map(|part| {
+                    let (x, y) = part.trim().split_once(',')?;
+                    let x = x.trim().parse().ok()?;
+                    let y = y.trim().parse().ok()?;
+                    Some((x, y))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            if clicks.is_empty() {
+                return None;
+            }
             let at_ms = std::env::var("THESEUS_INJECT_CLICK_MS")
                 .ok()?
                 .parse()
                 .ok()?;
-            Some(((x, y), at_ms))
+            let gap = std::env::var("THESEUS_INJECT_CLICK_GAP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(500);
+            Some((clicks, at_ms, gap))
         }) {
             use std::sync::atomic::Ordering::Relaxed;
+            let total = clicks.len() as u32 * 3;
             let phase = CLICK_PHASE.load(Relaxed) as u32;
-            if phase < 3 {
-                let at = at_ms + phase * 50;
+            if phase < total {
+                let click = phase / 3;
+                let sub = phase % 3;
+                let click_start = at_ms + click * (150 + gap);
+                let at = click_start + sub * 50;
                 if self.time() >= at {
-                    CLICK_PHASE.store((phase + 1) as u8, Relaxed);
-                    let (button, buttons) = match phase {
+                    CLICK_PHASE.store((phase + 1) as u16, Relaxed);
+                    let (x, y) = clicks[click as usize];
+                    let (button, buttons) = match sub {
                         1 => (host::MouseButton::Left, host::MouseButton::Left),
                         2 => (host::MouseButton::Left, host::MouseButton::empty()),
                         _ => (host::MouseButton::empty(), host::MouseButton::empty()),
                     };
                     let message = host::MouseMessage {
-                        x: *x,
-                        y: *y,
+                        x,
+                        y,
                         button,
                         buttons,
                     };
-                    return Some(match phase {
+                    return Some(match sub {
                         0 => host::Message::MouseMove(message),
                         1 => host::Message::MouseDown(message),
-                        2 => host::Message::MouseUp(message),
-                        _ => unreachable!(),
+                        _ => host::Message::MouseUp(message),
                     });
                 }
             }
