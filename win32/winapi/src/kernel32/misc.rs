@@ -387,9 +387,8 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
     let len = buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap();
     let src = lpString2.addr as usize;
     let dst = lpString1.addr as usize;
-    ctx.memory
-        .bytes
-        .copy_within(src..src + len + 2, dst as usize);
+    let bytes = (len + 1) * 2;
+    ctx.memory.bytes.copy_within(src..src + bytes, dst as usize);
     lpString1.addr
 }
 
@@ -401,7 +400,21 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SYSTEM_INFO, processor_feature_present};
+    use super::{SYSTEM_INFO, lstrcpyW, lstrlenW, processor_feature_present};
+    use crate::Ptr;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
 
     #[test]
     fn system_info_matches_win32_abi() {
@@ -414,6 +427,23 @@ mod tests {
         assert!(processor_feature_present(8));
         assert!(!processor_feature_present(6));
         assert!(!processor_feature_present(u32::MAX));
+    }
+
+    #[test]
+    fn wide_string_copy_preserves_all_utf16_bytes() {
+        let mut ctx = context();
+        ctx.memory.write::<u16>(0x1000, b'A' as u16);
+        ctx.memory.write::<u16>(0x1002, 0x03b2);
+        ctx.memory.write::<u16>(0x1004, 0);
+
+        assert_eq!(lstrlenW(&mut ctx, Ptr::new(0x1000)), 2);
+        assert_eq!(
+            lstrcpyW(&mut ctx, Ptr::new(0x1200), Ptr::new(0x1000)),
+            0x1200
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x1200), b'A' as u16);
+        assert_eq!(ctx.memory.read::<u16>(0x1202), 0x03b2);
+        assert_eq!(ctx.memory.read::<u16>(0x1204), 0);
     }
 }
 
