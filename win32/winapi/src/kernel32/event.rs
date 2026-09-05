@@ -65,9 +65,14 @@ pub fn CreateEventA(
     bInitialState: bool,
     lpName: Ptr<u8>,
 ) -> HANDLE {
-    let name = ctx.memory.read_str(lpName.addr);
+    // A NULL lpName creates an unnamed event.
+    let name = if lpName.addr == 0 {
+        String::new()
+    } else {
+        ctx.memory.read_str(lpName.addr).to_string()
+    };
     let event = Event {
-        _name: name.to_string(),
+        _name: name,
         manual_reset: bManualReset,
         signaled: Mutex::new(bInitialState),
         cond: Condvar::new(),
