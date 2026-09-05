@@ -41,6 +41,16 @@ pub const DYNAMIC_EXPORTS: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Dynamic exports the WinAPI layer can provide even when an older generated
+/// snapshot did not reserve and register a synthetic address for them. Each
+/// entry is appended to the runtime block table so `GetProcAddress` can return
+/// a callable pointer.
+pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[(
+    "kernel32",
+    "IsProcessorFeaturePresent",
+    kernel32::IsProcessorFeaturePresent_stdcall,
+)];
+
 pub use dllexport::{ABIReturn, FromABIParam};
 pub use handle::{HANDLE, Handles};
 pub use point::POINT;
@@ -53,7 +63,7 @@ macro_rules! stub {
         $arg
     }};
 }
-use runtime::{CPU, Context, EXEData, Mappings, Memory, Regs};
+use runtime::{CPU, ContFn, Context, EXEData, Mappings, Memory, Regs};
 pub(crate) use stub;
 
 pub fn load(exe: &EXEData) -> Context {
@@ -75,12 +85,26 @@ pub fn load(exe: &EXEData) -> Context {
     // The mappings the program declared have to reach the state, or every
     // later allocation hands out addresses the program is already using.
     lock.mappings = mappings;
+
+    // Older generated snapshots may not reserve addresses for dynamic exports
+    // added after they were translated. Append them to the block table and
+    // register them with the DLL state so GetProcAddress can resolve them.
+    let mut blocks: Vec<(u32, ContFn)> = exe.blocks.iter().copied().collect();
+    let mut next_addr = 0xfafd_0000;
+    for (dll, name, func) in BUILTIN_EXPORTS {
+        blocks.push((next_addr, *func));
+        lock.dlls.register_export(dll, name, next_addr);
+        next_addr += 1;
+    }
+    blocks.sort_by_key(|(addr, _)| *addr);
+    let blocks: &'static [(u32, ContFn)] = Box::leak(blocks.into_boxed_slice());
+
     let mut ctx = Context {
         cpu: CPU::default(),
         thread_handle: lock.objects.add(kernel32::Object::Thread).to_raw(),
         thread_id: 1,
         memory,
-        blocks: exe.blocks,
+        blocks,
         cache: Default::default(),
         recent: [Context::return_from_x86; 4],
     };
