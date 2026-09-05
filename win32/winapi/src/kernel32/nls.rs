@@ -98,6 +98,9 @@ pub fn GetStringTypeA(
         log::warn!("GetStringTypeA: unimplemented type {dwInfoType}");
         return false;
     }
+    if cchSrc < -1 {
+        return false;
+    }
     let len = if cchSrc < 0 {
         ctx.memory.read_str(lpSrcStr.addr).len() + 1
     } else {
@@ -133,6 +136,9 @@ pub fn GetStringTypeW(
 ) -> bool {
     if dwInfoType != 1 {
         log::warn!("GetStringTypeW: unimplemented type {dwInfoType}");
+        return false;
+    }
+    if cchSrc < -1 {
         return false;
     }
     let len = if cchSrc < 0 {
@@ -394,6 +400,30 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn string_type_rejects_invalid_negative_counts() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..2].copy_from_slice(b"A\0");
+        ctx.memory.write::<u16>(0x1200, 0xffff);
+
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            1,
+            Ptr::new(0x1000),
+            -2,
+            Ptr::new(0x1200),
+        ));
+        assert!(!GetStringTypeW(
+            &mut ctx,
+            1,
+            Ptr::new(0x1000),
+            -2,
+            Ptr::new(0x1200),
+        ));
+        assert_eq!(ctx.memory.read::<u16>(0x1200), 0xffff);
     }
 
     #[test]
