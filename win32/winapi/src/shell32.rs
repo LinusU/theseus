@@ -38,5 +38,6 @@ pub fn ShellAboutW(
     _szOtherStuff: u32, /* WSTR */
     _hIcon: HICON,
 ) -> i32 {
-    todo!()
+    // No about-dialog UI is modeled; report failure.
+    0
 }
