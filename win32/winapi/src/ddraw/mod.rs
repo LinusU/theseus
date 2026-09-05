@@ -184,6 +184,8 @@ pub const VTABLES: [(&'static str, &[&str]); 8] = [
     Copy,
     Default,
     PartialEq,
+    Eq,
+    Hash,
     zerocopy::FromBytes,
     zerocopy::IntoBytes,
     zerocopy::Immutable,

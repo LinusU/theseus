@@ -1111,8 +1111,16 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetCaps(_ctx: &mut Context, _this: u32, _lpDDSCaps: u32) -> DD {
-        todo!()
+    pub fn GetCaps(ctx: &mut Context, this: u32, lpDDSCaps: u32) -> DD {
+        if lpDDSCaps == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory.write(lpDDSCaps, surface.borrow().caps);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -1431,65 +1439,162 @@ pub mod IDirectDrawSurface7 {
         _lpDDSurfaceDesc2: u32,
         _dwFlags: u32,
     ) -> DD {
-        todo!()
+        // SetSurfaceDesc exists so a caller can hand a surface user-allocated
+        // backing memory; emulated surfaces own their buffers.
+        DD::ERR_INVALIDSURFACETYPE
     }
 
     #[win32_derive::dllexport]
     pub fn SetPrivateData(
-        _ctx: &mut Context,
-        _this: u32,
-        _guidTag: u32,
-        _lpData: u32,
-        _cbSize: u32,
+        ctx: &mut Context,
+        this: u32,
+        guidTag: u32,
+        lpData: u32,
+        cbSize: u32,
         _dwFlags: u32,
     ) -> DD {
-        todo!()
+        if guidTag == 0 || lpData == 0 || cbSize == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Ok((data, _)) =
+            <[u8]>::ref_from_prefix_with_elems(&ctx.memory[lpData..], cbSize as usize)
+        else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let data = data.to_vec();
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().private_data.insert(tag, data);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn GetPrivateData(
-        _ctx: &mut Context,
-        _this: u32,
-        _guidTag: u32,
-        _lpBuffer: u32,
-        _lpcbBufferSize: u32,
+        ctx: &mut Context,
+        this: u32,
+        guidTag: u32,
+        lpBuffer: u32,
+        lpcbBufferSize: u32,
     ) -> DD {
-        todo!()
+        if guidTag == 0 || lpcbBufferSize == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Some(data) = surface.borrow().private_data.get(&tag).cloned() else {
+            return DD::ERR_NOTFOUND;
+        };
+        let size = ctx.memory.read::<u32>(lpcbBufferSize);
+        if size < data.len() as u32 {
+            // Report the needed size, as the API contract requires.
+            ctx.memory.write::<u32>(lpcbBufferSize, data.len() as u32);
+            return DD::ERR_MOREDATA;
+        }
+        if lpBuffer == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        ctx.memory[lpBuffer..][..data.len()].copy_from_slice(&data);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn FreePrivateData(_ctx: &mut Context, _this: u32, _guidTag: u32) -> DD {
-        todo!()
+    pub fn FreePrivateData(ctx: &mut Context, this: u32, guidTag: u32) -> DD {
+        if guidTag == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if surface.borrow_mut().private_data.remove(&tag).is_none() {
+            return DD::ERR_NOTFOUND;
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetUniquenessValue(_ctx: &mut Context, _this: u32, _lpValue: u32) -> DD {
-        todo!()
+    pub fn GetUniquenessValue(ctx: &mut Context, this: u32, lpValue: u32) -> DD {
+        if lpValue == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory
+            .write::<u32>(lpValue, surface.borrow().uniqueness);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn ChangeUniquenessValue(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn ChangeUniquenessValue(_ctx: &mut Context, this: u32) -> DD {
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().uniqueness += 1;
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn SetPriority(_ctx: &mut Context, _this: u32, _dwPriority: u32) -> DD {
-        todo!()
+    pub fn SetPriority(_ctx: &mut Context, this: u32, dwPriority: u32) -> DD {
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().priority = dwPriority;
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPriority(_ctx: &mut Context, _this: u32, _lpdwPriority: u32) -> DD {
-        todo!()
+    pub fn GetPriority(ctx: &mut Context, this: u32, lpdwPriority: u32) -> DD {
+        if lpdwPriority == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory
+            .write::<u32>(lpdwPriority, surface.borrow().priority);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn SetLOD(_ctx: &mut Context, _this: u32, _dwMaxLOD: u32) -> DD {
-        todo!()
+    pub fn SetLOD(_ctx: &mut Context, this: u32, dwMaxLOD: u32) -> DD {
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().max_lod = dwMaxLOD;
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetLOD(_ctx: &mut Context, _this: u32, _lpdwMaxLOD: u32) -> DD {
-        todo!()
+    pub fn GetLOD(ctx: &mut Context, this: u32, lpdwMaxLOD: u32) -> DD {
+        if lpdwMaxLOD == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory
+            .write::<u32>(lpdwMaxLOD, surface.borrow().max_lod);
+        DD::OK
     }
 
     pub static mut VTABLE: u32 = 0;

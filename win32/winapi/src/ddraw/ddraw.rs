@@ -29,6 +29,7 @@ struct SurfaceParams {
     width: u32,
     height: u32,
     bytes_per_pixel: u32,
+    caps: DDSCAPS2,
 }
 
 impl DirectDraw {
@@ -67,6 +68,17 @@ impl DirectDraw {
             self.bytes_per_pixel
         };
 
+        let caps = if desc.dwFlags.contains(DDSD::CAPS) {
+            desc.ddsCaps
+        } else if is_primary {
+            DDSCAPS2 {
+                dwCaps: DDSCAPS::PRIMARYSURFACE,
+                ..Default::default()
+            }
+        } else {
+            DDSCAPS2::default()
+        };
+
         let surface = self.create_one_surface(
             new_pointer(),
             &SurfaceParams {
@@ -74,6 +86,7 @@ impl DirectDraw {
                 width,
                 height,
                 bytes_per_pixel,
+                caps,
             },
         );
 
@@ -92,6 +105,11 @@ impl DirectDraw {
 
         if let Some(count) = desc.back_buffer_count() {
             assert_eq!(count, 1);
+            // The implicit back buffer shares the primary's caps minus
+            // PRIMARYSURFACE, plus the BACKBUFFER role.
+            let mut back_caps = caps;
+            back_caps.dwCaps &= !DDSCAPS::PRIMARYSURFACE;
+            back_caps.dwCaps |= DDSCAPS::BACKBUFFER;
             let back = self.create_one_surface(
                 new_pointer(),
                 &SurfaceParams {
@@ -99,6 +117,7 @@ impl DirectDraw {
                     width,
                     height,
                     bytes_per_pixel,
+                    caps: back_caps,
                 },
             );
             back.borrow_mut().primary.replace(surface.clone());
@@ -129,6 +148,7 @@ impl DirectDraw {
             height: params.height,
             bytes_per_pixel: params.bytes_per_pixel,
             target,
+            caps: params.caps,
             primary: Default::default(),
             attached: Default::default(),
             attachments: Vec::new(),
@@ -137,6 +157,10 @@ impl DirectDraw {
             clipper: None,
             src_color_key: None,
             dst_color_key: None,
+            private_data: Default::default(),
+            uniqueness: 1,
+            priority: 0,
+            max_lod: 0,
         }));
         // TODO: move surf to ddraw
         state().surf.borrow_mut().insert(addr, surf.clone());
@@ -190,6 +214,9 @@ pub struct Surface {
 
     pub palette: Option<Rc<RefCell<Palette>>>,
 
+    /// The DDSCAPS2 the surface was created with, reported by GetCaps.
+    pub caps: DDSCAPS2,
+
     /// The IDirectDrawClipper interface pointer attached through SetClipper.
     /// Clipper objects are not modeled (they only affect windowed-mode blits),
     /// so the pointer is tracked but never dereferenced.
@@ -201,6 +228,16 @@ pub struct Surface {
     /// Pixel values that may be overwritten when this surface is the
     /// destination of a blit.
     pub dst_color_key: Option<ColorKey>,
+
+    /// Application data attached through SetPrivateData, keyed by tag GUID.
+    pub private_data: std::collections::HashMap<GUID, Vec<u8>>,
+    /// Bumped by ChangeUniquenessValue so a caller can tell whether the
+    /// surface contents were touched between two queries.
+    pub uniqueness: u32,
+    /// Texture-management values: retained and reported, but the emulated
+    /// device has no eviction policy or mip chain to act on them.
+    pub priority: u32,
+    pub max_lod: u32,
 }
 
 impl Surface {
