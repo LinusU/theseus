@@ -938,6 +938,34 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_32_bit_far_branches() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0xea, 0x78, 0x56, 0x34, 0x12, 0x1b, 0x00][..],
+                "ctx.cpu.regs.cs = 0x1b;",
+            ),
+            (
+                &[0x9a, 0x78, 0x56, 0x34, 0x12, 0x1b, 0x00][..],
+                "ctx.callf32(0x7, 0x1b, Cont(unk_12345678))",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

@@ -30,6 +30,11 @@ impl<'a> CodeGen<'a> {
                 seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
                 cont = self.resolve_jmp(ip);
             }
+            iced_x86::OpKind::FarBranch32 => {
+                let ip = IP::Flat(instr.iced.far_branch32());
+                seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
+                cont = self.resolve_jmp(ip);
+            }
             iced_x86::OpKind::Memory => {
                 // If it's like `jmp [someaddr]` where someaddr is in the IAT, resolve it directly.
                 // (Note that `call [someaddr@IAT]` is generated as a direct function call.)

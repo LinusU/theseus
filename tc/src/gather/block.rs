@@ -260,6 +260,10 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 let ip = IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
                 self.traverse.queue.enqueue(ip);
             }
+            iced_x86::OpKind::FarBranch32 => {
+                let ip = IP::Flat(instr.far_branch32());
+                self.traverse.queue.enqueue(ip);
+            }
             iced_x86::OpKind::Memory => self.control_flow_indirect(ip, new_instr)?,
             iced_x86::OpKind::Register => {
                 // jmp [reg]  for some register
