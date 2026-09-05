@@ -65,7 +65,10 @@ impl<'a> CodeGen<'a> {
             Lea => {
                 // Note: in 16-bit mode lea ignores segment registers.
                 let addr = self.gen_addr_offset(instr);
-                self.line(self.set_op(instr, 0, addr));
+                let dst = self.get_op(instr, 0);
+                if addr != dst {
+                    self.line(self.set_op(instr, 0, addr));
+                }
             }
 
             Movzx => {
@@ -89,9 +92,20 @@ impl<'a> CodeGen<'a> {
             }
 
             Xchg => {
-                self.line(format!("let t = {};", self.get_op(instr, 0)));
-                self.line(self.set_op(instr, 0, self.get_op(instr, 1)));
-                self.line(self.set_op(instr, 1, "t".into()));
+                let op0 = self.get_op(instr, 0);
+                let op1 = self.get_op(instr, 1);
+                self.line("{");
+                self.line(format!("let (old_0, old_1) = ({op0}, {op1});"));
+                // If the memory operand depends on the other register, we must
+                // write the memory value before changing the register.
+                if is_memory_op(instr.op_kind(1)) {
+                    self.line(self.set_op(instr, 1, "old_0".into()));
+                    self.line(self.set_op(instr, 0, "old_1".into()));
+                } else {
+                    self.line(self.set_op(instr, 0, "old_1".into()));
+                    self.line(self.set_op(instr, 1, "old_0".into()));
+                }
+                self.line("}");
             }
             Nop => {}
             // x87 exception sync; our FPU never raises.

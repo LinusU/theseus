@@ -266,9 +266,13 @@ impl<'a> CodeGen<'a> {
 
             Fxch => {
                 assert_eq!(instr.op_count(), 2);
-                self.line(format!("let t = {};", self.fpu_get_op(instr, 0)));
-                self.line(self.fpu_set_op(instr, 0, self.fpu_get_op(instr, 1)));
-                self.line(self.fpu_set_op(instr, 1, "t".into()));
+                let op0 = self.fpu_get_op(instr, 0);
+                let op1 = self.fpu_get_op(instr, 1);
+                self.line("{");
+                self.line(format!("let (old_0, old_1) = ({op0}, {op1});"));
+                self.line(self.fpu_set_op(instr, 0, "old_1".into()));
+                self.line(self.fpu_set_op(instr, 1, "old_0".into()));
+                self.line("}");
             }
 
             Ftst => {
