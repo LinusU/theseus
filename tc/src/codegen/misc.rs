@@ -186,6 +186,35 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.regs.eax = xgetbv_eax;");
                 self.line("ctx.cpu.regs.edx = xgetbv_edx;");
             }
+            Xadd => {
+                assert_eq!(instr.op_count(), 2);
+                let dst = self.get_op(instr, 0);
+                let src = self.get_op(instr, 1);
+                self.line(format!("let xadd_dst = {dst};"));
+                self.line(format!(
+                    "let xadd_tmp = add(xadd_dst, {src}, &mut ctx.cpu.flags);"
+                ));
+                self.line(self.set_op(instr, 1, "xadd_dst".into()));
+                self.line(self.set_op(instr, 0, "xadd_tmp".into()));
+            }
+            Bsf | Bsr => {
+                let func = instr_name(instr);
+                self.line(format!(
+                    "if let Some(res) = {func}({}, &mut ctx.cpu.flags) {{ {} }}",
+                    self.get_op(instr, 1),
+                    self.set_op(instr, 0, "res".into())
+                ));
+            }
+            // CMOVcc shares its condition with the corresponding SETcc.
+            Cmove | Cmovne | Cmovg | Cmovge | Cmovl | Cmovle | Cmova | Cmovae | Cmovb | Cmovbe
+            | Cmovo | Cmovno | Cmovs | Cmovns | Cmovp | Cmovnp => {
+                let cond = instr_name(instr).replacen("cmov", "set", 1);
+                self.line(format!(
+                    "if ctx.{}() != 0 {{ {} }}",
+                    cond,
+                    self.set_op(instr, 0, self.get_op(instr, 1))
+                ));
+            }
             Div => self.todo(instr_name(instr)),
 
             // CBW/CWDE: sign extend to next larger ax

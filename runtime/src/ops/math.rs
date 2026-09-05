@@ -33,6 +33,28 @@ pub fn add<I: Int>(x: I, y: I, flags: &mut Flags) -> I {
     addc(x, y, I::zero(), flags)
 }
 
+/// BSF: index of the least-significant set bit. `None` (with ZF set) when the
+/// source is zero; the destination is then architecturally undefined, so the
+/// caller leaves it alone.
+pub fn bsf<I: Int>(x: I, flags: &mut Flags) -> Option<I> {
+    if x.is_zero() {
+        flags.insert(Flags::ZF);
+        return None;
+    }
+    flags.remove(Flags::ZF);
+    Some(I::from(x.trailing_zeros()).unwrap())
+}
+
+/// BSR: index of the most-significant set bit, same zero semantics as BSF.
+pub fn bsr<I: Int>(x: I, flags: &mut Flags) -> Option<I> {
+    if x.is_zero() {
+        flags.insert(Flags::ZF);
+        return None;
+    }
+    flags.remove(Flags::ZF);
+    Some(I::from(I::bits() as u32 - 1 - x.leading_zeros()).unwrap())
+}
+
 pub fn addc<I: Int>(x: I, y: I, z: I, flags: &mut Flags) -> I {
     let yz = y.wrapping_add(&z);
     let result = x.wrapping_add(&yz);
@@ -185,6 +207,17 @@ pub fn imul2_16(x: u16, y: u16, flags: &mut Flags) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bsf_bsr_find_set_bits() {
+        let mut flags = Flags::default();
+        assert_eq!(bsf(0x8000_0000u32, &mut flags), Some(31));
+        assert!(!flags.contains(Flags::ZF));
+        assert_eq!(bsr(0x0000_0100u32, &mut flags), Some(8));
+        assert_eq!(bsr(0x8000u16, &mut flags), Some(15));
+        assert_eq!(bsf(0u32, &mut flags), None);
+        assert!(flags.contains(Flags::ZF));
+    }
 
     fn sbb8(x: u8, y: u8, carry: bool) -> (u8, Flags) {
         let mut flags = Flags::default();

@@ -1382,6 +1382,57 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_bsf_xadd_cmov() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // bsf eax, ebx
+            (
+                &[0x0f, 0xbc, 0xc3][..],
+                "if let Some(res) = bsf(ctx.cpu.regs.ebx, &mut ctx.cpu.flags) { ctx.cpu.regs.eax = res; }",
+            ),
+            // bsr ax, bx
+            (
+                &[0x66, 0x0f, 0xbd, 0xc3],
+                "if let Some(res) = bsr(ctx.cpu.regs.get_bx(), &mut ctx.cpu.flags) { ctx.cpu.regs.set_ax(res); }",
+            ),
+            // xadd [eax], ebx
+            (
+                &[0x0f, 0xc1, 0x18],
+                "let xadd_tmp = add(xadd_dst, ctx.cpu.regs.ebx, &mut ctx.cpu.flags);",
+            ),
+            // cmovne eax, ebx
+            (
+                &[0x0f, 0x45, 0xc3],
+                "if ctx.setne() != 0 { ctx.cpu.regs.eax = ctx.cpu.regs.ebx; }",
+            ),
+            // cmovbe eax, [ebx]
+            (
+                &[0x0f, 0x46, 0x03],
+                "if ctx.setbe() != 0 { ctx.cpu.regs.eax = ctx.memory.read::<u32>(ctx.cpu.regs.ebx); }",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
