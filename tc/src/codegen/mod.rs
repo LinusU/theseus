@@ -2007,6 +2007,36 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_push_imm8() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // push 0x12
+            (&[0x6a, 0x12][..], "ctx.push32(0x12u32);"),
+            // push 0xff (sign-extended by the decoder to 0xffffffffu32)
+            (&[0x6a, 0xff], "ctx.push32(0xffffffffu32);"),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_bsf_xadd_cmov() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
