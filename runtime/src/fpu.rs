@@ -120,7 +120,8 @@ impl FPU {
 
     /// Get st(0), the current top of the FPU stack.
     pub fn st0(&mut self) -> &mut f64 {
-        &mut self.st[self.st_top]
+        let offset = self.st_offset(0);
+        &mut self.st[offset]
     }
 
     pub fn push(&mut self, val: f64) {
@@ -360,6 +361,12 @@ mod tests {
             fpu.examine();
             assert_eq!(fpu.status() & condition_mask, expected.bits());
         }
+    }
+
+    #[test]
+    fn st0_handles_an_empty_stack_without_indexing_past_registers() {
+        let mut fpu = FPU::default();
+        assert_eq!(*fpu.st0(), 0.0);
     }
 
     #[test]
