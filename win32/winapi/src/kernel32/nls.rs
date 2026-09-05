@@ -8,6 +8,11 @@ pub fn GetACP(_ctx: &mut Context) -> u32 {
 }
 
 #[win32_derive::dllexport]
+pub fn GetOEMCP(_ctx: &mut Context) -> u32 {
+    437
+}
+
+#[win32_derive::dllexport]
 pub fn GetSystemDefaultLangID(_ctx: &mut Context) -> u16 {
     0x0409
 }
@@ -324,9 +329,4 @@ pub fn WideCharToMultiByte(
 
     src.len() as u32 / 2
     */
-}
-
-#[win32_derive::dllexport]
-pub fn GetOEMCP(_ctx: &mut Context) -> u32 {
-    todo!()
 }
