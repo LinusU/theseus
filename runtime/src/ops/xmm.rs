@@ -309,6 +309,58 @@ pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
     [if result { 0xffff_ffff } else { 0 }, dst[1], dst[2], dst[3]]
 }
 
+fn qword(a: [u32; 4], n: usize) -> f64 {
+    let low = a[n * 2] as u64;
+    let high = (a[n * 2 + 1] as u64) << 32;
+    f64::from_bits(low | high)
+}
+
+fn set_qword(out: &mut [u32; 4], n: usize, value: f64) {
+    let bits = value.to_bits();
+    out[n * 2] = bits as u32;
+    out[n * 2 + 1] = (bits >> 32) as u32;
+}
+
+fn binop_pd(a: [u32; 4], b: [u32; 4], op: impl Fn(f64, f64) -> f64) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    for n in 0..2 {
+        set_qword(&mut out, n, op(qword(a, n), qword(b, n)));
+    }
+    out
+}
+
+pub fn addpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| a + b)
+}
+
+pub fn subpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| a - b)
+}
+
+pub fn mulpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| a * b)
+}
+
+pub fn divpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| a / b)
+}
+
+pub fn andpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a & b)
+}
+
+pub fn andnpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| !a & b)
+}
+
+pub fn orpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a | b)
+}
+
+pub fn xorpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a ^ b)
+}
+
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
     std::array::from_fn(|i| {
         let a = f32::from_bits(a[i]);

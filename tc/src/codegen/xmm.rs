@@ -100,8 +100,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, self.xmm_get(instr, 1)))
             }
 
-            // Packed single-precision arithmetic and bitwise operations.
-            Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps => {
+            // Packed single/double-precision arithmetic and bitwise operations.
+            Addps | Subps | Mulps | Divps | Andps | Andnps | Orps | Xorps | Addpd | Subpd
+            | Mulpd | Divpd | Andpd | Andnpd | Orpd | Xorpd => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(
                     instr,

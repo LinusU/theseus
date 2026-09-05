@@ -3539,6 +3539,47 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_packed_double_arithmetic() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // addpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x58, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = addpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // mulpd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x59, 0x00],
+                "ctx.cpu.xmm.xmm0 = mulpd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // andnpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x55, 0xc1],
+                "ctx.cpu.xmm.xmm0 = andnpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
