@@ -303,19 +303,76 @@ pub fn MultiByteToWideChar(
     wide.len() as i32
 }
 
+fn read_wide(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
+    let len = match count {
+        -1 => {
+            let mut len = 0;
+            while ctx.memory.read::<u16>(addr + (len * 2) as u32) != 0 {
+                len += 1;
+            }
+            len + 1
+        }
+        count if count > 0 => count as usize,
+        _ => return None,
+    };
+    Some(
+        (0..len)
+            .map(|i| ctx.memory.read::<u16>(addr + (i * 2) as u32))
+            .collect(),
+    )
+}
+
+fn wide_to_ansi(wide: u16, default: u8) -> (u8, bool) {
+    match (0..=u8::MAX).find(|&byte| ansi_to_wide(byte) == wide) {
+        Some(byte) => (byte, false),
+        None => (default, true),
+    }
+}
+
 #[win32_derive::dllexport]
 pub fn WideCharToMultiByte(
-    _ctx: &mut Context,
-    _CodePage: u32,
+    ctx: &mut Context,
+    CodePage: u32,
     _dwFlags: u32,
-    _lpWideCharStr: Ptr<u16>,
-    _cchWideChar: i32,
-    _lpMultiByteStr: Ptr<u8>,
-    _cbMultiByte: i32,
-    _lpDefaultChar: Ptr<u8>,
-    _lpUsedDefaultChar: Ptr<bool>,
+    lpWideCharStr: Ptr<u16>,
+    cchWideChar: i32,
+    lpMultiByteStr: Ptr<u8>,
+    cbMultiByte: i32,
+    lpDefaultChar: Ptr<u8>,
+    lpUsedDefaultChar: Ptr<bool>,
 ) -> i32 {
-    0
+    if !matches!(CodePage, 0 | 1252) {
+        log::warn!("WideCharToMultiByte: unsupported code page {CodePage}");
+        return 0;
+    }
+    let Some(src) = read_wide(ctx, lpWideCharStr.addr, cchWideChar) else {
+        return 0;
+    };
+    let default = if lpDefaultChar.addr == 0 {
+        b'?'
+    } else {
+        ctx.memory.read::<u8>(lpDefaultChar.addr)
+    };
+    let converted: Vec<(u8, bool)> = src
+        .into_iter()
+        .map(|wide| wide_to_ansi(wide, default))
+        .collect();
+    let used_default = converted.iter().any(|&(_, used)| used);
+    if lpUsedDefaultChar.addr != 0 {
+        ctx.memory
+            .write::<u8>(lpUsedDefaultChar.addr, used_default as u8);
+    }
+    if cbMultiByte == 0 {
+        return converted.len() as i32;
+    }
+    if cbMultiByte < 0 || converted.len() > cbMultiByte as usize {
+        return 0;
+    }
+    for (i, (value, _)) in converted.iter().copied().enumerate() {
+        ctx.memory
+            .write::<u8>(lpMultiByteStr.addr + i as u32, value);
+    }
+    converted.len() as i32
 }
 
 #[cfg(test)]
@@ -347,5 +404,49 @@ mod tests {
         assert_eq!(ctx.memory.read::<u16>(0x1100), b'A' as u16);
         assert_eq!(ctx.memory.read::<u16>(0x1102), 0x20ac);
         assert_eq!(ctx.memory.read::<u16>(0x1104), 0);
+    }
+
+    #[test]
+    fn wide_char_to_multibyte_encodes_cp1252_and_reports_fallbacks() {
+        let mut ctx = context();
+        ctx.memory.write::<u16>(0x1000, b'A' as u16);
+        ctx.memory.write::<u16>(0x1002, 0x20ac);
+        ctx.memory.write::<u16>(0x1004, 0);
+        ctx.memory.write::<u8>(0x1200, b'_');
+
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x1000),
+                -1,
+                Ptr::new(0x1100),
+                3,
+                Ptr::new(0x1200),
+                Ptr::new(0x1300),
+            ),
+            3
+        );
+        assert_eq!(&ctx.memory[0x1100..][..3], &[b'A', 0x80, 0]);
+        assert_eq!(ctx.memory.read::<u8>(0x1300), 0);
+
+        ctx.memory.write::<u16>(0x1000, 0x2603);
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x1000),
+                1,
+                Ptr::new(0x1100),
+                1,
+                Ptr::new(0x1200),
+                Ptr::new(0x1300),
+            ),
+            1
+        );
+        assert_eq!(ctx.memory.read::<u8>(0x1100), b'_');
+        assert_eq!(ctx.memory.read::<u8>(0x1300), 1);
     }
 }
