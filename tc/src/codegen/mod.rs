@@ -185,7 +185,8 @@ pub fn mem_size(instr: &iced_x86::Instruction) -> usize {
         Float32 => 32,
         Float64 => 64,
         Float80 => 80,
-        Packed32_UInt8 => 32,
+        Packed32_UInt8 | Packed32_Int8 | Packed32_UInt16 | Packed32_Int16 | Packed32_Float16
+        | Packed32_BFloat16 => 32,
         Packed64_UInt8 | Packed64_Int8 | Packed64_UInt16 | Packed64_Int16 | Packed64_UInt32
         | Packed64_Int32 => 64,
         DwordOffset => 32, // e.g. `call dword ptr [...]`
@@ -1310,6 +1311,73 @@ mod tests {
                     codegen.buf
                 );
             }
+        }
+    }
+
+    #[test]
+    fn codegen_handles_mmx_ops() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x0f, 0xdb, 0xc1][..],
+                "ctx.cpu.mmx.mm0 = ctx.cpu.mmx.mm0 & ctx.cpu.mmx.mm1;",
+            ), // pand
+            (
+                &[0x0f, 0xdf, 0xc1],
+                "ctx.cpu.mmx.mm0 = !ctx.cpu.mmx.mm0 & ctx.cpu.mmx.mm1;",
+            ), // pandn
+            (
+                &[0x0f, 0x74, 0xc1],
+                "pcmpeqb(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1)",
+            ), // pcmpeqb
+            (
+                &[0x0f, 0x66, 0xc1],
+                "pcmpgtd(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1)",
+            ), // pcmpgtd
+            (
+                &[0x0f, 0x63, 0xc1],
+                "packsswb(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1)",
+            ), // packsswb
+            (
+                &[0x0f, 0xf5, 0xc1],
+                "pmaddwd(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1)",
+            ), // pmaddwd
+            // psllw mm0, 4: immediate shifts become a u64 count
+            (&[0x0f, 0x71, 0xf0, 0x04], "psllw(ctx.cpu.mmx.mm0, 0x4u64)"),
+            // punpcklwd mm1, [eax]: only 32 bits of the memory source are read
+            (
+                &[0x0f, 0x61, 0x08],
+                "punpcklwd(ctx.cpu.mmx.mm1 as u32, ctx.memory.read::<u32>(ctx.cpu.regs.eax))",
+            ),
+            // punpckhwd reads a full qword
+            (
+                &[0x0f, 0x69, 0x08],
+                "punpckhwd(ctx.cpu.mmx.mm1, ctx.memory.read::<u64>(ctx.cpu.regs.eax))",
+            ),
+            // pmovmskb eax, mm0: GPR destination
+            (
+                &[0x0f, 0xd7, 0xc0],
+                "ctx.cpu.regs.eax = pmovmskb(ctx.cpu.mmx.mm0);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
         }
     }
 

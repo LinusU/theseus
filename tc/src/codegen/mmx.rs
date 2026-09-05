@@ -82,10 +82,33 @@ impl<'a> CodeGen<'a> {
                     format!("{} ^ {}", self.mmx_get(instr, 0), self.mmx_get(instr, 1)),
                 ));
             }
+            Pand => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!("{} & {}", self.mmx_get(instr, 0), self.mmx_get(instr, 1)),
+                ));
+            }
+            Pandn => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!("!{} & {}", self.mmx_get(instr, 0), self.mmx_get(instr, 1)),
+                ));
+            }
+            Por => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!("{} | {}", self.mmx_get(instr, 0), self.mmx_get(instr, 1)),
+                ));
+            }
 
             // Binary operations, all implemented with same name as mnemonic.
-            Paddb | Paddd | Paddsb | Paddsw | Paddusb | Paddw | Pmullw | Psrlw | Packuswb
-            | Psubb | Psubd | Psubsb | Psubsw | Psubusb | Psubw | Psraw => {
+            Paddb | Paddd | Paddsb | Paddsw | Paddusb | Paddw | Pmullw | Pmaddwd | Psrlw
+            | Psrld | Psrlq | Psllw | Pslld | Psllq | Psraw | Psrad | Packuswb | Packsswb
+            | Packssdw | Pcmpeqb | Pcmpeqw | Pcmpeqd | Pcmpgtb | Pcmpgtw | Pcmpgtd | Punpckhbw
+            | Punpckhwd | Punpckhdq | Psubb | Psubd | Psubsb | Psubsw | Psubusb | Psubw => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,
@@ -98,13 +121,19 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
-            // Punpcklbw special because it only reads 4 bytes of memory.
-            Punpcklbw => {
+            Pmovmskb => {
+                // Destination is a GPR, not an MMX register.
+                self.line(self.set_op(instr, 0, format!("pmovmskb({})", self.mmx_get(instr, 1))));
+            }
+
+            // The low unpacks only read 4 bytes of a memory source.
+            Punpcklbw | Punpcklwd | Punpckldq => {
+                let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,
                     0,
                     format!(
-                        "punpcklbw({}, {})",
+                        "{func}({}, {})",
                         self.mmx_get_32(instr, 0),
                         self.mmx_get_32(instr, 1)
                     ),
