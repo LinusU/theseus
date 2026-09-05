@@ -130,20 +130,44 @@ pub const VTABLES: [(&'static str, &[&str]); 5] = [
 ];
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, zerocopy::FromBytes)]
-pub struct GUID(pub (u32, u16, u16, [u8; 8]));
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
+    zerocopy::KnownLayout,
+)]
+pub struct GUID {
+    pub data1: u32,
+    pub data2: u16,
+    pub data3: u16,
+    pub data4: [u8; 8],
+}
+
+impl GUID {
+    pub const fn new(data1: u32, data2: u16, data3: u16, data4: [u8; 8]) -> Self {
+        Self {
+            data1,
+            data2,
+            data3,
+            data4,
+        }
+    }
+}
 
 impl std::fmt::Debug for GUID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{:08x}-{:04x}-{:04x}-{:04x}-",
-            self.0.0,
-            self.0.1,
-            self.0.2,
-            u16::from_le_bytes(self.0.3[..2].try_into().unwrap())
+            self.data1,
+            self.data2,
+            self.data3,
+            u16::from_le_bytes(self.data4[..2].try_into().unwrap())
         )?;
-        for b in &self.0.3[2..] {
+        for b in &self.data4[2..] {
             write!(f, "{:02x}", b)?;
         }
         Ok(())

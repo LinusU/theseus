@@ -1,6 +1,6 @@
 //! Types defined in the DirectDraw API.
 
-use crate::{ABIReturn, dllexport::win32flags};
+use crate::{ABIReturn, ddraw::GUID, dllexport::win32flags};
 
 // TODO: maybe make some shared const fn for errors that sets high bit?
 // TODO: share constants with winapi ERROR type?
@@ -511,4 +511,50 @@ pub struct PALETTEENTRY {
     pub peGreen: u8,
     pub peBlue: u8,
     pub peFlags: u8,
+}
+
+#[repr(C, packed)]
+#[derive(
+    Debug,
+    Clone,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
+    zerocopy::KnownLayout,
+)]
+pub struct DDDEVICEIDENTIFIER {
+    pub szDriver: [u8; 512],
+    pub szDescription: [u8; 512],
+    pub liDriverVersion: i64,
+    pub dwVendorId: u32,
+    pub dwDeviceId: u32,
+    pub dwSubSysId: u32,
+    pub dwRevision: u32,
+    pub guidDeviceIdentifier: GUID,
+    pub dwWHQLLevel: u32,
+}
+
+#[repr(C, packed)]
+#[derive(
+    Debug,
+    Clone,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
+    zerocopy::KnownLayout,
+)]
+pub struct DDDEVICEIDENTIFIER2 {
+    pub szDriver: [u8; 512],
+    pub szDescription: [u8; 512],
+    pub liDriverVersion: i64,
+    pub dwVendorId: u32,
+    pub dwDeviceId: u32,
+    pub dwSubSysId: u32,
+    pub dwRevision: u32,
+    pub guidDeviceIdentifier: GUID,
+    pub dwWHQLLevel: u32,
+    pub dwReserved1: u32,
+    pub dwReserved2: u32,
+    pub dwReserved3: u32,
+    pub dwReserved4: u32,
 }

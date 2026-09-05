@@ -9,26 +9,26 @@ use runtime::Context;
 
 use crate::{ddraw::GUID, heap::Heap, kernel32, locked_state::LockedState, user32};
 
-const GUID_SysMouse: GUID = GUID((
+const GUID_SysMouse: GUID = GUID::new(
     0x6F1D2B60,
     0xD5A0,
     0x11CF,
     [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
-));
+);
 
-const GUID_SysKeyboard: GUID = GUID((
+const GUID_SysKeyboard: GUID = GUID::new(
     0x6F1D2B61,
     0xD5A0,
     0x11CF,
     [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
-));
+);
 
-const IID_IUnknown: GUID = GUID((
+const IID_IUnknown: GUID = GUID::new(
     0x00000000,
     0x0000,
     0x0000,
     [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
-));
+);
 
 const DI_OK: u32 = 0;
 /// More events were buffered than the app's buffer could hold.
@@ -121,10 +121,10 @@ const DIERR_OBJECTNOTFOUND: u32 = make_dierror(0x02);
 
 fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
     let mut bytes = [0u8; 16];
-    bytes[..4].copy_from_slice(&guid.0.0.to_le_bytes());
-    bytes[4..6].copy_from_slice(&guid.0.1.to_le_bytes());
-    bytes[6..8].copy_from_slice(&guid.0.2.to_le_bytes());
-    bytes[8..].copy_from_slice(&guid.0.3);
+    bytes[..4].copy_from_slice(&guid.data1.to_le_bytes());
+    bytes[4..6].copy_from_slice(&guid.data2.to_le_bytes());
+    bytes[6..8].copy_from_slice(&guid.data3.to_le_bytes());
+    bytes[8..].copy_from_slice(&guid.data4);
     ctx.memory[addr..][..16].copy_from_slice(&bytes);
 }
 
@@ -739,10 +739,10 @@ mod tests {
     /// Write a GUID in its little-endian memory layout (FromBytes reads it back).
     fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
         let mut bytes = [0u8; 16];
-        bytes[..4].copy_from_slice(&guid.0.0.to_le_bytes());
-        bytes[4..6].copy_from_slice(&guid.0.1.to_le_bytes());
-        bytes[6..8].copy_from_slice(&guid.0.2.to_le_bytes());
-        bytes[8..].copy_from_slice(&guid.0.3);
+        bytes[..4].copy_from_slice(&guid.data1.to_le_bytes());
+        bytes[4..6].copy_from_slice(&guid.data2.to_le_bytes());
+        bytes[6..8].copy_from_slice(&guid.data3.to_le_bytes());
+        bytes[8..].copy_from_slice(&guid.data4);
         ctx.memory[addr..][..16].copy_from_slice(&bytes);
     }
 

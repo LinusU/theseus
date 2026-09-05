@@ -11,12 +11,12 @@ use crate::{
     user32::HWND,
 };
 
-pub const IID_IDirectDraw7: GUID = GUID((
+pub const IID_IDirectDraw7: GUID = GUID::new(
     0x15e65ec0,
     0x3b9c,
     0x11d2,
     [0xb9, 0x2f, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b],
-));
+);
 
 pub mod IDirectDraw7 {
     use super::*;
@@ -91,7 +91,7 @@ pub mod IDirectDraw7 {
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, ppv: u32) -> DD {
         let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
         if let Some(iid) = iid {
-            if iid == crate::ddraw::GUID((0, 0, 0, [0; 8])) || iid == IID_IDirectDraw7 {
+            if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
                 ctx.memory.write::<u32>(ppv, _this);
                 return DD::OK;
             }
@@ -359,12 +359,36 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn GetDeviceIdentifier(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _lpDDDeviceIdentifier: u32,
+        lpDDDeviceIdentifier: u32,
         _flags: u32,
     ) -> DD {
-        stub!(DD::OK)
+        let mut sz_driver = [0u8; 512];
+        let driver = b"nv4disp.dll";
+        sz_driver[..driver.len()].copy_from_slice(driver);
+
+        let mut sz_description = [0u8; 512];
+        let description = b"NVIDIA GeForce2 GTS";
+        sz_description[..description.len()].copy_from_slice(description);
+
+        let info = DDDEVICEIDENTIFIER2 {
+            szDriver: sz_driver,
+            szDescription: sz_description,
+            liDriverVersion: 0x0000000100000000,
+            dwVendorId: 0x10de,
+            dwDeviceId: 0x0151,
+            dwSubSysId: 0,
+            dwRevision: 0,
+            guidDeviceIdentifier: GUID::new(0, 0, 0, [0; 8]),
+            dwWHQLLevel: 1,
+            dwReserved1: 0,
+            dwReserved2: 0,
+            dwReserved3: 0,
+            dwReserved4: 0,
+        };
+        ctx.memory.write(lpDDDeviceIdentifier, info);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
