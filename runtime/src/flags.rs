@@ -9,6 +9,8 @@ bitflags::bitflags! {
         const ZF = 1 << 6;
         /// sign
         const SF = 1 << 7;
+        /// interrupt enable
+        const IF = 1 << 9;
         /// direction
         const DF = 1 << 10;
         /// overflow

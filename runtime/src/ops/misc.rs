@@ -173,11 +173,11 @@ impl Context {
     }
 
     pub fn sti(&mut self) {
-        // TODO: self.cpu.flags.insert(Flags::IF);
+        self.cpu.flags.insert(Flags::IF);
     }
 
     pub fn cli(&mut self) {
-        // TODO: self.cpu.flags.remove(Flags::IF);
+        self.cpu.flags.remove(Flags::IF);
     }
 
     pub fn xlat(&mut self) {
@@ -207,6 +207,18 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn cli_and_sti_update_interrupt_enable_flag() {
+        let mut ctx = context();
+        ctx.cpu.flags.insert(Flags::IF);
+
+        ctx.cli();
+        assert!(!ctx.cpu.flags.contains(Flags::IF));
+
+        ctx.sti();
+        assert!(ctx.cpu.flags.contains(Flags::IF));
     }
 
     #[test]
