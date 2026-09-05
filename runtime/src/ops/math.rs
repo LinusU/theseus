@@ -5,6 +5,10 @@ fn sbb_impl<I: Int>(x: I, y: I, b: bool, flags: &mut Flags) -> I {
     let z = if b { y.wrapping_add(&I::one()) } else { y };
     let (result, borrow) = x.overflowing_sub(&z);
     flags.set(Flags::CF, borrow || (b && z == I::zero()));
+    let mask = I::from(0xf).unwrap();
+    let low_x = x & mask;
+    let low_y = y & mask;
+    flags.set(Flags::AF, if b { low_x <= low_y } else { low_x < low_y });
     flags.set(Flags::ZF, result.is_zero());
     flags.set(Flags::SF, result.high_bit().is_one());
     // Overflow is true exactly when the high (sign) bits are like:
@@ -34,6 +38,11 @@ pub fn addc<I: Int>(x: I, y: I, z: I, flags: &mut Flags) -> I {
     let result = x.wrapping_add(&yz);
     let carry = yz < y;
     flags.set(Flags::CF, carry || result < x);
+    let mask = I::from(0xf).unwrap();
+    let low = (x & mask)
+        .wrapping_add(&(y & mask))
+        .wrapping_add(&(z & mask));
+    flags.set(Flags::AF, low > mask);
     flags.set(Flags::ZF, result.is_zero());
     flags.set(Flags::SF, result.high_bit().is_one());
     // Overflow is true exactly when the high (sign) bits are like:
@@ -71,6 +80,7 @@ pub fn neg<I: Int>(x: I, flags: &mut Flags) -> I {
     let (result, of) = I::zero().overflowing_sub(&x);
     flags.set(Flags::ZF, result.is_zero());
     flags.set(Flags::SF, result.high_bit().is_one());
+    flags.set(Flags::AF, (x & I::from(0xf).unwrap()) != I::zero());
     flags.set(Flags::CF, !result.is_zero());
     flags.set(Flags::OF, of);
     flags.set(Flags::PF, result.low_byte().count_ones() % 2 == 0);
@@ -187,15 +197,15 @@ mod tests {
     fn sbb_edge_cases() {
         let (result, flags) = sbb8(0x00, 0x7f, true);
         assert_eq!(result, 0x80);
-        assert_eq!(flags.to_string(), "CF SF");
+        assert_eq!(flags.to_string(), "CF AF SF");
 
         let (result, flags) = sbb8(0x80, 0x00, true);
         assert_eq!(result, 0x7f);
-        assert_eq!(flags.to_string(), "OF");
+        assert_eq!(flags.to_string(), "AF OF");
 
         let (result, flags) = sbb8(0x00, 0xff, true);
         assert_eq!(result, 0x00);
-        assert_eq!(flags.to_string(), "CF PF ZF");
+        assert_eq!(flags.to_string(), "CF AF PF ZF");
 
         let (result, flags) = sbb8(0x01, 0x00, true);
         assert_eq!(result, 0x00);
@@ -207,6 +217,7 @@ mod tests {
         let mut flags = Flags::default();
         assert_eq!(addc(0u8, 0xff, 2, &mut flags), 1);
         assert!(flags.contains(Flags::CF));
+        assert!(flags.contains(Flags::AF));
     }
 
     #[test]
