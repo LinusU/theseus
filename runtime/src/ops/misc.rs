@@ -50,14 +50,28 @@ impl Context {
 
     pub fn enter(&mut self, bytes: u16, nesting: u8) {
         assert_eq!(nesting, 0);
-        self.push32(self.cpu.regs.ebp);
-        self.cpu.regs.ebp = self.cpu.regs.esp;
-        self.cpu.regs.esp -= bytes as u32;
+        if self.cpu.real_mode {
+            self.push16(self.cpu.regs.get_bp());
+            self.cpu.regs.set_bp(self.cpu.regs.get_sp());
+            self.cpu
+                .regs
+                .set_sp(self.cpu.regs.get_sp().wrapping_sub(bytes));
+        } else {
+            self.push32(self.cpu.regs.ebp);
+            self.cpu.regs.ebp = self.cpu.regs.esp;
+            self.cpu.regs.esp -= bytes as u32;
+        }
     }
 
     pub fn leave(self: &mut Context) {
-        self.cpu.regs.esp = self.cpu.regs.ebp;
-        self.cpu.regs.ebp = self.pop32();
+        if self.cpu.real_mode {
+            self.cpu.regs.set_sp(self.cpu.regs.get_bp());
+            let bp = self.pop16();
+            self.cpu.regs.set_bp(bp);
+        } else {
+            self.cpu.regs.esp = self.cpu.regs.ebp;
+            self.cpu.regs.ebp = self.pop32();
+        }
     }
 
     pub fn sete(self: &Context) -> u8 {
@@ -176,5 +190,22 @@ mod tests {
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_fffe);
         assert_eq!(ctx.pop16(), 0x1234);
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0000);
+    }
+
+    #[test]
+    fn real_mode_enter_leave_use_bp_and_sp() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x1000;
+        ctx.cpu.regs.esp = 0xabcd_0100;
+        ctx.cpu.regs.ebp = 0xfeed_0200;
+
+        ctx.enter(4, 0);
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_00fa);
+        assert_eq!(ctx.cpu.regs.ebp, 0xfeed_00fe);
+
+        ctx.leave();
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
+        assert_eq!(ctx.cpu.regs.ebp, 0xfeed_0200);
     }
 }
