@@ -165,7 +165,7 @@ impl Context {
 
     pub fn ret16(&mut self, n: u16) -> Cont {
         let ret = self.pop16();
-        self.cpu.regs.esp += n as u32;
+        self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
         self.indirect16((self.cpu.regs.cs, ret).into())
     }
 
@@ -182,7 +182,7 @@ impl Context {
     pub fn retf16(&mut self, n: u16) -> Cont {
         let ip = self.pop16();
         let cs = self.pop16();
-        self.cpu.regs.esp += n as u32;
+        self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
         self.jmpf16(cs, ip)
     }
 
@@ -219,6 +219,8 @@ mod tests {
         Cont(taken)
     }
 
+    static BLOCKS: [(u32, ContFn); 1] = [(0x1234, from)];
+
     fn context() -> Context {
         Context {
             cpu: CPU::default(),
@@ -229,6 +231,23 @@ mod tests {
             cache: BlockCache::default(),
             recent: [from; 4],
         }
+    }
+
+    #[test]
+    fn real_mode_ret16_preserves_esp_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.cs = 0;
+        ctx.cpu.regs.ss = 0x100;
+        ctx.cpu.regs.esp = 0xabcd_0100;
+        ctx.memory.write::<u16>(segofs(0x100, 0x100), 0x1234);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.ret16(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0106);
     }
 
     #[test]
