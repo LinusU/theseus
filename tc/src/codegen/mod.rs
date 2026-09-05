@@ -2624,6 +2624,61 @@ mod tests {
     }
 
     #[test]
+    fn codegen_traps_unimplemented_isa_extensions() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for bytes in [
+            &[0x0f, 0xff, 0xc0][..],   // ud0 eax, eax
+            &[0x0f, 0xb9, 0xc0],       // ud1 eax, eax
+            &[0x0f, 0x0e],             // femms
+            &[0x0f, 0x0f, 0xc0, 0xbf], // pavgusb mm0, mm0
+            &[0x0f, 0xae, 0x21],       // xsave [ecx]
+            &[0x0f, 0xae, 0x29],       // xrstor [ecx]
+            &[0x0f, 0xc7, 0xf0],       // rdrand eax
+            &[0x0f, 0xc7, 0xf8],       // rdseed eax
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains("unhandled_interrupt(0x6, 0x0);"),
+                "wanted #UD fault for {} in {:?}",
+                instr.iced,
+                codegen.buf
+            );
+        }
+
+        // ENDBR is a NOP without control-flow enforcement.
+        codegen.buf.clear();
+        let mut decoder = iced_x86::Decoder::with_ip(
+            32,
+            &[0xf3, 0x0f, 0x1e, 0xfa],
+            0,
+            iced_x86::DecoderOptions::NONE,
+        );
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen.buf.contains("// 00000000 endbr64"),
+            "got {:?}",
+            codegen.buf
+        );
+    }
+
+    #[test]
     fn codegen_handles_ins_outs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

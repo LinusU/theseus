@@ -201,6 +201,8 @@ impl<'a> CodeGen<'a> {
             // hints on the emulated host.
             Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 | Prefetch | Prefetchw
             | Prefetchwt1 | Sfence | Lfence | Mfence | Pause | Clflush | Clflushopt => {}
+            // ENDBR is a plain NOP when control-flow enforcement is off.
+            Endbr32 | Endbr64 => {}
             // No SSE unit is modeled, but the MXCSR value is real state.
             Stmxcsr => self.line(self.set_op(instr, 0, "ctx.cpu.mxcsr".into())),
             Ldmxcsr => self.line(format!("ctx.cpu.mxcsr = {};", self.get_op(instr, 0))),
@@ -427,6 +429,26 @@ impl<'a> CodeGen<'a> {
             | Clts | Rdmsr | Wrmsr | Rdpmc | Rsm | Monitor | Mwait | Sysenter | Sysexit
             | Swapgs | Xsetbv => {
                 self.line(format!("unhandled_interrupt(0xd, {:#x});", instr.ip32()));
+            }
+
+            // Everything else here is an instruction this CPU does not
+            // implement at all — extension ISAs like 3DNow! and PadLock,
+            // SVM/VMX virtualization, user interrupts, CET state tracking,
+            // and newer state-save or RNG opcodes. Emit an explicit #UD trap
+            // so translation continues past the instruction instead of
+            // dropping the rest of the block.
+            Ud0 | Ud1 | Femms | Pavgusb | Pf2id | Pf2iw | Pfnacc | Pfpnacc | Pfcmpge | Pfcmpgt
+            | Pfcmpeq | Pfmin | Pfmax | Pfrcp | Pfrcpit1 | Pfrcpit2 | Pfrsqit1 | Pfrsqrt
+            | Pfsub | Pfsubr | Pfacc | Pmulhrw | Pswapd | Pdistib | Xstore | Xcryptcbc
+            | Xcryptcfb | Xcryptctr | Xcryptecb | Xcryptofb | Montmul | Xsha1 | Xsha256
+            | Getsec | Loadall | Jmpe | Xsave | Xrstor | Xsaveopt | Xsaves | Xrstors | Xsavec
+            | Rdrand | Rdseed | Rdpid | Clzero | Clwb | Pcommit | Wbnoinvd | Monitorx | Mwaitx
+            | Tpause | Umonitor | Umwait | Cldemote | Rdpkru | Wrpkru | Vmgexit | Vmrun
+            | Vmmcall | Vmload | Vmsave | Skinit | Stgi | Clgi | Invlpga | Invlpgb | Enqcmd
+            | Enqcmds | Movdiri | Movdir64b | Serialize | Hreset | Clui | Stui | Testui | Uiret
+            | Senduipi | Setssbsy | Clrssbsy | Incsspd | Incsspq | Rstorssp | Saveprevssp
+            | Wrssd | Wrussd | Wrssq | Wrussq => {
+                self.line(format!("unhandled_interrupt(0x6, {:#x});", instr.ip32()));
             }
 
             _ => return false,
