@@ -103,6 +103,10 @@ pub fn movss(dst: [u32; 4], src: u32) -> [u32; 4] {
     [src, dst[1], dst[2], dst[3]]
 }
 
+pub fn movsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    [src[0], src[1], dst[2], dst[3]]
+}
+
 pub fn movhlps(dst: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     [src[2], src[3], dst[2], dst[3]]
 }

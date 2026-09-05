@@ -176,7 +176,7 @@ impl<'a> CodeGen<'a> {
 
             // Scalar and cross-lane partial-width moves. MOVSS/MOVNTSS only
             // touch the low 32 bits; MOVHLPS/MOVLHPS move 64 bits between
-            // high/low qwords.
+            // high/low qwords. MOVSD replaces the low 64 bits.
             Movss | Movntss => {
                 let src = self.xmm_get_32(instr, 1);
                 use iced_x86::OpKind::*;
@@ -189,6 +189,22 @@ impl<'a> CodeGen<'a> {
                     Memory => {
                         let addr = self.gen_addr(instr);
                         self.line(codegen::set_mem("u32".into(), addr, src));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Movsd => {
+                let src = self.xmm_get_64(instr, 1);
+                use iced_x86::OpKind::*;
+                match instr.op_kind(0) {
+                    Register => {
+                        let dst = self.xmm_get(instr, 0);
+                        let reg = instr.op_register(0);
+                        self.line(format!("{} = movsd({}, {});", xmm_reg(reg), dst, src));
+                    }
+                    Memory => {
+                        let addr = self.gen_addr(instr);
+                        self.line(codegen::set_mem("[u32; 2]".into(), addr, src));
                     }
                     _ => unreachable!(),
                 }

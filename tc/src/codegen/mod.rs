@@ -3447,6 +3447,47 @@ mod tests {
             assert!(codegen.buf.contains(want));
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_movsd() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // movsd xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0x10, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = movsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // movsd xmm0, [eax]
+            (
+                &[0xf2, 0x0f, 0x10, 0x00],
+                "ctx.cpu.xmm.xmm0 = movsd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movsd [eax], xmm1
+            (
+                &[0xf2, 0x0f, 0x11, 0x08],
+                "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {
