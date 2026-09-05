@@ -401,6 +401,23 @@ pub fn pshufb_xmm(dst: [u32; 4], control: [u32; 4]) -> [u32; 4] {
     from_bytes(out)
 }
 
+/// PABSB (SSSE3) computes the absolute value of each packed signed byte.
+pub fn pabsb_xmm(a: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    from_bytes(a.map(|v| (v as i8).wrapping_abs() as u8))
+}
+
+/// PABSW (SSSE3) computes the absolute value of each packed signed word.
+pub fn pabsw_xmm(a: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    from_words(a.map(|v| (v as i16).wrapping_abs() as u16))
+}
+
+/// PABSD (SSSE3) computes the absolute value of each packed signed dword.
+pub fn pabsd_xmm(a: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| (a[i] as i32).wrapping_abs() as u32)
+}
+
 pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_bytes(a);
     let b = to_bytes(b);
@@ -1230,6 +1247,20 @@ mod tests {
         // Zero every lane with the high bit, except lane 12 which selects byte 1.
         let mixed = [0x0000_0000, 0x0000_0000, 0x0000_0000, 0x0000_8001];
         assert_eq!(pshufb_xmm(src, mixed), [0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn pabsb_pabsw_pabsd_xmm_compute_packed_absolute_values() {
+        // Each u32 is [byte0, byte1, byte2, byte3] little-endian.
+        let b = [0x3421_8280, 0x0000_0000, 0x0000_0000, 0x0000_0000];
+        // 0x80 (i8::MIN) stays 0x80; 0x82 (-126) becomes 0x7e (126).
+        assert_eq!(pabsb_xmm(b), [0x3421_7e80, 0, 0, 0]);
+
+        let w = [0x0001_8000, 0xfffe_0001, 0, 0];
+        assert_eq!(pabsw_xmm(w), [0x0001_8000, 0x0002_0001, 0, 0]); // i16::MIN stays
+
+        let d = [0x8000_0000, 0xffff_ffff, 0, 0];
+        assert_eq!(pabsd_xmm(d), [0x8000_0000, 0x0000_0001, 0, 0]); // i32::MIN stays
     }
 
     #[test]

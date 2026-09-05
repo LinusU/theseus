@@ -132,6 +132,9 @@ impl<'a> CodeGen<'a> {
                 | Pmuludq
                 | Psadbw
                 | Pshufb
+                | Pabsb
+                | Pabsw
+                | Pabsd
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
@@ -297,6 +300,11 @@ impl<'a> CodeGen<'a> {
                         self.mmx_get(instr, 1)
                     ),
                 ));
+            }
+            // PABSB/W/D (SSSE3) are unary absolute-value operations.
+            Pabsb | Pabsw | Pabsd => {
+                let func = instr_name(instr);
+                self.line(self.mmx_set(instr, 0, format!("{func}({})", self.mmx_get(instr, 1))));
             }
 
             // MASKMOVQ's destination is the implicit DS:(E)DI operand; the

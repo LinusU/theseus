@@ -614,6 +614,24 @@ pub fn pshufb(x: u64, control: u64) -> u64 {
     .pack()
 }
 
+/// PABSB (SSSE3) computes the absolute value of each packed signed byte.
+pub fn pabsb(x: u64) -> u64 {
+    let x: [i8; 8] = x.unpack();
+    x.map(|v| v.wrapping_abs() as u8).pack()
+}
+
+/// PABSW (SSSE3) computes the absolute value of each packed signed word.
+pub fn pabsw(x: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    x.map(|v| v.wrapping_abs() as u16).pack()
+}
+
+/// PABSD (SSSE3) computes the absolute value of each packed signed dword.
+pub fn pabsd(x: u64) -> u64 {
+    let x: [i32; 2] = x.unpack();
+    x.map(|v| v.wrapping_abs() as u32).pack()
+}
+
 /// PF2ID (3DNow!) converts two packed single-precision floats to two
 /// 32-bit signed integers using round-to-zero with saturation.
 pub fn pf2id(x: u64) -> u64 {
@@ -898,12 +916,12 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc,
-        pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub, pfsubr, pi2fd, pi2fw, pinsrw,
-        pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq,
-        psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb,
-        psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw,
+        pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt,
+        pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub,
+        pfsubr, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
+        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq,
+        psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1062,6 +1080,16 @@ mod tests {
         // High bit zeroes the lane; lane 0 selects source[1], others zero.
         let mixed = 0x0000_0000_0000_8001;
         assert_eq!(pshufb(src, mixed), 0x0000_0000_0000_0001);
+    }
+
+    #[test]
+    fn pabsb_pabsw_pabsd_compute_packed_absolute_values() {
+        // 0x80 (-128) stays 0x80 because i8::MIN cannot be represented positively.
+        assert_eq!(pabsb(0x809a_3432_ff01_0402), 0x8066_3432_0101_0402);
+        // 0x8000 (-32768) stays 0x8000 for i16::MIN.
+        assert_eq!(pabsw(0x8000_ffff_0001_fffe), 0x8000_0001_0001_0002);
+        // 0x80000000 (-2147483648) stays 0x80000000 for i32::MIN.
+        assert_eq!(pabsd(0x8000_0000_ffff_ffff), 0x8000_0000_0000_0001);
     }
 
     #[test]

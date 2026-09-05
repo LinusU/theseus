@@ -466,6 +466,12 @@ impl<'a> CodeGen<'a> {
                     ),
                 ));
             }
+            // PABSB/W/D (SSSE3) are unary absolute-value operations.
+            Pabsb | Pabsw | Pabsd => {
+                let func = format!("{}_xmm", instr_name(instr));
+                let src = self.xmm_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("{func}({src})")));
+            }
             Pshuflw | Pshufhw => {
                 let func = format!("{}_xmm", instr_name(instr));
                 let imm = format!("{:#x}", instr.immediate8());
