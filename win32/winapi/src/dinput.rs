@@ -23,6 +23,13 @@ const GUID_SysKeyboard: GUID = GUID((
     [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
 ));
 
+const IID_IUnknown: GUID = GUID((
+    0x00000000,
+    0x0000,
+    0x0000,
+    [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
+));
+
 const DI_OK: u32 = 0;
 /// More events were buffered than the app's buffer could hold.
 const DI_BUFFEROVERFLOW: u32 = 1;
@@ -36,6 +43,27 @@ const fn make_dierror(win32_code: u32) -> u32 {
 const DIERR_DEVICENOTREG: u32 = 0x80040154;
 const DIERR_NOTACQUIRED: u32 = make_dierror(0x0c); // ERROR_INVALID_ACCESS
 const DIERR_INVALIDPARAM: u32 = make_dierror(0x57); // ERROR_INVALID_PARAMETER
+const E_POINTER: u32 = 0x80004003;
+const E_NOINTERFACE: u32 = 0x80004002;
+
+/// Shared COM identity check: the object answers for IID_IUnknown only.
+fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+    if ppv == 0 {
+        return E_POINTER;
+    }
+    if riid == 0 {
+        ctx.memory.write::<u32>(ppv, 0);
+        return E_NOINTERFACE;
+    }
+    let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory).unwrap();
+    if iid == IID_IUnknown {
+        ctx.memory.write::<u32>(ppv, this);
+        DI_OK
+    } else {
+        ctx.memory.write::<u32>(ppv, 0);
+        E_NOINTERFACE
+    }
+}
 
 /// One buffered event, as GetDeviceData reports it.
 #[repr(C)]
@@ -130,8 +158,8 @@ pub mod IDirectInput {
     }
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> u32 {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+        query_interface(ctx, this, riid, ppv)
     }
 
     #[win32_derive::dllexport]
@@ -188,8 +216,16 @@ pub mod IDirectInput {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDeviceStatus(_ctx: &mut Context, _this: u32, _rguid: u32) -> u32 {
-        todo!()
+    pub fn GetDeviceStatus(ctx: &mut Context, _this: u32, rguid: u32) -> u32 {
+        if rguid == 0 {
+            return DIERR_INVALIDPARAM;
+        }
+        let guid = crate::Ptr::<GUID>::new(rguid).read(&ctx.memory).unwrap();
+        if guid == GUID_SysKeyboard || guid == GUID_SysMouse {
+            DI_OK
+        } else {
+            DIERR_DEVICENOTREG
+        }
     }
 
     #[win32_derive::dllexport]
@@ -262,8 +298,8 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> u32 {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+        query_interface(ctx, this, riid, ppv)
     }
 
     #[win32_derive::dllexport]
@@ -533,5 +569,77 @@ pub mod IDirectInputDevice {
     #[win32_derive::dllexport]
     pub fn SendDeviceData(_ctx: &mut Context, _this: u32) -> u32 {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    /// Write a GUID in its little-endian memory layout (FromBytes reads it back).
+    fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
+        let mut bytes = [0u8; 16];
+        bytes[..4].copy_from_slice(&guid.0.0.to_le_bytes());
+        bytes[4..6].copy_from_slice(&guid.0.1.to_le_bytes());
+        bytes[6..8].copy_from_slice(&guid.0.2.to_le_bytes());
+        bytes[8..].copy_from_slice(&guid.0.3);
+        ctx.memory[addr..][..16].copy_from_slice(&bytes);
+    }
+
+    #[test]
+    fn query_interface_answers_for_iunknown_only() {
+        let mut ctx = context();
+        write_guid(&mut ctx, 0x1000, &IID_IUnknown);
+        write_guid(&mut ctx, 0x1020, &GUID_SysMouse);
+
+        assert_eq!(
+            IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0x1100),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1100), 0x2000);
+
+        assert_eq!(
+            IDirectInputDevice::QueryInterface(&mut ctx, 0x2100, 0x1020, 0x1200),
+            E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1200), 0);
+
+        assert_eq!(
+            IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0),
+            E_POINTER
+        );
+    }
+
+    #[test]
+    fn get_device_status_reports_system_devices() {
+        let mut ctx = context();
+        write_guid(&mut ctx, 0x1000, &GUID_SysKeyboard);
+        write_guid(&mut ctx, 0x1020, &IID_IUnknown);
+
+        assert_eq!(
+            IDirectInput::GetDeviceStatus(&mut ctx, 0x2000, 0x1000),
+            DI_OK
+        );
+        assert_eq!(
+            IDirectInput::GetDeviceStatus(&mut ctx, 0x2000, 0x1020),
+            DIERR_DEVICENOTREG
+        );
+        assert_eq!(
+            IDirectInput::GetDeviceStatus(&mut ctx, 0x2000, 0),
+            DIERR_INVALIDPARAM
+        );
     }
 }
