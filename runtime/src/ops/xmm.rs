@@ -532,6 +532,34 @@ pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     ]
 }
 
+/// PHSUBW (SSSE3) subtracts adjacent 16-bit signed words horizontally. The
+/// first four result words come from dest; the last four come from src.
+pub fn phsubw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_words(dest).map(|w| w as i16);
+    let s = to_words(src).map(|w| w as i16);
+    from_words([
+        d[0].wrapping_sub(d[1]) as u16,
+        d[2].wrapping_sub(d[3]) as u16,
+        d[4].wrapping_sub(d[5]) as u16,
+        d[6].wrapping_sub(d[7]) as u16,
+        s[0].wrapping_sub(s[1]) as u16,
+        s[2].wrapping_sub(s[3]) as u16,
+        s[4].wrapping_sub(s[5]) as u16,
+        s[6].wrapping_sub(s[7]) as u16,
+    ])
+}
+
+/// PHSUBD (SSSE3) subtracts adjacent 32-bit signed dwords horizontally. The
+/// first two result dwords come from dest; the last two come from src.
+pub fn phsubd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    [
+        (dest[0] as i32).wrapping_sub(dest[1] as i32) as u32,
+        (dest[2] as i32).wrapping_sub(dest[3] as i32) as u32,
+        (src[0] as i32).wrapping_sub(src[1] as i32) as u32,
+        (src[2] as i32).wrapping_sub(src[3] as i32) as u32,
+    ]
+}
+
 pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_bytes(a);
     let b = to_bytes(b);
@@ -1394,6 +1422,25 @@ mod tests {
         assert_eq!(
             phaddw_xmm(wa, wb),
             [0x0007_0003, 0x000f_000b, 0x8001_ffff, 0x0000_0000]
+        );
+    }
+
+    #[test]
+    fn phsubw_and_phsubd_xmm_subtract_adjacent_lanes() {
+        // Dwords: dest[0]=2 - dest[1]=1 -> 1; dest[2]=4 - dest[3]=3 -> 1.
+        //         src[0]=1 - src[1]=i32::MIN -> 0x80000001;
+        //         src[2]=-1 - src[3]=-2 -> 1.
+        let dest = [0x0000_0002, 0x0000_0001, 0x0000_0004, 0x0000_0003];
+        let src = [0x0000_0001, 0x8000_0000, 0xffff_ffff, 0xffff_fffe];
+        assert_eq!(phsubd_xmm(dest, src), [1, 1, 0x8000_0001, 1]);
+
+        // Words: dest pairs (1,2)->-1, (3,4)->-1, (5,6)->-1, (7,8)->-1;
+        // src pairs (2,-3)->5, (-32768,1)->0x7fff, (0,0)->0, (0,0)->0.
+        let wa = [0x0002_0001, 0x0004_0003, 0x0006_0005, 0x0008_0007];
+        let wb = [0xfffd_0002, 0x0001_8000, 0x0000_0000, 0x0000_0000];
+        assert_eq!(
+            phsubw_xmm(wa, wb),
+            [0xffff_ffff, 0xffff_ffff, 0x7fff_0005, 0x0000_0000]
         );
     }
 

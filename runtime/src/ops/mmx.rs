@@ -704,17 +704,43 @@ pub fn phaddd(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
+/// PHSUBW (SSSE3) subtracts adjacent 16-bit signed words horizontally.
+/// The result words come from the dest (first two pairs) and src (last two pairs).
+pub fn phsubw(dest: u64, src: u64) -> u64 {
+    let d: [i16; 4] = dest.unpack();
+    let s: [i16; 4] = src.unpack();
+    [
+        (d[0].wrapping_sub(d[1])) as u16,
+        (d[2].wrapping_sub(d[3])) as u16,
+        (s[0].wrapping_sub(s[1])) as u16,
+        (s[2].wrapping_sub(s[3])) as u16,
+    ]
+    .pack()
+}
+
+/// PHSUBD (SSSE3) subtracts adjacent 32-bit signed dwords horizontally.
+/// The result dwords come from the dest (first pair) and src (second pair).
+pub fn phsubd(dest: u64, src: u64) -> u64 {
+    let d: [i32; 2] = dest.unpack();
+    let s: [i32; 2] = src.unpack();
+    [
+        d[0].wrapping_sub(d[1]) as u32,
+        s[0].wrapping_sub(s[1]) as u32,
+    ]
+    .pack()
+}
+
 /// PSIGNB (SSSE3) applies the sign of each byte in `dest` to the
 /// corresponding byte in `src`.
 pub fn psignb(dest: u64, src: u64) -> u64 {
     let d: [i8; 8] = dest.unpack();
     let s: [i8; 8] = src.unpack();
-    std::array::from_fn(|i| match d[i].cmp(&0) {
+    let out: [u8; 8] = std::array::from_fn(|i| match d[i].cmp(&0) {
         std::cmp::Ordering::Less => s[i].wrapping_neg() as u8,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => s[i] as u8,
-    })
-    .pack()
+    });
+    out.pack()
 }
 
 /// PSIGNW (SSSE3) applies the sign of each word in `dest` to the
@@ -722,12 +748,12 @@ pub fn psignb(dest: u64, src: u64) -> u64 {
 pub fn psignw(dest: u64, src: u64) -> u64 {
     let d: [i16; 4] = dest.unpack();
     let s: [i16; 4] = src.unpack();
-    std::array::from_fn(|i| match d[i].cmp(&0) {
+    let out: [u16; 4] = std::array::from_fn(|i| match d[i].cmp(&0) {
         std::cmp::Ordering::Less => s[i].wrapping_neg() as u16,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => s[i] as u16,
-    })
-    .pack()
+    });
+    out.pack()
 }
 
 /// PSIGND (SSSE3) applies the sign of each dword in `dest` to the
@@ -1037,10 +1063,10 @@ mod tests {
         pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, palignr, pavgb, pavgusb,
         pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
         pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
-        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw,
-        pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw,
-        pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
-        pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubw, pi2fd, pi2fw, pinsrw,
+        pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw, pmulhw,
+        pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd,
+        psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1223,6 +1249,19 @@ mod tests {
         let c = 0x0000_0002_0000_0001u64;
         let d = 0x0000_0001_8000_0000u64;
         assert_eq!(phaddd(c, d), 0x8000_0001_0000_0003);
+    }
+
+    #[test]
+    fn phsubw_and_phsubd_subtract_adjacent_lanes() {
+        // Words: 1-2=-1 (0xffff), 3-4=-1, 2-(-3)=5, i16::MIN-1 wraps to 0x7fff.
+        let a = 0x0004_0003_0002_0001u64;
+        let b = 0x0001_8000_fffd_0002u64;
+        assert_eq!(phsubw(a, b), 0x7fff_0005_ffff_ffff);
+
+        // Dwords: [1, 2] -> -1; [i32::MIN, 1] -> 0x7fffffff.
+        let c = 0x0000_0002_0000_0001u64;
+        let d = 0x0000_0001_8000_0000u64;
+        assert_eq!(phsubd(c, d), 0x7fff_ffff_ffff_ffff);
     }
 
     #[test]
