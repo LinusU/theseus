@@ -4382,6 +4382,57 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_3dnow_compare_and_minmax() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pfcmpge mm0, mm1 (0F 0F /r 90)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x90][..],
+                "ctx.cpu.mmx.mm0 = pfcmpge(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfcmpgt mm0, mm1 (0F 0F /r A0)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xa0],
+                "ctx.cpu.mmx.mm0 = pfcmpgt(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfcmpeq mm0, mm1 (0F 0F /r B0)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xb0],
+                "ctx.cpu.mmx.mm0 = pfcmpeq(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfmin mm0, mm1 (0F 0F /r 94)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x94],
+                "ctx.cpu.mmx.mm0 = pfmin(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfmax mm0, mm1 (0F 0F /r A4)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xa4],
+                "ctx.cpu.mmx.mm0 = pfmax(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_3dnow_integer_ops() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

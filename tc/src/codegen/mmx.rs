@@ -216,7 +216,8 @@ impl<'a> CodeGen<'a> {
             }
             // 3DNow! packed float arithmetic is elementwise or accumulate-style
             // on the two f32 lanes of each MMX qword.
-            Pfadd | Pfsub | Pfsubr | Pfacc | Pfnacc | Pfpnacc => {
+            Pfadd | Pfsub | Pfsubr | Pfacc | Pfnacc | Pfpnacc | Pfcmpge | Pfcmpgt | Pfcmpeq
+            | Pfmin | Pfmax => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,

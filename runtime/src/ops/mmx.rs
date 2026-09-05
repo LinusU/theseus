@@ -624,6 +624,45 @@ pub fn pfpnacc(x: u64, y: u64) -> u64 {
     [x[0] + x[1], y[0] - y[1]].pack()
 }
 
+/// PFCMPGE (3DNow!) masks each dword with all 1s if dest >= src.
+pub fn pfcmpge(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [mask_f32(x[0] >= y[0]), mask_f32(x[1] >= y[1])].pack()
+}
+
+/// PFCMPGT (3DNow!) masks each dword with all 1s if dest > src.
+pub fn pfcmpgt(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [mask_f32(x[0] > y[0]), mask_f32(x[1] > y[1])].pack()
+}
+
+/// PFCMPEQ (3DNow!) masks each dword with all 1s if dest == src.
+pub fn pfcmpeq(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [mask_f32(x[0] == y[0]), mask_f32(x[1] == y[1])].pack()
+}
+
+/// PFMIN (3DNow!) selects the smaller float in each lane.
+pub fn pfmin(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0].min(y[0]), x[1].min(y[1])].pack()
+}
+
+/// PFMAX (3DNow!) selects the larger float in each lane.
+pub fn pfmax(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0].max(y[0]), x[1].max(y[1])].pack()
+}
+
+fn mask_f32(cond: bool) -> u32 {
+    if cond { u32::MAX } else { 0 }
+}
+
 pub fn psrlw(x: u64, y: u64) -> u64 {
     if y > 15 {
         return 0;
@@ -743,10 +782,10 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pf2id, pfacc, pfadd, pfnacc, pfpnacc, pfsub, pfsubr, pi2fd, pinsrw, pmaddwd,
-        pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw,
-        pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd,
-        punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pextrw, pf2id, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfnacc, pfpnacc,
+        pfsub, pfsubr, pi2fd, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
+        pmulhuw, pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
+        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -951,6 +990,30 @@ mod tests {
         // imm 0x1b selects lanes 3,2,1,0, reversing the order.
         assert_eq!(pshufw(0x0004_0003_0002_0001, 0x1b), 0x0001_0002_0003_0004);
         assert_eq!(pshufw(0x0004_0003_0002_0001, 0xff), 0x0004_0004_0004_0004);
+    }
+
+    #[test]
+    fn pf_compare_and_min_max_select_lanes() {
+        let high_bits = f32::to_bits(4.0) as u64;
+        let low_bits = f32::to_bits(1.0) as u64;
+        let a = (high_bits << 32) | low_bits;
+
+        let high_bits2 = f32::to_bits(2.0) as u64;
+        let low_bits2 = f32::to_bits(3.0) as u64;
+        let b = (high_bits2 << 32) | low_bits2;
+
+        // For a vs b: low (1.0 >= 3.0) false, high (4.0 >= 2.0) true.
+        assert_eq!(pfcmpge(a, b), (0xffff_ffffu64 << 32));
+        assert_eq!(pfcmpgt(a, b), (0xffff_ffffu64 << 32));
+
+        // Same values, equal mask all zero.
+        assert_eq!(pfcmpeq(a, b), 0);
+
+        // PFMIN selects 1.0 and 2.0; PFMAX selects 3.0 and 4.0.
+        let expected_min = (f32::to_bits(2.0) as u64) << 32 | f32::to_bits(1.0) as u64;
+        let expected_max = (f32::to_bits(4.0) as u64) << 32 | f32::to_bits(3.0) as u64;
+        assert_eq!(pfmin(a, b), expected_min);
+        assert_eq!(pfmax(a, b), expected_max);
     }
 
     #[test]
