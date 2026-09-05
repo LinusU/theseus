@@ -348,4 +348,50 @@ mod tests {
         assert_eq!(ctx.cpu.regs.edi, 6);
         assert_eq!(ctx.cpu.regs.ecx, 0);
     }
+
+    #[test]
+    fn movsd_copies_dword_and_advances_esi_edi() {
+        let mut ctx = context();
+        ctx.cpu.regs.esi = 0x100;
+        ctx.cpu.regs.edi = 0x200;
+        ctx.memory.write::<u32>(0x100, 0x1234_5678);
+
+        ctx.movsd();
+
+        assert_eq!(ctx.memory.read::<u32>(0x200), 0x1234_5678);
+        assert_eq!(ctx.cpu.regs.esi, 0x104);
+        assert_eq!(ctx.cpu.regs.edi, 0x204);
+
+        // With DF set, the pointers should decrement.
+        ctx.cpu.flags.insert(Flags::DF);
+        ctx.movsd();
+
+        assert_eq!(ctx.cpu.regs.esi, 0x100);
+        assert_eq!(ctx.cpu.regs.edi, 0x200);
+    }
+
+    #[test]
+    fn cmpsd_compares_dwords_and_advances_esi_edi() {
+        let mut ctx = context();
+        ctx.cpu.regs.esi = 0x100;
+        ctx.cpu.regs.edi = 0x200;
+        ctx.memory.write::<u32>(0x100, 0xdead_beef);
+        ctx.memory.write::<u32>(0x200, 0xdead_beef);
+
+        ctx.cmpsd();
+
+        assert!(ctx.cpu.flags.contains(Flags::ZF));
+        assert_eq!(ctx.cpu.regs.esi, 0x104);
+        assert_eq!(ctx.cpu.regs.edi, 0x204);
+
+        ctx.memory.write::<u32>(0x104, 0xdead_beef);
+        ctx.memory.write::<u32>(0x204, 0x1234_5678);
+        ctx.cpu.flags.remove(Flags::ZF);
+
+        ctx.cmpsd();
+
+        assert!(!ctx.cpu.flags.contains(Flags::ZF));
+        assert_eq!(ctx.cpu.regs.esi, 0x108);
+        assert_eq!(ctx.cpu.regs.edi, 0x208);
+    }
 }
