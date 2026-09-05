@@ -172,10 +172,19 @@ impl<'a> CodeGen<'a> {
             Into => {
                 let next = self.resolve_jmp(instr.next_ip());
                 self.line("if ctx.cpu.flags.contains(Flags::OF) {");
-                self.line(format!(
-                    "unhandled_interrupt(0x4, {:#x});",
-                    instr.iced.ip32()
-                ));
+                if self.module.is_dos() {
+                    // INTO is a trap: the pushed return address is the
+                    // following instruction.
+                    self.line(format!(
+                        "return dos::int(ctx, {:#x}, 0x4);",
+                        instr.next_ip().local()
+                    ));
+                } else {
+                    self.line(format!(
+                        "unhandled_interrupt(0x4, {:#x});",
+                        instr.iced.ip32()
+                    ));
+                }
                 self.line("}");
                 self.line(next);
             }

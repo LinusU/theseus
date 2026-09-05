@@ -1181,6 +1181,31 @@ mod tests {
     }
 
     #[test]
+    fn codegen_dispatches_dos_into() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // into at 0x20: on OF the trap dispatches through DOS int 4 with the
+        // following instruction's offset pushed.
+        let bytes = [0xce];
+        let mut decoder =
+            iced_x86::Decoder::with_ip(16, &bytes, 0x20, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Seg((0x100, 0x20).into()),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen.buf.contains("return dos::int(ctx, 0x21, 0x4);"),
+            "got {:?}",
+            codegen.buf
+        );
+    }
+
+    #[test]
     fn codegen_handles_fabs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
