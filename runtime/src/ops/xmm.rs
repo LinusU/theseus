@@ -315,6 +315,10 @@ fn qword(a: [u32; 4], n: usize) -> f64 {
     f64::from_bits(low | high)
 }
 
+fn qword2(src: [u32; 2]) -> f64 {
+    f64::from_bits((src[0] as u64) | ((src[1] as u64) << 32))
+}
+
 fn set_qword(out: &mut [u32; 4], n: usize, value: f64) {
     let bits = value.to_bits();
     out[n * 2] = bits as u32;
@@ -359,6 +363,28 @@ pub fn orpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
 
 pub fn xorpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     bitop_ps(a, b, |a, b| a ^ b)
+}
+
+fn scalar_binop_pd(dst: [u32; 4], src: [u32; 2], op: impl Fn(f64, f64) -> f64) -> [u32; 4] {
+    let mut out = dst;
+    set_qword(&mut out, 0, op(qword(dst, 0), qword2(src)));
+    out
+}
+
+pub fn addsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    scalar_binop_pd(dst, src, |a, b| a + b)
+}
+
+pub fn subsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    scalar_binop_pd(dst, src, |a, b| a - b)
+}
+
+pub fn mulsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    scalar_binop_pd(dst, src, |a, b| a * b)
+}
+
+pub fn divsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    scalar_binop_pd(dst, src, |a, b| a / b)
 }
 
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {

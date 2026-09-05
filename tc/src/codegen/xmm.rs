@@ -235,6 +235,16 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
             }
 
+            // Scalar double-precision arithmetic. Only the low 64-bit qword is
+            // modified; the high qword is preserved.
+            Addsd | Subsd | Mulsd | Divsd => {
+                let func = instr_name(instr);
+                let src = self.xmm_get_64(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
+            }
+
             // Scalar single-precision unary math.
             Sqrtss | Rsqrtss | Rcpss => {
                 let func = instr_name(instr);
