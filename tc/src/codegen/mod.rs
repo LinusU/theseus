@@ -4474,6 +4474,62 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_3dnow_reciprocal_and_mul() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pfrcp mm0, mm1 (0F 0F /r 96)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x96][..],
+                "ctx.cpu.mmx.mm0 = pfrcp(ctx.cpu.mmx.mm1);",
+            ),
+            // pfrsqrt mm0, mm1 (0F 0F /r 97)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x97],
+                "ctx.cpu.mmx.mm0 = pfrsqrt(ctx.cpu.mmx.mm1);",
+            ),
+            // pfrcpit1 mm0, mm1 (0F 0F /r A6)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xa6],
+                "ctx.cpu.mmx.mm0 = pfrcpit1(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfrsqit1 mm0, mm1 (0F 0F /r A7)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xa7],
+                "ctx.cpu.mmx.mm0 = pfrsqit1(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfrcpit2 mm0, mm1 (0F 0F /r B6)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xb6],
+                "ctx.cpu.mmx.mm0 = pfrcpit2(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+            // pfmul mm0, mm1 (0F 0F /r B4)
+            (
+                &[0x0f, 0x0f, 0xc1, 0xb4],
+                "ctx.cpu.mmx.mm0 = pfmul(ctx.cpu.mmx.mm0, ctx.cpu.mmx.mm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

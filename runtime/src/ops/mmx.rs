@@ -659,6 +659,53 @@ pub fn pfmax(x: u64, y: u64) -> u64 {
     [x[0].max(y[0]), x[1].max(y[1])].pack()
 }
 
+/// PFMUL (3DNow!) multiplies the two packed single-precision floats.
+pub fn pfmul(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [x[0] * y[0], x[1] * y[1]].pack()
+}
+
+/// PFRCP (3DNow!) approximates the reciprocal of the low float and
+/// replicates it to both dwords.
+pub fn pfrcp(x: u64) -> u64 {
+    let x = f32::from_bits(x as u32);
+    let r = 1.0 / x;
+    let bits = r.to_bits() as u64;
+    (bits << 32) | bits
+}
+
+/// PFRSQRT (3DNow!) approximates the reciprocal square root of the low
+/// float and replicates it to both dwords.
+pub fn pfrsqrt(x: u64) -> u64 {
+    let x = f32::from_bits(x as u32);
+    let r = 1.0 / x.sqrt();
+    let bits = r.to_bits() as u64;
+    (bits << 32) | bits
+}
+
+/// PFRCPIT1 (3DNow!) first Newton-Raphson reciprocal refinement:
+/// 2.0 - x * y.
+pub fn pfrcpit1(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [2.0 - x[0] * y[0], 2.0 - x[1] * y[1]].pack()
+}
+
+/// PFRSQIT1 (3DNow!) first Newton-Raphson reciprocal-square-root
+/// refinement: 0.5 * (3.0 - x * y).
+pub fn pfrsqit1(x: u64, y: u64) -> u64 {
+    let x: [f32; 2] = x.unpack();
+    let y: [f32; 2] = y.unpack();
+    [0.5 * (3.0 - x[0] * y[0]), 0.5 * (3.0 - x[1] * y[1])].pack()
+}
+
+/// PFRCPIT2 (3DNow!) final Newton-Raphson step: multiply the two
+/// packed single-precision floats.
+pub fn pfrcpit2(x: u64, y: u64) -> u64 {
+    pfmul(x, y)
+}
+
 fn mask_f32(cond: bool) -> u32 {
     if cond { u32::MAX } else { 0 }
 }
@@ -782,10 +829,11 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pf2id, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfnacc, pfpnacc,
-        pfsub, pfsubr, pi2fd, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
-        pmulhuw, pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
-        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pextrw, pf2id, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc,
+        pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub, pfsubr, pi2fd, pinsrw,
+        pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq,
+        psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw,
+        pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1014,6 +1062,39 @@ mod tests {
         let expected_max = (f32::to_bits(4.0) as u64) << 32 | f32::to_bits(3.0) as u64;
         assert_eq!(pfmin(a, b), expected_min);
         assert_eq!(pfmax(a, b), expected_max);
+    }
+
+    #[test]
+    fn pfrcp_and_pfrsqrt_replicate_and_pfrcpit_converges() {
+        let two_bits = (f32::to_bits(2.0) as u64) << 32 | f32::to_bits(2.0) as u64;
+
+        // PFRCP and PFRSQRT replicate the low-lane result to both dwords.
+        let rcp = pfrcp(two_bits);
+        let expected_rcp = ((f32::to_bits(0.5) as u64) << 32) | f32::to_bits(0.5) as u64;
+        assert_eq!(rcp, expected_rcp);
+
+        let rsqrt = pfrsqrt(two_bits);
+        let expected_rsqrt = ((f32::to_bits(1.0 / 2.0f32.sqrt()) as u64) << 32)
+            | f32::to_bits(1.0 / 2.0f32.sqrt()) as u64;
+        assert_eq!(rsqrt, expected_rsqrt);
+
+        // One Newton-Raphson iteration refines the reciprocal.
+        let x1 = pfrcpit1(two_bits, rcp);
+        let x2 = pfrcpit2(x1, rcp);
+        assert_eq!(x2, expected_rcp);
+
+        // PFRSQIT1 produces the (3 - b*z^2)/2 term for the rsq Newton step.
+        let z = pfrsqrt(two_bits);
+        let z2 = pfmul(z, z);
+        let t = pfrsqit1(two_bits, z2);
+        assert_eq!(pfrcpit2(t, z), expected_rsqrt);
+
+        // PFMUL is elementwise.
+        let mul = pfmul(two_bits, rcp);
+        assert_eq!(
+            mul,
+            ((f32::to_bits(1.0) as u64) << 32) | f32::to_bits(1.0) as u64
+        );
     }
 
     #[test]
