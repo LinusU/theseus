@@ -306,6 +306,93 @@ pub fn psraw_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
     from_words(out)
 }
 
+pub fn punpcklbw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..8 {
+        out[i * 2] = a[i];
+        out[i * 2 + 1] = b[i];
+    }
+    from_bytes(out)
+}
+
+pub fn punpcklwd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..4 {
+        out[i * 2] = a[i];
+        out[i * 2 + 1] = b[i];
+    }
+    from_words(out)
+}
+
+pub fn punpckldq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[0], b[0], a[1], b[1]]
+}
+
+pub fn punpckhbw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..8 {
+        out[i * 2] = a[i + 8];
+        out[i * 2 + 1] = b[i + 8];
+    }
+    from_bytes(out)
+}
+
+pub fn punpckhwd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..4 {
+        out[i * 2] = a[i + 4];
+        out[i * 2 + 1] = b[i + 4];
+    }
+    from_words(out)
+}
+
+pub fn punpckhdq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[2], b[2], a[3], b[3]]
+}
+
+pub fn punpcklqdq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[0], a[1], b[0], b[1]]
+}
+
+pub fn punpckhqdq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[2], a[3], b[2], b[3]]
+}
+
+pub fn pshufd_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
+    [
+        src[(imm & 3) as usize],
+        src[((imm >> 2) & 3) as usize],
+        src[((imm >> 4) & 3) as usize],
+        src[((imm >> 6) & 3) as usize],
+    ]
+}
+
+pub fn pshuflw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
+    let w = to_words(src);
+    let mut out = w;
+    for i in 0..4 {
+        out[i] = w[((imm >> (i * 2)) & 3) as usize];
+    }
+    from_words(out)
+}
+
+pub fn pshufhw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
+    let w = to_words(src);
+    let mut out = w;
+    for i in 0..4 {
+        out[i + 4] = w[4 + ((imm >> (i * 2)) & 3) as usize];
+    }
+    from_words(out)
+}
+
 pub fn psrad_xmm(a: [u32; 4], count: u64) -> [u32; 4] {
     a.map(|w| {
         if count >= 32 {

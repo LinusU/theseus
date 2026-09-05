@@ -391,6 +391,35 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("{func}({dst}, {count})")));
             }
 
+            // Packed unpack and shuffle. PUNPCK* interleave low/high lanes from
+            // two 128-bit sources; PSHUFD/LW/HW permute lanes using the 8-bit
+            // immediate. The MMX versions of PUNPCK* use the same mnemonics, so
+            // the 128-bit variants are emitted with an _xmm suffix.
+            Punpcklbw | Punpcklwd | Punpckldq | Punpckhbw | Punpckhwd | Punpckhdq | Punpcklqdq
+            | Punpckhqdq => {
+                let func = format!("{}_xmm", instr_name(instr));
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+            Pshufd => {
+                let imm = format!("{:#x}", instr.immediate8());
+                let src = self.xmm_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("pshufd_xmm({src}, {imm})")));
+            }
+            Pshuflw | Pshufhw => {
+                let func = format!("{}_xmm", instr_name(instr));
+                let imm = format!("{:#x}", instr.immediate8());
+                let src = self.xmm_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("{func}({src}, {imm})")));
+            }
+
             // Scalar ordered/unordered compare that updates EFLAGS. The helper
             // preserves DF/IF/etc while setting/clearing CF/ZF/PF/OF/SF/AF.
             Comiss | Ucomiss => {

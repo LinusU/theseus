@@ -3825,6 +3825,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_unpacks_and_shuffles() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // punpcklbw xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x60, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = punpcklbw_xmm(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // punpcklqdq xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x6c, 0x00],
+                "ctx.cpu.xmm.xmm0 = punpcklqdq_xmm(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // pshufd xmm0, xmm1, 0x1b
+            (
+                &[0x66, 0x0f, 0x70, 0xc1, 0x1b],
+                "ctx.cpu.xmm.xmm0 = pshufd_xmm(ctx.cpu.xmm.xmm1, 0x1b);",
+            ),
+            // pshuflw xmm0, [eax], 0
+            (
+                &[0xf2, 0x0f, 0x70, 0x00, 0x00],
+                "ctx.cpu.xmm.xmm0 = pshuflw_xmm(ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax), 0x0);",
+            ),
+            // pshufhw xmm0, xmm1, 0xff
+            (
+                &[0xf3, 0x0f, 0x70, 0xc1, 0xff],
+                "ctx.cpu.xmm.xmm0 = pshufhw_xmm(ctx.cpu.xmm.xmm1, 0xff);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

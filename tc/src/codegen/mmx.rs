@@ -71,11 +71,25 @@ impl<'a> CodeGen<'a> {
 
     pub fn codegen_mmx(&mut self, instr: &iced_x86::Instruction) -> bool {
         use iced_x86::Mnemonic::*;
-        // The PSLL/PSRL/PSRA mnemonics are shared between MMX and SSE2. MMX
-        // forms operate on an MMX destination; SSE2 forms use an XMM register.
+        // The PSLL/PSRL/PSRA and PUNPCK* mnemonics are shared between MMX and
+        // SSE2. MMX forms operate on an MMX destination; SSE2 forms use an XMM
+        // register.
         if matches!(
             instr.mnemonic(),
-            Psllw | Pslld | Psllq | Psrlw | Psrld | Psrlq | Psraw | Psrad
+            Psllw
+                | Pslld
+                | Psllq
+                | Psrlw
+                | Psrld
+                | Psrlq
+                | Psraw
+                | Psrad
+                | Punpckhbw
+                | Punpckhwd
+                | Punpckhdq
+                | Punpcklbw
+                | Punpcklwd
+                | Punpckldq
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
