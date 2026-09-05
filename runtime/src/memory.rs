@@ -37,24 +37,31 @@ impl<'a> Memory<'a> {
         }
     }
 
+    #[track_caller]
     #[inline(never)]
-    pub fn null_ptr(&self) {
-        log::error!("null page read/write");
+    pub fn null_ptr(&self, addr: u32) {
+        log::error!(
+            "null page read/write at {addr:#x} (caller {})",
+            std::panic::Location::caller()
+        );
     }
 
+    #[track_caller]
     #[inline]
     fn check_access(&self, addr: u32) {
         if addr < 0x1000 && self.null_page {
-            self.null_ptr();
+            self.null_ptr(addr);
         }
     }
 
+    #[track_caller]
     pub fn read<T: MemRead>(&self, addr: u32) -> T {
         self.check_access(addr);
         let addr = addr as usize;
         T::read_from_bytes(&self.bytes[addr..addr + std::mem::size_of::<T>()]).unwrap()
     }
 
+    #[track_caller]
     pub fn write<T: MemWrite>(&mut self, addr: u32, val: T) {
         self.check_access(addr);
         let addr = addr as usize;
@@ -62,6 +69,7 @@ impl<'a> Memory<'a> {
             .unwrap();
     }
 
+    #[track_caller]
     pub fn read_str(&self, addr: u32) -> &str {
         self.check_access(addr);
         let buf = &self.bytes[addr as usize..];
@@ -71,6 +79,7 @@ impl<'a> Memory<'a> {
     }
 
     /// This returns an allocated string rather than a reference due to alignment.
+    #[track_caller]
     pub fn read_wstr(&self, addr: u32) -> U16String {
         self.check_access(addr);
         let buf = &self.bytes[addr as usize..];
@@ -101,6 +110,7 @@ impl Memory<'static> {
 impl<'a> std::ops::Index<u32> for Memory<'a> {
     type Output = u8;
 
+    #[track_caller]
     fn index(&self, addr: u32) -> &Self::Output {
         self.check_access(addr);
         &self.bytes[addr as usize]
@@ -108,6 +118,7 @@ impl<'a> std::ops::Index<u32> for Memory<'a> {
 }
 
 impl<'a> std::ops::IndexMut<u32> for Memory<'a> {
+    #[track_caller]
     fn index_mut(&mut self, addr: u32) -> &mut Self::Output {
         self.check_access(addr);
         &mut self.bytes[addr as usize]
@@ -117,6 +128,7 @@ impl<'a> std::ops::IndexMut<u32> for Memory<'a> {
 impl<'a> std::ops::Index<std::ops::RangeFrom<u32>> for Memory<'a> {
     type Output = [u8];
 
+    #[track_caller]
     fn index(&self, index: std::ops::RangeFrom<u32>) -> &Self::Output {
         self.check_access(index.start);
         &self.bytes[index.start as usize..]
@@ -124,6 +136,7 @@ impl<'a> std::ops::Index<std::ops::RangeFrom<u32>> for Memory<'a> {
 }
 
 impl<'a> std::ops::IndexMut<std::ops::RangeFrom<u32>> for Memory<'a> {
+    #[track_caller]
     fn index_mut(&mut self, index: std::ops::RangeFrom<u32>) -> &mut Self::Output {
         self.check_access(index.start);
         &mut self.bytes[index.start as usize..]
@@ -133,6 +146,7 @@ impl<'a> std::ops::IndexMut<std::ops::RangeFrom<u32>> for Memory<'a> {
 impl<'a> std::ops::Index<std::ops::Range<u32>> for Memory<'a> {
     type Output = [u8];
 
+    #[track_caller]
     fn index(&self, index: std::ops::Range<u32>) -> &Self::Output {
         self.check_access(index.start);
         &self.bytes[index.start as usize..index.end as usize]
@@ -140,6 +154,7 @@ impl<'a> std::ops::Index<std::ops::Range<u32>> for Memory<'a> {
 }
 
 impl<'a> std::ops::IndexMut<std::ops::Range<u32>> for Memory<'a> {
+    #[track_caller]
     fn index_mut(&mut self, index: std::ops::Range<u32>) -> &mut Self::Output {
         self.check_access(index.start);
         &mut self.bytes[index.start as usize..index.end as usize]
