@@ -2356,6 +2356,47 @@ mod tests {
         assert!(codegen.buf.contains("xgetbv(ctx.cpu.regs.ecx)"));
         assert!(codegen.buf.contains("ctx.cpu.regs.edx = xgetbv_edx;"));
     }
+
+    #[test]
+    fn codegen_handles_pextrw_pinsrw_pshufw() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x0f, 0xc5, 0xc1, 0x02][..],
+                "ctx.cpu.regs.eax = pextrw(ctx.cpu.mmx.mm1, 0x2u8);",
+            ),
+            (
+                &[0x0f, 0xc4, 0xc1, 0x02][..],
+                "ctx.cpu.mmx.mm0 = pinsrw(ctx.cpu.mmx.mm0, ctx.cpu.regs.ecx as u16, 0x2u8);",
+            ),
+            (
+                &[0x0f, 0xc4, 0x01, 0x02][..],
+                "pinsrw(ctx.cpu.mmx.mm0, ctx.memory.read::<u16>(ctx.cpu.regs.ecx) as u16, 0x2u8)",
+            ),
+            (
+                &[0x0f, 0x70, 0xc1, 0x1b][..],
+                "ctx.cpu.mmx.mm0 = pshufw(ctx.cpu.mmx.mm1, 0x1bu8);",
+            ),
+            (
+                &[0x0f, 0x70, 0x01, 0x1b][..],
+                "pshufw(ctx.memory.read::<u64>(ctx.cpu.regs.ecx), 0x1bu8)",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want));
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

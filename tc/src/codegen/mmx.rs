@@ -125,6 +125,42 @@ impl<'a> CodeGen<'a> {
                 // Destination is a GPR, not an MMX register.
                 self.line(self.set_op(instr, 0, format!("pmovmskb({})", self.mmx_get(instr, 1))));
             }
+            // PEXTRW's destination is a GPR, not an MMX register.
+            Pextrw => {
+                self.line(self.set_op(
+                    instr,
+                    0,
+                    format!(
+                        "pextrw({}, {})",
+                        self.mmx_get(instr, 1),
+                        self.get_op(instr, 2)
+                    ),
+                ));
+            }
+            // PINSRW's source is the low word of a GPR or a 16-bit memory read.
+            Pinsrw => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!(
+                        "pinsrw({}, {} as u16, {})",
+                        self.mmx_get(instr, 0),
+                        self.get_op(instr, 1),
+                        self.get_op(instr, 2)
+                    ),
+                ));
+            }
+            Pshufw => {
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!(
+                        "pshufw({}, {})",
+                        self.mmx_get(instr, 1),
+                        self.get_op(instr, 2)
+                    ),
+                ));
+            }
 
             // The low unpacks only read 4 bytes of a memory source.
             Punpcklbw | Punpcklwd | Punpckldq => {

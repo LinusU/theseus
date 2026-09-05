@@ -380,6 +380,29 @@ pub fn pmaddwd(x: u64, y: u64) -> u64 {
     .pack()
 }
 
+/// PEXTRW extracts the selected word lane, zero-extended to 32 bits.
+pub fn pextrw(x: u64, sel: u8) -> u32 {
+    ((x >> ((sel & 3) * 16)) as u16) as u32
+}
+
+/// PINSRW replaces the selected word lane with the low word of the source.
+pub fn pinsrw(x: u64, y: u16, sel: u8) -> u64 {
+    let shift = (sel & 3) * 16;
+    (x & !(0xffff_u64 << shift)) | ((y as u64) << shift)
+}
+
+/// PSHUFW copies word lanes selected by the four 2-bit fields in `imm`.
+pub fn pshufw(x: u64, imm: u8) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    [
+        x[(imm & 3) as usize],
+        x[((imm >> 2) & 3) as usize],
+        x[((imm >> 4) & 3) as usize],
+        x[((imm >> 6) & 3) as usize],
+    ]
+    .pack()
+}
+
 /// PMOVMSKB packs the sign bit of each byte lane: bit i = byte i's MSB.
 pub fn pmovmskb(x: u64) -> u32 {
     x.to_le_bytes()
@@ -518,9 +541,9 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        packssdw, packsswb, paddb, paddd, paddw, pcmpeqb, pcmpeqd, pcmpgtb, pmaddwd, pmovmskb,
-        pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, punpckhbw,
-        punpckhwd, punpckldq, punpcklwd,
+        packssdw, packsswb, paddb, paddd, paddw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pinsrw,
+        pmaddwd, pmovmskb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb,
+        psubsw, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -613,6 +636,20 @@ mod tests {
         assert_eq!(psrld(0xffff_ffff_0000_0100, 8), 0x00ff_ffff_0000_0001);
         assert_eq!(psrlq(0x8000_0000_0000_0000, 63), 1);
         assert_eq!(psrad(0x8000_0000_0000_0001, 31), 0xffff_ffff_0000_0000);
+    }
+
+    #[test]
+    fn pextrw_pinsrw_pshufw_move_word_lanes() {
+        assert_eq!(pextrw(0x0004_0003_0002_0001, 2), 3);
+        assert_eq!(pextrw(0x8000_0000_0000_0000, 3), 0x8000);
+        assert_eq!(
+            pinsrw(0x0004_0003_0002_0001, 0xabcd, 1),
+            0x0004_0003_abcd_0001
+        );
+        assert_eq!(pinsrw(u64::MAX, 0, 0), 0xffff_ffff_ffff_0000);
+        // imm 0x1b selects lanes 3,2,1,0, reversing the order.
+        assert_eq!(pshufw(0x0004_0003_0002_0001, 0x1b), 0x0001_0002_0003_0004);
+        assert_eq!(pshufw(0x0004_0003_0002_0001, 0xff), 0x0004_0004_0004_0004);
     }
 
     #[test]
