@@ -88,24 +88,26 @@ fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
     if count < -1 {
         return None;
     }
-    let mut out = Vec::new();
-    let mut addr = addr;
+    let bytes = &ctx.memory[addr..];
     if count < 0 {
-        loop {
-            let c = ctx.memory.read::<u16>(addr);
+        let mut out = Vec::new();
+        for chunk in bytes.chunks_exact(2) {
+            let c = u16::from_le_bytes([chunk[0], chunk[1]]);
             if c == 0 {
-                break;
+                return Some(out);
             }
             out.push(c);
-            addr += 2;
         }
-    } else {
-        for _ in 0..count {
-            out.push(ctx.memory.read::<u16>(addr));
-            addr += 2;
-        }
+        return None;
     }
-    Some(out)
+    let byte_len = (count as usize).checked_mul(2)?;
+    let bytes = bytes.get(..byte_len)?;
+    Some(
+        bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect(),
+    )
 }
 
 fn compare_ordering(ord: std::cmp::Ordering) -> i32 {
@@ -241,6 +243,16 @@ mod tests {
                 -1,
             ),
             CSTR::EQUAL as i32,
+        );
+
+        ctx.memory[0x3ff0..].fill(0xff);
+        assert_eq!(
+            CompareStringW(&mut ctx, 0, 0, Ptr::new(0x3ff0), -1, Ptr::new(0x1000), -1,),
+            0
+        );
+        assert_eq!(
+            CompareStringW(&mut ctx, 0, 0, Ptr::new(0x1000), 1, Ptr::new(0x3fff), 1,),
+            0
         );
     }
 }
