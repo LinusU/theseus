@@ -213,6 +213,30 @@ impl FPU {
         };
     }
 
+    /// FPREM/FPREM1: ST0 = ST0 rem ST1. On a completed reduction C2 clears
+    /// and C0/C3/C1 report the low three quotient bits (Q2/Q1/Q0), which is
+    /// how the classic fnstsw/sahf/jp loop detects completion. Both
+    /// remainder forms finish in one step here, so C2 always clears.
+    pub fn prem(&mut self, nearest: bool) {
+        let st0 = self.get(0);
+        let st1 = self.get(1);
+        let (rem, quot) = if nearest {
+            let q = (st0 / st1).round_ties_even();
+            (st0 - q * st1, q)
+        } else {
+            (st0 % st1, (st0 / st1).trunc())
+        };
+        self.set(0, rem);
+        let q = if quot.is_finite() {
+            quot.abs() as u64
+        } else {
+            0
+        };
+        self.condition = (((q & 0b100) as u16) << 6) // Q2 -> C0
+            | (((q & 0b010) as u16) << 13) // Q1 -> C3
+            | (((q & 0b001) as u16) << 9); // Q0 -> C1
+    }
+
     pub fn compare(&mut self, left: f64, right: f64) {
         let Some(cmp) = left.partial_cmp(&right) else {
             self.cmp = std::cmp::Ordering::Equal;

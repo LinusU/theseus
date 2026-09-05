@@ -200,21 +200,10 @@ impl<'a> CodeGen<'a> {
             }
 
             Fprem => {
-                self.line(self.fpu_set_reg(
-                    0,
-                    format!("{} % {}", self.fpu_get_reg(0), self.fpu_get_reg(1)),
-                ));
+                self.line("ctx.cpu.fpu.prem(false);");
             }
             Fprem1 => {
-                // IEEE remainder: ST0 - round_ties_even(ST0/ST1) * ST1.
-                self.line(self.fpu_set_reg(
-                    0,
-                    format!(
-                        "{x} - ({x} / {y}).round_ties_even() * {y}",
-                        x = self.fpu_get_reg(0),
-                        y = self.fpu_get_reg(1)
-                    ),
-                ));
+                self.line("ctx.cpu.fpu.prem(true);");
             }
 
             Fchs => {

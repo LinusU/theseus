@@ -1305,7 +1305,8 @@ mod tests {
             (&[0xd9, 0xed], "ctx.cpu.fpu.push(std::f64::consts::LN_2);"), // fldln2
             (&[0xd9, 0xfb], "ctx.cpu.fpu.push(fsincos_t.cos());"),        // fsincos
             (&[0xd9, 0xf9], "(ctx.cpu.fpu.get(0) + 1.0).log2()"),         // fyl2xp1
-            (&[0xd9, 0xf5], "round_ties_even"),                           // fprem1
+            (&[0xd9, 0xf5], "ctx.cpu.fpu.prem(true);"),                   // fprem1
+            (&[0xd9, 0xf8], "ctx.cpu.fpu.prem(false);"),                  // fprem
             (&[0xd9, 0xd0], ""), // fnop (no output beyond the comment)
             (&[0xd9, 0xf6], "ctx.cpu.fpu.dec_top();"), // fdecstp
             (&[0xd9, 0xf7], "ctx.cpu.fpu.inc_top();"), // fincstp
