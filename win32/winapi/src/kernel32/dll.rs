@@ -7,6 +7,9 @@ pub type HMODULE = u32;
 /// DLLs provides LoadLibrary and GetProcAddress implementations.
 /// It's a trait so it can be hooked by unpackers that want to implement custom logic.
 pub trait DLLs: Send {
+    /// Register a statically imported module as loaded by the process loader.
+    fn register_module(&mut self, dll: &str);
+
     /// Register a function as available through GetProcAddress. Called from
     /// generated init code, once per function the translator reserved an
     /// address for.
@@ -45,14 +48,19 @@ fn normalize_module_name(name: &str) -> String {
 }
 
 impl DLLs for Exports {
+    fn register_module(&mut self, dll: &str) {
+        let dll = normalize_module_name(dll);
+        if !self.modules.contains(&dll) {
+            self.modules.push(dll);
+        }
+    }
+
     /// Register a function as available through GetProcAddress. Called from
     /// generated init code, once per function the translator reserved an
     /// address for.
     fn register_export(&mut self, dll: &str, func: &str, addr: u32) {
         let dll = normalize_module_name(dll);
-        if !self.modules.contains(&dll) {
-            self.modules.push(dll.clone());
-        }
+        self.register_module(&dll);
         self.functions.push((dll, func.to_string(), addr));
     }
 
@@ -86,6 +94,11 @@ impl DLLs for Exports {
 
         *addr
     }
+}
+
+/// Register a statically imported module as loaded by the process loader.
+pub fn register_module(dll: &str) {
+    lock().dlls.register_module(dll);
 }
 
 /// Register a function as available through GetProcAddress; the entry point
@@ -154,4 +167,23 @@ pub fn GetProcAddress(ctx: &mut Context, hModule: HMODULE, lpProcName: Ptr<u8>) 
         log::warn!("GetProcAddress({hModule:#x}, {name}): not supported, returning null");
     }
     addr
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DLLs, Exports, MODULE_HANDLE_BASE};
+
+    #[test]
+    fn registered_static_modules_are_case_insensitive() {
+        let mut exports = Exports::default();
+        exports.register_module("KERNEL32.DLL");
+        exports.register_module("user32");
+
+        assert_eq!(exports.module_handle("kernel32"), Some(MODULE_HANDLE_BASE));
+        assert_eq!(
+            exports.module_handle("USER32.DLL"),
+            Some(MODULE_HANDLE_BASE + 1)
+        );
+        assert_eq!(exports.module_handle("missing"), None);
+    }
 }

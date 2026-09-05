@@ -364,6 +364,15 @@ out.copy_from_slice(bytes);",
                     }
                     self.line("}");
                 }
+                let mut modules = Vec::new();
+                for import in &module.imports {
+                    if !modules.contains(&import.dll) {
+                        modules.push(import.dll.clone());
+                    }
+                }
+                for dll in modules {
+                    self.line(format!("winapi::kernel32::register_module({dll:?});"));
+                }
                 for (dll, func) in &module.dynamic_exports {
                     let addr = module
                         .imports
@@ -632,6 +641,53 @@ mod tests {
             codegen.gen_instr(&instr).unwrap();
             assert!(codegen.buf.contains(want));
         }
+    }
+
+    #[test]
+    fn codegen_registers_statically_imported_modules() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule {
+            imports: vec![
+                crate::Import {
+                    dll: "KERNEL32".into(),
+                    func: "GetLastError".into(),
+                    iat_addr: 0x1000,
+                    addr: 0,
+                    data: false,
+                },
+                crate::Import {
+                    dll: "KERNEL32".into(),
+                    func: "SetLastError".into(),
+                    iat_addr: 0x1004,
+                    addr: 0,
+                    data: false,
+                },
+                crate::Import {
+                    dll: "USER32".into(),
+                    func: "GetActiveWindow".into(),
+                    iat_addr: 0x1008,
+                    addr: 0,
+                    data: false,
+                },
+            ],
+            ..Default::default()
+        });
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        codegen.gen_init();
+
+        assert_eq!(
+            codegen
+                .buf
+                .matches("winapi::kernel32::register_module(\"KERNEL32\");")
+                .count(),
+            1
+        );
+        assert!(
+            codegen
+                .buf
+                .contains("winapi::kernel32::register_module(\"USER32\");")
+        );
     }
 
     #[test]
