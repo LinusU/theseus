@@ -150,7 +150,7 @@ impl<'a> CodeGen<'a> {
                 ));
             }
             Je | Jne | Jb | Js | Jns | Jo | Jno | Jp | Jnp | Ja | Jae | Jl | Jg | Jge | Jecxz
-            | Jle | Jbe | Jcxz | Loop | Loopne => {
+            | Jle | Jbe | Jcxz | Loop | Loope | Loopne => {
                 let next = self.resolve_jmp(instr.next_ip());
                 let (None, None, cont) = self.jmp_target(instr) else {
                     panic!()

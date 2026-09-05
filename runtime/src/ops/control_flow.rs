@@ -231,6 +231,22 @@ impl Context {
         if count != 0 { x } else { from }
     }
 
+    pub fn loope(&mut self, from: Cont, x: Cont) -> Cont {
+        let count = if self.cpu.real_mode {
+            let count = self.cpu.regs.get_cx().wrapping_sub(1);
+            self.cpu.regs.set_cx(count);
+            count as u32
+        } else {
+            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+            self.cpu.regs.ecx
+        };
+        if count != 0 && self.cpu.flags.contains(Flags::ZF) {
+            x
+        } else {
+            from
+        }
+    }
+
     pub fn loopne(&mut self, from: Cont, x: Cont) -> Cont {
         let count = if self.cpu.real_mode {
             let count = self.cpu.regs.get_cx().wrapping_sub(1);
@@ -425,5 +441,23 @@ mod tests {
         assert_eq!(ctx.jno(from, taken).0 as usize, taken.0 as usize);
         assert_eq!(ctx.jp(from, taken).0 as usize, from.0 as usize);
         assert_eq!(ctx.jnp(from, taken).0 as usize, taken.0 as usize);
+    }
+
+    #[test]
+    fn loope_requires_nonzero_count_and_zero_flag() {
+        let mut ctx = context();
+        ctx.cpu.regs.ecx = 2;
+        ctx.cpu.flags = Flags::ZF;
+
+        let next = ctx.loope(Cont(from), Cont(taken));
+        let expected: ContFn = taken;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.ecx, 1);
+
+        ctx.cpu.flags = Flags::empty();
+        let next = ctx.loope(Cont(from), Cont(taken));
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.ecx, 0);
     }
 }
