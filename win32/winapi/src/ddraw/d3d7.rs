@@ -1130,7 +1130,7 @@ pub mod IDirect3DDevice7 {
     #[win32_derive::dllexport]
     pub fn DrawPrimitive(
         ctx: &mut Context,
-        _this: u32,
+        this: u32,
         dptPrimitiveType: u32,
         dwVertexTypeDesc: u32,
         lpvVertices: u32,
@@ -1145,18 +1145,28 @@ pub mod IDirect3DDevice7 {
             dwVertexCount
         );
         log_vertex_start(ctx, lpvVertices, dwVertexCount, dwVertexTypeDesc);
+        rasterize(
+            ctx,
+            this,
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpvVertices,
+            dwVertexCount,
+            0,
+            0,
+        );
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn DrawIndexedPrimitive(
         ctx: &mut Context,
-        _this: u32,
+        this: u32,
         dptPrimitiveType: u32,
         dwVertexTypeDesc: u32,
         lpvVertices: u32,
         dwVertexCount: u32,
-        _lpwIndices: u32,
+        lpwIndices: u32,
         dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
@@ -1169,6 +1179,16 @@ pub mod IDirect3DDevice7 {
             dwIndexCount
         );
         log_vertex_start(ctx, lpvVertices, dwVertexCount, dwVertexTypeDesc);
+        rasterize(
+            ctx,
+            this,
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpvVertices,
+            dwVertexCount,
+            lpwIndices,
+            dwIndexCount,
+        );
         DD::OK
     }
 
@@ -1690,6 +1710,199 @@ pub mod IDirect3DVertexBuffer7 {
         let addr = heap.alloc(&mut ctx.memory, 4);
         ctx.memory.write(addr, unsafe { VTABLE });
         addr
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RhwVertex {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+    diffuse: u32,
+    specular: u32,
+    u: f32,
+    v: f32,
+}
+
+fn read_vertex(mem: &Memory, addr: u32) -> RhwVertex {
+    RhwVertex {
+        x: mem.read::<f32>(addr),
+        y: mem.read::<f32>(addr + 4),
+        z: mem.read::<f32>(addr + 8),
+        w: mem.read::<f32>(addr + 12),
+        diffuse: mem.read::<u32>(addr + 16),
+        specular: mem.read::<u32>(addr + 20),
+        u: mem.read::<f32>(addr + 24),
+        v: mem.read::<f32>(addr + 28),
+    }
+}
+
+fn argb_to_565(c: u32) -> u16 {
+    let r = ((c >> 16) & 0xff) as u16;
+    let g = ((c >> 8) & 0xff) as u16;
+    let b = (c & 0xff) as u16;
+    ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+}
+
+fn sample_565(mem: &Memory, addr: u32, width: u32, height: u32, u: f32, v: f32) -> Option<u16> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let u = u.fract();
+    let u = if u < 0.0 { u + 1.0 } else { u };
+    let v = v.fract();
+    let v = if v < 0.0 { v + 1.0 } else { v };
+    let x = (u * (width - 1) as f32) as u32 % width;
+    let y = (v * (height - 1) as f32) as u32 % height;
+    Some(mem.read::<u16>(addr + (y * width + x) * 2))
+}
+
+fn rasterize(
+    ctx: &mut Context,
+    this: u32,
+    dptPrimitiveType: u32,
+    dwVertexTypeDesc: u32,
+    lpvVertices: u32,
+    dwVertexCount: u32,
+    lpwIndices: u32,
+    dwIndexCount: u32,
+) {
+    // Only the FVF and primitive type the race loop actually uses.
+    if dptPrimitiveType != 4 || dwVertexTypeDesc != 0x1c4 {
+        return;
+    }
+
+    let (rt_addr, rt_width, rt_height, rt_bpp, tex_addr, tex_width, tex_height, tex_bpp) = {
+        let devices = d3d_state().devices.borrow();
+        let Some(device) = devices.get(&this) else {
+            return;
+        };
+        let rt = device.render_target;
+        let tex = *device.textures.get(&0).unwrap_or(&0);
+
+        let surfs = state().surf.borrow();
+        let rt_surf = surfs.get(&rt).cloned();
+        let tex_surf = surfs.get(&tex).cloned();
+        drop(surfs);
+
+        let Some(rt_surf) = rt_surf else {
+            return;
+        };
+        let rt = rt_surf.borrow();
+        let (rt_w, rt_h, rt_bpp) = (rt.width, rt.height, rt.bytes_per_pixel);
+
+        let (tex_w, tex_h, tex_bpp, tex_addr) = if let Some(ref s) = tex_surf {
+            let s_borrow = s.borrow();
+            let (w, h, bpp) = (s_borrow.width, s_borrow.height, s_borrow.bytes_per_pixel);
+            drop(s_borrow);
+            let addr = s.borrow_mut().lock(&mut ctx.memory);
+            (w, h, bpp, addr)
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        // Lock the render target now so its pixel address is known.
+        drop(rt);
+        let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory);
+
+        (rt_addr, rt_w, rt_h, rt_bpp, tex_addr, tex_w, tex_h, tex_bpp)
+    };
+
+    if rt_bpp != 2 || (tex_addr != 0 && tex_bpp != 2) {
+        return;
+    }
+    if rt_addr == 0 || dwVertexCount < 3 {
+        return;
+    }
+
+    let vsize = vertex_size(dwVertexTypeDesc);
+    let stride = rt_width * rt_bpp;
+
+    // Build the list of triangles.
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
+    if lpwIndices != 0 && dwIndexCount >= 3 {
+        for i in 2..dwIndexCount {
+            let i0 = ctx.memory.read::<u16>(lpwIndices + (i - 2) * 2) as u32;
+            let i1 = ctx.memory.read::<u16>(lpwIndices + (i - 1) * 2) as u32;
+            let i2 = ctx.memory.read::<u16>(lpwIndices + i * 2) as u32;
+            triangles.push([i0, i1, i2]);
+        }
+    } else {
+        for i in 2..dwVertexCount {
+            triangles.push([i - 2, i - 1, i]);
+        }
+    }
+
+    for tri in triangles {
+        let a = read_vertex(&ctx.memory, lpvVertices + tri[0] * vsize);
+        let b = read_vertex(&ctx.memory, lpvVertices + tri[1] * vsize);
+        let c = read_vertex(&ctx.memory, lpvVertices + tri[2] * vsize);
+
+        // Compute the 2D bounding box, clamped to the render target.
+        let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
+        let max_x = a.x.max(b.x).max(c.x).ceil() as i32;
+        let min_x = min_x.min(rt_width as i32).max(0);
+        let max_x = max_x.min(rt_width as i32);
+
+        let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
+        let max_y = a.y.max(b.y).max(c.y).ceil() as i32;
+        let min_y = min_y.min(rt_height as i32).max(0);
+        let max_y = max_y.min(rt_height as i32);
+
+        // Triangle area in screen space.
+        let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        if area == 0.0 {
+            continue;
+        }
+
+        for py in min_y..max_y {
+            for px in min_x..max_x {
+                let px_f = px as f32 + 0.5;
+                let py_f = py as f32 + 0.5;
+
+                // Barycentric weights using sub-triangle areas.
+                let w0 = (b.x - px_f) * (c.y - py_f) - (b.y - py_f) * (c.x - px_f);
+                let w1 = (c.x - px_f) * (a.y - py_f) - (c.y - py_f) * (a.x - px_f);
+                let w2 = area - w0 - w1;
+
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+
+                let alpha = w0 / area;
+                let beta = w1 / area;
+                let gamma = w2 / area;
+
+                // Affine texture coordinate interpolation.
+                let u = alpha * a.u + beta * b.u + gamma * c.u;
+                let v = alpha * a.v + beta * b.v + gamma * c.v;
+
+                let color = if tex_addr != 0 {
+                    sample_565(&ctx.memory, tex_addr, tex_width, tex_height, u, v)
+                        .unwrap_or(argb_to_565(0xff_00_00_00))
+                } else {
+                    let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32
+                        + beta * ((b.diffuse >> 16) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 16) & 0xff) as f32)
+                        as u32)
+                        .min(255);
+                    let g = ((alpha * ((a.diffuse >> 8) & 0xff) as f32
+                        + beta * ((b.diffuse >> 8) & 0xff) as f32
+                        + gamma * ((c.diffuse >> 8) & 0xff) as f32)
+                        as u32)
+                        .min(255);
+                    let b = ((alpha * ((a.diffuse) & 0xff) as f32
+                        + beta * ((b.diffuse) & 0xff) as f32
+                        + gamma * ((c.diffuse) & 0xff) as f32) as u32)
+                        .min(255);
+                    ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
+                };
+
+                let pixel_addr = rt_addr + py as u32 * stride + px as u32 * 2;
+                ctx.memory.write::<u16>(pixel_addr, color);
+            }
+        }
     }
 }
 
