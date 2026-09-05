@@ -223,7 +223,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                         self.traverse.queue.enqueue(ip);
                     }
                 }
-                Ret | Retf | Iret => {}
+                Ret | Retf | Iret | Iretd => {}
                 Into => {
                     let ip = self.block_ip.with_local(instr.next_ip32());
                     self.traverse.queue.enqueue(ip);

@@ -137,17 +137,26 @@ impl<'a> CodeGen<'a> {
                     }
                     _ => todo!(),
                 };
+                // The operand-size prefix selects a 16-bit return even in a
+                // 32-bit module, and vice versa in a 16-bit module.
+                let bitness = match instr.iced.code() {
+                    iced_x86::Code::Retnw
+                    | iced_x86::Code::Retnw_imm16
+                    | iced_x86::Code::Retfw
+                    | iced_x86::Code::Retfw_imm16 => 16,
+                    _ => 32,
+                };
                 self.line(format!(
                     "ctx.{name}{bitness}({n})",
                     name = instr_name(&instr.iced),
-                    bitness = self.module.bitness()
                 ));
             }
-            Iret => {
-                self.line(format!(
-                    "ctx.iret{bitness}()",
-                    bitness = self.module.bitness()
-                ));
+            Iret | Iretd => {
+                let bitness = match instr.iced.code() {
+                    iced_x86::Code::Iretw => 16,
+                    _ => 32,
+                };
+                self.line(format!("ctx.iret{bitness}()"));
             }
             Into => {
                 let next = self.resolve_jmp(instr.next_ip());
