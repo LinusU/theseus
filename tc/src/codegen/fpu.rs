@@ -271,7 +271,7 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.fpu.pop();");
             }
 
-            Fnstsw => {
+            Fstsw | Fnstsw => {
                 assert_eq!(instr.op_count(), 1);
                 self.line(self.set_op(instr, 0, "ctx.cpu.fpu.status()".into()));
             }
@@ -321,11 +321,11 @@ impl<'a> CodeGen<'a> {
             }
 
             // We don't model FPU exceptions, so clearing them is a no-op.
-            Fnclex => {}
+            Fclex | Fnclex => {}
 
-            Fninit => self.line("ctx.cpu.fpu.init();"),
+            Finit | Fninit => self.line("ctx.cpu.fpu.init();"),
 
-            Fnstcw => {
+            Fstcw | Fnstcw => {
                 assert_eq!(instr.op_count(), 1);
                 self.line(self.set_op(instr, 0, "ctx.cpu.fpu.control".into()));
             }

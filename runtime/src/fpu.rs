@@ -220,7 +220,7 @@ impl FPU {
         tags
     }
 
-    pub fn store_env(&self, memory: &mut crate::Memory<'_>, addr: u32) {
+    pub fn store_env(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
         memory.write(addr, self.control);
         memory.write(addr.wrapping_add(4), self.status());
         memory.write(addr.wrapping_add(8), self.tag_word());
@@ -229,9 +229,10 @@ impl FPU {
         memory.write(addr.wrapping_add(18), 0u16);
         memory.write(addr.wrapping_add(20), 0u32);
         memory.write(addr.wrapping_add(24), 0u16);
+        self.control |= 0x003f;
     }
 
-    pub fn store_env16(&self, memory: &mut crate::Memory<'_>, addr: u32) {
+    pub fn store_env16(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
         memory.write(addr, self.control);
         memory.write(addr.wrapping_add(2), self.status());
         memory.write(addr.wrapping_add(4), self.tag_word());
@@ -239,6 +240,7 @@ impl FPU {
         memory.write(addr.wrapping_add(8), 0u16);
         memory.write(addr.wrapping_add(10), 0u16);
         memory.write(addr.wrapping_add(12), 0u16);
+        self.control |= 0x003f;
     }
 
     fn load_status(&mut self, status: u16, tag: u16) {
@@ -489,5 +491,17 @@ mod tests {
         fpu.store_env(&mut memory, 0x1000);
 
         assert_eq!(memory.read::<u16>(0x1008), 0xbfff);
+    }
+
+    #[test]
+    fn fsave_masks_exceptions_after_saving_control_word() {
+        let mut memory = crate::Memory::leak_new(0x2000);
+        let mut fpu = FPU::default();
+        fpu.control = 0;
+
+        fpu.store_env(&mut memory, 0x1000);
+
+        assert_eq!(memory.read::<u16>(0x1000), 0);
+        assert_eq!(fpu.control & 0x003f, 0x003f);
     }
 }
