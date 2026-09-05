@@ -268,6 +268,24 @@ impl<'a> CodeGen<'a> {
                 self.line(self.mmx_set(instr, 0, format!("{func}({src})")));
             }
 
+            // Scalar ordered/unordered compare that updates EFLAGS. The helper
+            // preserves DF/IF/etc while setting/clearing CF/ZF/PF/OF/SF/AF.
+            Comiss | Ucomiss => {
+                let func = instr_name(instr);
+                let a = self.xmm_get_32(instr, 0);
+                let b = self.xmm_get_32(instr, 1);
+                self.line(format!(
+                    "ctx.cpu.flags = {func}_update_flags(ctx.cpu.flags, {a}, {b});"
+                ));
+            }
+
+            // Extract the top bit of each packed float lane into a 4-bit mask
+            // in a GPR.
+            Movmskps => {
+                let src = self.xmm_get(instr, 1);
+                self.line(self.set_op(instr, 0, format!("movmskps({src})")));
+            }
+
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.

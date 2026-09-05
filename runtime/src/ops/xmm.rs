@@ -254,6 +254,40 @@ pub fn cvttps2pi(src: [u32; 2]) -> u64 {
     low | high
 }
 
+fn compare_unordered(a: f32, b: f32) -> (bool, bool, bool) {
+    // (CF, ZF, PF): (less, equal, unordered)
+    if a.is_nan() || b.is_nan() {
+        (true, true, true)
+    } else if a == b {
+        (false, true, false)
+    } else if a < b {
+        (true, false, false)
+    } else {
+        (false, false, false)
+    }
+}
+
+pub fn comiss_update_flags(flags: crate::Flags, a: u32, b: u32) -> crate::Flags {
+    let (cf, zf, pf) = compare_unordered(f32::from_bits(a), f32::from_bits(b));
+    let mut flags = flags;
+    flags.set(crate::Flags::CF, cf);
+    flags.set(crate::Flags::ZF, zf);
+    flags.set(crate::Flags::PF, pf);
+    flags.remove(crate::Flags::OF | crate::Flags::SF | crate::Flags::AF);
+    flags
+}
+
+pub fn ucomiss_update_flags(flags: crate::Flags, a: u32, b: u32) -> crate::Flags {
+    // For emulation purposes the same unordered comparison is used as COMISS;
+    // the real instructions differ only in SIMD invalid-operation exception
+    // signaling, which is not modeled.
+    comiss_update_flags(flags, a, b)
+}
+
+pub fn movmskps(src: [u32; 4]) -> u32 {
+    ((src[0] >> 31) & 1) | ((src[1] >> 30) & 2) | ((src[2] >> 29) & 4) | ((src[3] >> 28) & 8)
+}
+
 pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
     let a = f32::from_bits(dst[0]);
     let b = f32::from_bits(src);
