@@ -377,7 +377,7 @@ out.copy_from_slice(bytes);",
                     let addr = module
                         .imports
                         .iter()
-                        .find(|imp| imp.dll == *dll && imp.func == *func)
+                        .find(|imp| crate::same_dll(&imp.dll, dll) && imp.func == *func)
                         .expect("dynamic export without a reserved address")
                         .addr;
                     self.line(format!(
@@ -725,7 +725,15 @@ mod tests {
                     addr: 0,
                     data: false,
                 },
+                crate::Import {
+                    dll: "KERNEL32.DLL".into(),
+                    func: "IsProcessorFeaturePresent".into(),
+                    iat_addr: 0x100c,
+                    addr: 0xfafbfc00,
+                    data: false,
+                },
             ],
+            dynamic_exports: vec![("kernel32".into(), "IsProcessorFeaturePresent".into())],
             ..Default::default()
         });
         let mut codegen = super::CodeGen::new(&state, false);
@@ -744,6 +752,9 @@ mod tests {
                 .buf
                 .contains("winapi::kernel32::register_module(\"USER32\");")
         );
+        assert!(codegen.buf.contains(
+            "winapi::kernel32::register_export(\"kernel32\", \"IsProcessorFeaturePresent\", 0xfafbfc00);"
+        ));
     }
 
     #[test]

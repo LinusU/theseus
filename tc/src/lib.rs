@@ -46,6 +46,16 @@ pub struct Import {
     pub data: bool,
 }
 
+pub(crate) fn same_dll(left: &str, right: &str) -> bool {
+    fn normalize(name: &str) -> String {
+        let name = name.rsplit(['\\', '/']).next().unwrap_or(name);
+        let name = name.to_ascii_lowercase();
+        name.strip_suffix(".dll").unwrap_or(&name).to_string()
+    }
+
+    normalize(left) == normalize(right)
+}
+
 pub enum Module {
     DOS(DOSModule),
     Windows(WindowsModule),
@@ -211,7 +221,7 @@ impl State {
             ("dsound", winapi::dsound::VTABLES.as_slice()),
             ("dinput", winapi::dinput::VTABLES.as_slice()),
         ] {
-            if !module.imports.iter().any(|imp| imp.dll == dll) {
+            if !module.imports.iter().any(|imp| same_dll(&imp.dll, dll)) {
                 continue;
             }
             if addr == 0 {
@@ -234,7 +244,7 @@ impl State {
         }
 
         for (dll, funcs) in winapi::DYNAMIC_EXPORTS {
-            if !module.imports.iter().any(|imp| imp.dll == *dll) {
+            if !module.imports.iter().any(|imp| same_dll(&imp.dll, dll)) {
                 continue;
             }
             for func in funcs.iter() {
@@ -246,7 +256,7 @@ impl State {
                 if module
                     .imports
                     .iter()
-                    .any(|imp| imp.dll == *dll && imp.func == *func)
+                    .any(|imp| same_dll(&imp.dll, dll) && imp.func == *func)
                 {
                     continue;
                 }
@@ -354,5 +364,50 @@ impl State {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Import, Module, State, WindowsModule, same_dll};
+
+    #[test]
+    fn dll_names_match_case_insensitively_without_suffix() {
+        assert!(same_dll("KERNEL32.DLL", "kernel32"));
+        assert!(same_dll("path/USER32", "user32.dll"));
+        assert!(!same_dll("kernel32", "user32"));
+    }
+
+    #[test]
+    fn dynamic_exports_match_pe_module_names() {
+        let mut state = State::default();
+        state.mem.reserve("null".into(), 0, 0x1000);
+        state.mem.reserve("iat".into(), 0x1000, 4);
+        state.mem.bytes.resize(0x20000, 0);
+        state.module = Module::Windows(WindowsModule {
+            imports: vec![Import {
+                dll: "KERNEL32.DLL".into(),
+                func: "GetLastError".into(),
+                iat_addr: 0x1000,
+                addr: 0,
+                data: false,
+            }],
+            ..Default::default()
+        });
+
+        state.init_imports();
+
+        let Module::Windows(module) = state.module else {
+            panic!("expected Windows module");
+        };
+        assert!(module
+            .dynamic_exports
+            .iter()
+            .any(|(dll, func)| same_dll(dll, "kernel32") && func == "IsProcessorFeaturePresent"));
+        assert!(module.imports.iter().any(|import| {
+            same_dll(&import.dll, "kernel32")
+                && import.func == "IsProcessorFeaturePresent"
+                && import.addr != 0
+        }));
     }
 }
