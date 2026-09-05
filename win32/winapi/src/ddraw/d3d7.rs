@@ -2312,6 +2312,13 @@ fn rasterize(
 
     let vsize = vertex_size(dwVertexTypeDesc);
     let stride = t.rt_width * t.rt_bpp;
+    // THESEUS_PROBE=x,y logs every draw that writes that render-target pixel.
+    let probe_addr = std::env::var("THESEUS_PROBE")
+        .ok()
+        .and_then(|s| {
+            let (x, y) = s.split_once(',')?;
+            Some(t.rt_addr + y.parse::<u32>().ok()? * stride + x.parse::<u32>().ok()? * 2)
+        });
     // Z-testing is only meaningful when a z-buffer is actually attached.
     let zbuf_addr = if t.zenable != 0 && std::env::var("THESEUS_NO_ZTEST").is_err() {
         t.zbuf_addr
@@ -2571,6 +2578,48 @@ fn rasterize(
                 ctx.memory.write::<u16>(pixel_addr, color);
                 pixels_written += 1;
                 last_color = color;
+                if probe_addr == Some(pixel_addr) {
+                    log::warn!(
+                        "rasterize probe: prim={dptPrimitiveType} fvf={dwVertexTypeDesc:#x} tri={tri:?} rt={:#x} tex={:#x} fmt={} {}x{} mips={} color={color:#06x} sa={} zen={} zw={} zf={} atest={} afunc={} aref={} blend={} sb={} db={} a=({},{},z={} d={:#x} uv={},{}) b=({},{},z={} d={:#x} uv={},{}) c=({},{},z={} d={:#x} uv={},{})",
+                        t.rt_addr,
+                        t.tex_addr,
+                        t.tex_fmt,
+                        t.tex_width,
+                        t.tex_height,
+                        t.tex_mips.len(),
+                        sa as u32,
+                        t.zenable, t.zwrite, t.zfunc,
+                        t.alpha_test, t.alpha_func, t.alpha_ref,
+                        t.alpha_blend, t.src_blend, t.dst_blend,
+                        a.x, a.y, a.z, a.diffuse, a.u, a.v,
+                        b.x, b.y, b.z, b.diffuse, b.u, b.v,
+                        c.x, c.y, c.z, c.diffuse, c.u, c.v,
+                    );
+                    // Dump each distinct texture feeding the probed draws.
+                    if t.tex_addr != 0 {
+                        static DUMPED: std::sync::Mutex<Option<std::collections::HashSet<u32>>> =
+                            std::sync::Mutex::new(None);
+                        if DUMPED
+                            .lock()
+                            .unwrap()
+                            .get_or_insert_with(Default::default)
+                            .insert(t.tex_addr)
+                        {
+                            let (ta, tw, th) = base_level;
+                            let mut out =
+                                format!("P6\n{tw} {th}\n255\n").into_bytes();
+                            for i in 0..(tw * th) {
+                                let p = ctx.memory.read::<u16>(ta + i * 2);
+                                out.push((((p >> 11) & 0x1f) << 3) as u8);
+                                out.push((((p >> 5) & 0x3f) << 2) as u8);
+                                out.push(((p & 0x1f) << 3) as u8);
+                            }
+                            let path = format!("/tmp/probe_tex_{ta:08x}.ppm");
+                            let _ = std::fs::write(&path, out);
+                            log::warn!("probe tex dump: addr={ta:#x} {tw}x{th} -> {path}");
+                        }
+                    }
+                }
             }
         }
     }
