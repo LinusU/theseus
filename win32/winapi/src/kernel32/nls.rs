@@ -227,56 +227,80 @@ pub fn LCMapStringW(
     len as i32
 }
 
+fn ansi_to_wide(byte: u8) -> u16 {
+    match byte {
+        0x80 => 0x20ac,
+        0x82 => 0x201a,
+        0x83 => 0x0192,
+        0x84 => 0x201e,
+        0x85 => 0x2026,
+        0x86 => 0x2020,
+        0x87 => 0x2021,
+        0x88 => 0x02c6,
+        0x89 => 0x2030,
+        0x8a => 0x0160,
+        0x8b => 0x2039,
+        0x8c => 0x0152,
+        0x8e => 0x017d,
+        0x91 => 0x2018,
+        0x92 => 0x2019,
+        0x93 => 0x201c,
+        0x94 => 0x201d,
+        0x95 => 0x2022,
+        0x96 => 0x2013,
+        0x97 => 0x2014,
+        0x98 => 0x02dc,
+        0x99 => 0x2122,
+        0x9a => 0x0161,
+        0x9b => 0x203a,
+        0x9c => 0x0153,
+        0x9e => 0x017e,
+        0x9f => 0x0178,
+        byte => byte as u16,
+    }
+}
+
+fn read_multibyte(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
+    let len = match count {
+        -1 => ctx.memory[addr..]
+            .iter()
+            .position(|&byte| byte == 0)
+            .map(|len| len + 1)?,
+        count if count > 0 => count as usize,
+        _ => return None,
+    };
+    Some(ctx.memory[addr..][..len].to_vec())
+}
+
 #[win32_derive::dllexport]
 pub fn MultiByteToWideChar(
-    _ctx: &mut Context,
-    _CodePage: u32,
+    ctx: &mut Context,
+    CodePage: u32,
     _dwFlags: u32, /* MULTI_BYTE_TO_WIDE_CHAR_FLAGS */
-    _lpMultiByteStr: Ptr<u8>,
-    _cbMultiByte: i32,
-    _lpWideCharStr: Ptr<u16>,
-    _cchWideChar: i32,
+    lpMultiByteStr: Ptr<u8>,
+    cbMultiByte: i32,
+    lpWideCharStr: Ptr<u16>,
+    cchWideChar: i32,
 ) -> i32 {
-    0
-    /*
-    match CodePage {
-        Err(value) => unimplemented!("MultiByteToWideChar code page {value}"),
-        _ => {} // treat all others as ansi for now
+    if !matches!(CodePage, 0 | 1252) {
+        log::warn!("MultiByteToWideChar: unsupported code page {CodePage}");
+        return 0;
     }
-    // TODO: obey dwFlags
-    dwFlags.unwrap();
-
-    let src_addr = lpMultiByteStr;
-    let src_len = match cbMultiByte {
-        0 => return 0,                                     // TODO: invalid param
-        -1 => sys.mem().slicez(src_addr).len() as u32 + 1, // include nul
-        len => len as u32,
+    let Some(src) = read_multibyte(ctx, lpMultiByteStr.addr, cbMultiByte) else {
+        return 0;
     };
-
-    let dst = &mut lpWideCharStr;
-    if let Some(buf) = dst {
-        if buf.len() == 0 {
-            *dst = None;
-        }
+    let wide: Vec<u16> = src.into_iter().map(ansi_to_wide).collect();
+    if cchWideChar == 0 {
+        return wide.len() as i32;
     }
-
-    // TODO: reuse the conversion in winapi/string.rs.
-    match dst {
-        None => src_len,
-        Some(dst) => {
-            let src = sys.mem().sub32(src_addr, src_len);
-            let mut len = 0;
-            for &c in src {
-                if c > 0x7f {
-                    unimplemented!("unicode");
-                }
-                dst.put_pod(len, c as u16);
-                len += 1;
-            }
-            len
-        }
+    if cchWideChar < 0 || wide.len() > cchWideChar as usize {
+        return 0;
     }
-    */
+    for (i, value) in wide.iter().copied().enumerate() {
+        ctx.memory
+            .write::<u16>(lpWideCharStr.addr + (i * 2) as u32, value);
+    }
+    wide.len() as i32
 }
 
 #[win32_derive::dllexport]
@@ -292,41 +316,36 @@ pub fn WideCharToMultiByte(
     _lpUsedDefaultChar: Ptr<bool>,
 ) -> i32 {
     0
-    /*
-    match CodePage {
-        Err(value) => unimplemented!("WideCharToMultiByte code page {value}"),
-        _ => {} // treat all others as ansi for now
-    }
-    dwFlags.unwrap();
+}
 
-    let src = {
-        let len = match cchWideChar {
-            0 => todo!(),
-            -1 => strlen16(sys.mem().slice(lpWideCharStr..)) + 1, // include nul
-            len => len as usize,
-        };
-        sys.mem().sub32(lpWideCharStr, len as u32 * 2)
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
 
-    let dst = if cbMultiByte > 0 {
-        sys.mem().sub32_mut(lpMultiByteStr, cbMultiByte as u32)
-    } else {
-        &mut []
-    };
-
-    for (i, c) in src.into_iter_pod::<u16>().enumerate() {
-        if c > 0x7f {
-            unimplemented!("unicode");
-        }
-        if i < dst.len() {
-            dst[i] = c as u8;
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
         }
     }
 
-    if let Some(used) = lpUsedDefaultChar {
-        *used = 0;
-    }
+    #[test]
+    fn multibyte_to_wide_char_decodes_cp1252_and_includes_nul() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..3].copy_from_slice(&[b'A', 0x80, 0]);
 
-    src.len() as u32 / 2
-    */
+        assert_eq!(
+            MultiByteToWideChar(&mut ctx, 1252, 0, Ptr::new(0x1000), -1, Ptr::new(0x1100), 4,),
+            3
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x1100), b'A' as u16);
+        assert_eq!(ctx.memory.read::<u16>(0x1102), 0x20ac);
+        assert_eq!(ctx.memory.read::<u16>(0x1104), 0);
+    }
 }
