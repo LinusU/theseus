@@ -862,6 +862,7 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get_mut(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        log::debug!("SetRenderTarget: dev={this:#x} rt={lpNewRenderTarget:#x}");
         device.render_target = lpNewRenderTarget;
         DD::OK
     }
@@ -896,6 +897,7 @@ pub mod IDirect3DDevice7 {
         if dwFlags & (D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER) == 0 {
             return DD::OK;
         }
+        log::debug!("Clear: flags={dwFlags:#x} color={dwColor:#x} z={:#x}", dvZ);
         let surface_addr = {
             let devices = d3d_state().devices.borrow();
             let Some(device) = devices.get(&this) else {
@@ -1908,13 +1910,20 @@ fn rasterize(
     lpwIndices: u32,
     dwIndexCount: u32,
 ) {
-    // Only the FVF and primitive type the race loop actually uses.
-    if dptPrimitiveType != 4 || dwVertexTypeDesc != 0x1c4 {
+    // Only the FVF and primitive types the race loop actually uses.
+    if !(4..=6).contains(&dptPrimitiveType) || dwVertexTypeDesc != 0x1c4 {
+        log::debug!(
+            "rasterize: skip prim={} fvf={:#x} verts={}",
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            dwVertexCount
+        );
         return;
     }
 
     #[allow(clippy::too_many_arguments)]
     struct Targets {
+        rt_surface: u32,
         rt_addr: u32,
         rt_width: u32,
         rt_height: u32,
@@ -1935,7 +1944,7 @@ fn rasterize(
         let Some(device) = devices.get(&this) else {
             return;
         };
-        let rt = device.render_target;
+        let rt_surface_key = device.render_target;
         let tex = *device.textures.get(&0).unwrap_or(&0);
         // D3D7 defaults: cull CCW; z test on, writes on, less-or-equal.
         let cull = *device
@@ -1956,11 +1965,15 @@ fn rasterize(
             .unwrap_or(&4);
 
         let surfs = state().surf.borrow();
-        let rt_surf = surfs.get(&rt).cloned();
+        let rt_surf = surfs.get(&rt_surface_key).cloned();
         let tex_surf = surfs.get(&tex).cloned();
         drop(surfs);
 
         let Some(rt_surf) = rt_surf else {
+            log::debug!(
+                "rasterize: skip prim={} - no render target surface {rt_surface_key:#x}",
+                dptPrimitiveType
+            );
             return;
         };
         let rt = rt_surf.borrow();
@@ -2011,6 +2024,7 @@ fn rasterize(
             .unwrap_or(0);
 
         break 'targets Targets {
+            rt_surface: rt_surface_key,
             rt_addr,
             rt_width: rt_w,
             rt_height: rt_h,
@@ -2028,42 +2042,76 @@ fn rasterize(
     };
 
     if t.rt_bpp != 2 || (t.tex_addr != 0 && t.tex_bpp != 2) {
+        log::debug!(
+            "rasterize: skip prim={} verts={} rt_bpp={} tex_bpp={} tex={:#x}",
+            dptPrimitiveType,
+            dwVertexCount,
+            t.rt_bpp,
+            t.tex_bpp,
+            t.tex_addr
+        );
         return;
     }
     if t.rt_addr == 0 || dwVertexCount < 3 {
+        log::debug!(
+            "rasterize: skip prim={} verts={} rt_addr={:#x}",
+            dptPrimitiveType,
+            dwVertexCount,
+            t.rt_addr
+        );
         return;
     }
 
     let vsize = vertex_size(dwVertexTypeDesc);
     let stride = t.rt_width * t.rt_bpp;
     // Z-testing is only meaningful when a z-buffer is actually attached.
-    let zbuf_addr = if t.zenable != 0 { t.zbuf_addr } else { 0 };
+    let zbuf_addr = if t.zenable != 0 && std::env::var("THESEUS_NO_ZTEST").is_err() {
+        t.zbuf_addr
+    } else {
+        0
+    };
     let zstride = t.rt_width * 2;
 
-    // Build the list of triangles for a D3DPT_TRIANGLESTRIP, alternating
-    // the vertex order so every triangle has the same winding.
-    let mut triangles: Vec<[u32; 3]> = Vec::new();
-    if lpwIndices != 0 && dwIndexCount >= 3 {
-        for i in 2..dwIndexCount {
-            let i0 = ctx.memory.read::<u16>(lpwIndices + (i - 2) * 2) as u32;
-            let i1 = ctx.memory.read::<u16>(lpwIndices + (i - 1) * 2) as u32;
-            let i2 = ctx.memory.read::<u16>(lpwIndices + i * 2) as u32;
-            if i % 2 == 0 {
-                triangles.push([i0, i1, i2]);
-            } else {
-                triangles.push([i1, i0, i2]);
-            }
-        }
+    // Expand the draw into an index stream (or implicit vertex ordinals),
+    // then decompose it into independent triangles per D3DPRIMITIVETYPE.
+    let verts: Vec<u32> = if lpwIndices != 0 && dwIndexCount >= 3 {
+        (0..dwIndexCount)
+            .map(|i| ctx.memory.read::<u16>(lpwIndices + i * 2) as u32)
+            .collect()
     } else {
-        for i in 2..dwVertexCount {
-            if i % 2 == 0 {
-                triangles.push([i - 2, i - 1, i]);
-            } else {
-                triangles.push([i - 1, i - 2, i]);
+        (0..dwVertexCount).collect()
+    };
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
+    let mut pixels_written = 0u32;
+    let mut last_color = 0u16;
+    match dptPrimitiveType {
+        // D3DPT_TRIANGLELIST: each consecutive triple is one triangle.
+        4 => {
+            for tri in verts.chunks_exact(3) {
+                triangles.push([tri[0], tri[1], tri[2]]);
             }
         }
+        // D3DPT_TRIANGLESTRIP: alternating winding so every emitted
+        // triangle has the same orientation.
+        5 => {
+            for i in 2..verts.len() {
+                if i % 2 == 0 {
+                    triangles.push([verts[i - 2], verts[i - 1], verts[i]]);
+                } else {
+                    triangles.push([verts[i - 1], verts[i - 2], verts[i]]);
+                }
+            }
+        }
+        // D3DPT_TRIANGLEFAN: every triangle shares the first vertex.
+        6 => {
+            for i in 2..verts.len() {
+                triangles.push([verts[0], verts[i - 1], verts[i]]);
+            }
+        }
+        _ => {}
     }
 
+    let tri_count = triangles.len();
     for tri in triangles {
         let a = read_vertex(&ctx.memory, lpvVertices + tri[0] * vsize);
         let b = read_vertex(&ctx.memory, lpvVertices + tri[1] * vsize);
@@ -2159,9 +2207,24 @@ fn rasterize(
 
                 let pixel_addr = t.rt_addr + py as u32 * stride + px as u32 * 2;
                 ctx.memory.write::<u16>(pixel_addr, color);
+                pixels_written += 1;
+                last_color = color;
             }
         }
     }
+    log::debug!(
+        "rasterize: prim={} verts={} tris={} wrote {} px rt_surf={:#x} rt={:#x} {}x{} tex={:#x} color={:#06x}",
+        dptPrimitiveType,
+        dwVertexCount,
+        tri_count,
+        pixels_written,
+        t.rt_surface,
+        t.rt_addr,
+        t.rt_width,
+        t.rt_height,
+        t.tex_addr,
+        last_color
+    );
 }
 
 #[cfg(test)]
