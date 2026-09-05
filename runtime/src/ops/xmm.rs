@@ -103,6 +103,20 @@ pub fn movss(dst: [u32; 4], src: u32) -> [u32; 4] {
     [src, dst[1], dst[2], dst[3]]
 }
 
+pub fn cvtsi2sd(dst: [u32; 4], src: u32) -> [u32; 4] {
+    let mut out = dst;
+    set_qword(&mut out, 0, (src as i32) as f64);
+    out
+}
+
+pub fn cvtsd2si(src: [u32; 2]) -> u32 {
+    (qword2(src).round() as i32) as u32
+}
+
+pub fn cvttsd2si(src: [u32; 2]) -> u32 {
+    (qword2(src) as i32) as u32
+}
+
 pub fn movsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     [src[0], src[1], dst[2], dst[3]]
 }
