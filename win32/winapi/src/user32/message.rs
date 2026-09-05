@@ -59,6 +59,62 @@ pub struct MessageQueue {
     quit: Option<MSG>,
 }
 
+/// Which queued messages a GetMessage/PeekMessage `hWnd` argument selects.
+#[derive(Clone, Copy)]
+enum HwndFilter {
+    /// `hWnd == NULL`: every message queued to this thread.
+    Any,
+    /// `hWnd == (HWND)-1`: only thread messages (those with a null `hwnd`).
+    ThreadOnly,
+    /// A specific window handle: only that window's messages.
+    Window(HWND),
+}
+
+/// The `(hWnd, wMsgFilterMin, wMsgFilterMax)` selection shared by GetMessage
+/// and PeekMessage.
+struct MsgFilter {
+    hwnd: HwndFilter,
+    min: u32,
+    max: u32,
+}
+
+impl MsgFilter {
+    fn new(hwnd: HWND, min: u32, max: u32) -> Self {
+        let hwnd = if hwnd.is_null() {
+            HwndFilter::Any
+        } else if hwnd.is_invalid() {
+            HwndFilter::ThreadOnly
+        } else {
+            HwndFilter::Window(hwnd)
+        };
+        MsgFilter { hwnd, min, max }
+    }
+
+    /// The hWnd names a window that is not ours, so GetMessage should fail
+    /// rather than block forever.
+    fn is_invalid_window(&self) -> bool {
+        match self.hwnd {
+            HwndFilter::Window(hwnd) => match state().window.borrow().as_ref() {
+                Some(window) => window.borrow().hwnd != hwnd,
+                None => true,
+            },
+            _ => false,
+        }
+    }
+
+    fn matches(&self, msg: &MSG) -> bool {
+        let hwnd = match self.hwnd {
+            HwndFilter::Any => true,
+            HwndFilter::ThreadOnly => msg.hwnd.is_null(),
+            HwndFilter::Window(hwnd) => msg.hwnd == hwnd,
+        };
+        // A min/max of 0/0 selects every message.
+        let range = (self.min == 0 && self.max == 0)
+            || (msg.message >= self.min && msg.message <= self.max);
+        hwnd && range
+    }
+}
+
 win32flags! {
     pub struct MK {
         const LBUTTON = 0x0001;
@@ -210,30 +266,37 @@ impl MessageQueue {
         })
     }
 
-    fn peek(&mut self) -> Option<MSG> {
-        if let Some(msg) = self.messages.front() {
+    fn peek_filtered(&self, filter: &MsgFilter) -> Option<MSG> {
+        if let Some(msg) = self.messages.iter().find(|msg| filter.matches(msg)) {
             Some(*msg)
         } else if self.quit.is_some() {
+            // WM_QUIT is a thread-level flag, not a window message: it is
+            // delivered regardless of the hWnd or message-range filter.
             self.quit
         } else {
-            self.paint_msg()
+            self.paint_msg().filter(|msg| filter.matches(msg))
         }
     }
 
-    fn pop(&mut self) -> Option<MSG> {
-        if let Some(msg) = self.messages.pop_front() {
-            Some(msg)
+    fn peek(&self) -> Option<MSG> {
+        self.peek_filtered(&MsgFilter::new(HWND::null(), 0, 0))
+    }
+
+    fn pop_filtered(&mut self, filter: &MsgFilter) -> Option<MSG> {
+        if let Some(index) = self.messages.iter().position(|msg| filter.matches(msg)) {
+            self.messages.remove(index)
         } else if self.quit.is_some() {
             self.quit.take()
         } else {
-            self.paint_msg()
+            self.paint_msg().filter(|msg| filter.matches(msg))
         }
     }
 
-    /// Pop one message, waiting for a new one if necessary.
-    fn read(&mut self) -> MSG {
+    /// Pop one message matching the filter, waiting for a new one if
+    /// necessary.
+    fn read(&mut self, filter: &MsgFilter) -> MSG {
         loop {
-            if let Some(msg) = self.pop() {
+            if let Some(msg) = self.pop_filtered(filter) {
                 return msg;
             }
             self.wait_host();
@@ -364,8 +427,8 @@ pub fn PeekMessageA(
     ctx: &mut Context,
     lpMsg: Ptr<MSG>,
     hWnd: HWND,
-    _wMsgFilterMin: u32,
-    _wMsgFilterMax: u32,
+    wMsgFilterMin: u32,
+    wMsgFilterMax: u32,
     wRemoveMsg: u32, /* PEEK_MESSAGE_REMOVE_TYPE */
 ) -> bool {
     // PM_REMOVE is bit 0; the remaining bits (PM_NOYIELD, PM_QS_*) are
@@ -375,23 +438,16 @@ pub fn PeekMessageA(
     // too, in case the app renders without flipping.
     crate::dsound::pump(ctx);
 
+    let filter = MsgFilter::new(hWnd, wMsgFilterMin, wMsgFilterMax);
     let mut queue = state().message_queue.borrow_mut();
     queue.poll_host();
-    let Some(msg) = queue.peek() else {
+    let Some(msg) = queue.peek_filtered(&filter) else {
         return false;
     };
 
-    if hWnd.is_null() {
-    } else if hWnd.is_invalid() {
-        // TODO: only null hwnd messages
-        assert!(msg.hwnd.is_null());
-    } else {
-        // TODO: only matching messages
-        assert_eq!(msg.hwnd, hWnd);
-    }
     lpMsg.write(&mut ctx.memory, msg).unwrap();
     if remove {
-        queue.pop();
+        queue.pop_filtered(&filter);
     }
     true
 }
@@ -424,23 +480,18 @@ pub fn GetMessageW(
     ctx: &mut Context,
     lpMsg: Ptr<MSG>,
     hWnd: HWND,
-    _wMsgFilterMin: u32,
-    _wMsgFilterMax: u32,
+    wMsgFilterMin: u32,
+    wMsgFilterMax: u32,
 ) -> i32 {
-    let msg = state().message_queue.borrow_mut().read();
+    let filter = MsgFilter::new(hWnd, wMsgFilterMin, wMsgFilterMax);
+    if filter.is_invalid_window() {
+        return -1;
+    }
+    let msg = state().message_queue.borrow_mut().read(&filter);
+    lpMsg.write(&mut ctx.memory, msg).unwrap();
     if msg.message == WM::QUIT as u32 {
         return 0;
     }
-
-    if hWnd.is_null() {
-    } else if hWnd.is_invalid() {
-        // TODO: only null hwnd messages
-        assert!(msg.hwnd.is_null());
-    } else {
-        // TODO: only matching messages
-        assert_eq!(msg.hwnd, hWnd);
-    }
-    lpMsg.write(&mut ctx.memory, msg).unwrap();
 
     1 // no error, no WM_QUIT
 }
@@ -527,4 +578,85 @@ pub fn SendMessageW(
     };
     ctx.call32_x86(wndproc, vec![hWnd.to_raw(), Msg, wParam, lParam]);
     ctx.cpu.regs.eax
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(hwnd: u32, message: u32) -> MSG {
+        MSG {
+            hwnd: HWND::from_raw(hwnd),
+            message,
+            wParam: 0,
+            lParam: 0,
+            time: 0,
+            pt: POINT::default(),
+        }
+    }
+
+    #[test]
+    fn queue_filters_by_window_and_message_range() {
+        let mut queue = MessageQueue::default();
+        queue.messages.push_back(msg(7, WM::KEYDOWN as u32));
+        queue.messages.push_back(msg(0, WM::CHAR as u32));
+        queue.messages.push_back(msg(7, WM::LBUTTONDOWN as u32));
+
+        // A specific window only sees its own messages; a null-hwnd filter
+        // sees everything in posted order.
+        let window = MsgFilter::new(HWND::from_raw(7), 0, 0);
+        assert_eq!(
+            queue.peek_filtered(&window).unwrap().message,
+            WM::KEYDOWN as u32
+        );
+        assert_eq!(
+            queue.pop_filtered(&window).unwrap().message,
+            WM::KEYDOWN as u32
+        );
+        assert_eq!(
+            queue.peek_filtered(&window).unwrap().message,
+            WM::LBUTTONDOWN as u32
+        );
+
+        // (HWND)-1 selects only thread messages: the null-hwnd WM_CHAR.
+        let thread = MsgFilter::new(HWND::invalid(), 0, 0);
+        assert_eq!(
+            queue.peek_filtered(&thread).unwrap().message,
+            WM::CHAR as u32
+        );
+
+        // Message-range filtering applies on top of the hWnd selection.
+        let keys = MsgFilter::new(HWND::from_raw(7), WM::KEYDOWN as u32, WM::KEYUP as u32);
+        assert!(queue.peek_filtered(&keys).is_none());
+        let mouse = MsgFilter::new(
+            HWND::from_raw(7),
+            WM::LBUTTONDOWN as u32,
+            WM::LBUTTONUP as u32,
+        );
+        assert_eq!(
+            queue.pop_filtered(&mouse).unwrap().message,
+            WM::LBUTTONDOWN as u32
+        );
+    }
+
+    #[test]
+    fn quit_message_survives_window_filtering() {
+        let mut queue = MessageQueue::default();
+        queue.messages.push_back(msg(7, WM::KEYDOWN as u32));
+        queue.quit = Some(msg(0, WM::QUIT as u32));
+
+        // Posted window messages still win over the quit flag; once no
+        // matching message remains the quit is delivered even to a
+        // window-filtered read.
+        let window = MsgFilter::new(HWND::from_raw(7), 0, 0);
+        assert_eq!(
+            queue.pop_filtered(&window).unwrap().message,
+            WM::KEYDOWN as u32
+        );
+        assert_eq!(
+            queue.pop_filtered(&window).unwrap().message,
+            WM::QUIT as u32
+        );
+        assert!(queue.quit.is_none());
+    }
 }
