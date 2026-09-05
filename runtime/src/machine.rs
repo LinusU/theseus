@@ -122,14 +122,6 @@ impl Context {
         self.cache.insert(addr, func);
         Cont(func)
     }
-
-    pub fn proc_addr(&mut self, func: ContFn) -> u32 {
-        self.blocks
-            .iter()
-            .find(|&(_, f)| std::ptr::fn_addr_eq(*f, func))
-            .unwrap()
-            .0
-    }
 }
 
 impl Context {
