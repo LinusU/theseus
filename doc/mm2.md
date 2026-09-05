@@ -147,3 +147,29 @@ game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced), absent
 `aud\aud22`/`aud\dmusic` content, `nodeGetBitmap` art misses, LOD warnings,
 the `london` room-count version warning, and benign `SelectObject` diagnostics
 for game-internal handles.
+
+## External prerequisites that cannot be filled from this repo
+
+Several categories of content are intentionally owned by the original game
+installation and are not present in the checked-in `game/` tree. They cause
+warnings in the run log but are outside the scope of the shared port code:
+
+- A complete `aud\aud22\*` 22kHz sound bank for UI, vehicle, ambient,
+  creature, and surface audio.
+- DirectMusic content under the paths the game scans (`.dmusic`/`.wav`
+  segments referenced by the `DMusicObject::ScanDirectory` path).
+- `.CHK` checksum caches next to the `.AR` archives, which the loader looks
+  for but does not require.
+- Medium and low LOD meshes for many vehicle and prop models; only the
+  highest LOD is present in the local installation.
+- Description bitmaps for several UI nodes (`ulock_amvpcab`, `vpcab_desc`,
+  `ama_rank_desc`), which the game requests through `nodeGetBitmap()`.
+
+The missing `nodeGetBitmap` assets are the direct cause of the translucent
+overlay panels not showing their text labels, and the absent audio/DirectMusic
+content is the source of most of the runtime warnings. The port handles the
+missing files gracefully and the race loop is otherwise stable.
+
+The only prerequisite that remains blocking for a fully regenerated target is
+a compatible, decrypted `MIDTOWN2.ICD` PE image with valid imports, supplied
+through `MM2_INPUT`.
