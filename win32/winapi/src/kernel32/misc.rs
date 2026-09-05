@@ -384,7 +384,10 @@ pub fn RtlUnwind(
 #[win32_derive::dllexport]
 pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> u32 /* WSTR */ {
     let buf = &ctx.memory[lpString2.addr..];
-    let len = buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap();
+    let Some(len) = buf.chunks_exact(2).position(|c| c == &[0, 0]) else {
+        log::error!("lstrcpyW: unterminated source string");
+        return 0;
+    };
     let src = lpString2.addr as usize;
     let dst = lpString1.addr as usize;
     let bytes = (len + 1) * 2;
@@ -395,7 +398,11 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
 #[win32_derive::dllexport]
 pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
     let buf = &ctx.memory[lpString.addr..];
-    buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap() as i32
+    let Some(len) = buf.chunks_exact(2).position(|c| c == &[0, 0]) else {
+        log::error!("lstrlenW: unterminated string");
+        return 0;
+    };
+    len as i32
 }
 
 #[cfg(test)]
@@ -444,6 +451,15 @@ mod tests {
         assert_eq!(ctx.memory.read::<u16>(0x1200), b'A' as u16);
         assert_eq!(ctx.memory.read::<u16>(0x1202), 0x03b2);
         assert_eq!(ctx.memory.read::<u16>(0x1204), 0);
+    }
+
+    #[test]
+    fn wide_string_functions_report_missing_terminators() {
+        let mut ctx = context();
+        ctx.memory[0x3ff0..].fill(0xff);
+
+        assert_eq!(lstrlenW(&mut ctx, Ptr::new(0x3ff0)), 0);
+        assert_eq!(lstrcpyW(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
     }
 }
 
