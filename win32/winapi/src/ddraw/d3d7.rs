@@ -2059,6 +2059,8 @@ fn rasterize(
         tex_width: u32,
         tex_height: u32,
         tex_bpp: u32,
+        // (pixels, width, height) for each filled sub-level past the base.
+        tex_mips: Vec<(u32, u32, u32)>,
         zbuf_addr: u32,
         cull: u32,
         zenable: u32,
@@ -2159,6 +2161,27 @@ fn rasterize(
             (0, 0, 0, 0)
         };
 
+        // Mip sub-levels that the game actually filled (pixels present).
+        // D3DTSS_MIPFILTER = 18; an explicit D3DTFP_NONE(1) disables mips.
+        let tex_mips = if tex_surf.is_some()
+            && *device.texture_stage_states.get(&(0, 18)).unwrap_or(&0) != 1
+        {
+            let mut levels = Vec::new();
+            for att in &tex_surf.as_ref().unwrap().borrow().attachments {
+                let l = att.borrow();
+                if !l.caps.dwCaps.contains(DDSCAPS::MIPMAP) {
+                    continue;
+                }
+                match l.pixels {
+                    Some(p) => levels.push((p, l.width, l.height)),
+                    None => break, // a hole in the chain ends it
+                }
+            }
+            levels
+        } else {
+            Vec::new()
+        };
+
         // Lock the render target now so its pixel address is known.
         drop(rt);
         let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory);
@@ -2176,6 +2199,7 @@ fn rasterize(
             tex_width: tex_w,
             tex_height: tex_h,
             tex_bpp,
+            tex_mips,
             zbuf_addr,
             cull,
             zenable,
@@ -2275,6 +2299,27 @@ fn rasterize(
             _ => {}
         }
 
+        // Pick the mip level by texel density: with `area` and the UV-space
+        // cross product both doubled areas, the factor cancels and
+        // 0.5·log2(texels/pixels) is the level index.
+        let (tex_addr, tex_w, tex_h) = if t.tex_addr != 0 && !t.tex_mips.is_empty() {
+            let tex_area = ((b.u - a.u) * (c.v - a.v) - (c.u - a.u) * (b.v - a.v)).abs()
+                * t.tex_width as f32
+                * t.tex_height as f32;
+            let lvl = (0.5 * (tex_area / area.abs()).log2()).round().max(0.0) as usize;
+            if lvl == 0 {
+                (t.tex_addr, t.tex_width, t.tex_height)
+            } else {
+                t.tex_mips
+                    .get(lvl - 1)
+                    .copied()
+                    .or_else(|| t.tex_mips.last().copied())
+                    .unwrap()
+            }
+        } else {
+            (t.tex_addr, t.tex_width, t.tex_height)
+        };
+
         // Compute the 2D bounding box, clamped to the render target.
         let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
         let max_x = a.x.max(b.x).max(c.x).ceil() as i32;
@@ -2363,7 +2408,7 @@ fn rasterize(
 
                 // Perspective-correct texture coordinate interpolation.
                 let w_sum = alpha * a.w + beta * b.w + gamma * c.w;
-                let persp = t.tex_addr != 0 && w_sum != 0.0;
+                let persp = tex_addr != 0 && w_sum != 0.0;
                 let u = if persp {
                     (alpha * a.u_w + beta * b.u_w + gamma * c.u_w) / w_sum
                 } else {
@@ -2375,8 +2420,8 @@ fn rasterize(
                     alpha * a.v + beta * b.v + gamma * c.v
                 };
 
-                let color = if t.tex_addr != 0 {
-                    sample_565(&ctx.memory, t.tex_addr, t.tex_width, t.tex_height, u, v)
+                let color = if tex_addr != 0 {
+                    sample_565(&ctx.memory, tex_addr, tex_w, tex_h, u, v)
                         .unwrap_or(argb_to_565(0xff_00_00_00))
                 } else {
                     let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32

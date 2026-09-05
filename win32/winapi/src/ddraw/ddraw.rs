@@ -126,6 +126,35 @@ impl DirectDraw {
             surface_mut.attachments.push(back);
         }
 
+        // A complex mipmap texture carries the rest of its chain as attached
+        // surfaces, each level half the previous one's size, so the game can
+        // walk GetAttachedSurface and fill each level.
+        if desc.dwFlags.contains(DDSD::MIPMAPCOUNT) && caps.dwCaps.contains(DDSCAPS::MIPMAP) {
+            // dwMipMapCount counts the base level too.
+            let levels = desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle.max(1);
+            let mut parent = surface.clone();
+            let (mut w, mut h) = (width, height);
+            for _ in 1..levels {
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+                let level = self.create_one_surface(
+                    new_pointer(),
+                    &SurfaceParams {
+                        is_primary: false,
+                        width: w,
+                        height: h,
+                        bytes_per_pixel,
+                        caps,
+                    },
+                );
+                parent.borrow_mut().attachments.push(level.clone());
+                parent = level;
+                if w == 1 && h == 1 {
+                    break;
+                }
+            }
+        }
+
         surface
     }
 

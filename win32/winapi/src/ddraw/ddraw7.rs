@@ -1105,8 +1105,13 @@ pub mod IDirectDrawSurface7 {
             .as_ref()
             .or_else(|| surface.attachments.first())
         else {
+            log::debug!("GetAttachedSurface {this:#x}: nothing attached");
             return DD::ERR_GENERIC; // nothing attached
         };
+        log::debug!(
+            "GetAttachedSurface {this:#x} -> {:#x}",
+            attached.borrow().addr
+        );
         ctx.memory
             .write(lplpDDAttachedSurface, attached.borrow().addr);
         DD::OK
@@ -1298,6 +1303,13 @@ pub mod IDirectDrawSurface7 {
         };
         let mut surface = surface.borrow_mut();
         let pixels = surface.lock(&mut ctx.memory);
+        log::debug!(
+            "Lock {this:#x} {}x{} {}bpp caps={:#x} -> {pixels:#x}",
+            surface.width,
+            surface.height,
+            surface.bytes_per_pixel,
+            surface.caps.dwCaps.bits(),
+        );
         ctx.memory.write(
             lpDDSurfaceDesc2,
             DDSURFACEDESC2 {
