@@ -378,12 +378,20 @@ pub fn OutputDebugStringA(ctx: &mut Context, lpOutputString: Ptr<u8>) {
 #[win32_derive::dllexport]
 pub fn RtlUnwind(
     _ctx: &mut Context,
-    _TargetFrame: Ptr<()>,
-    _TargetIp: Ptr<()>,
-    _ExceptionRecord: Ptr<()>,
-    _ReturnValue: Ptr<()>,
+    TargetFrame: Ptr<()>,
+    TargetIp: Ptr<()>,
+    ExceptionRecord: Ptr<()>,
+    ReturnValue: Ptr<()>,
 ) {
-    todo!()
+    // No SEH dispatcher exists; match the RaiseException policy of logging the
+    // request and continuing rather than fabricating an unwind.
+    log::debug!(
+        "RtlUnwind(frame={:#x}, ip={:#x}, record={:#x}, retval={:#x})",
+        TargetFrame.addr,
+        TargetIp.addr,
+        ExceptionRecord.addr,
+        ReturnValue.addr
+    );
 }
 
 #[win32_derive::dllexport]
