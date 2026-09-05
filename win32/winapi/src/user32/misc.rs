@@ -300,6 +300,7 @@ pub fn SetActiveWindow(_ctx: &mut Context, hWnd: HWND) -> HWND {
     post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
     post_message(hWnd, WM::ACTIVATE as u32, 1, 0);
     post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
+    state().focused.set(hWnd);
     previous
 }
 

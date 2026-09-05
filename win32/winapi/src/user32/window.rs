@@ -15,6 +15,10 @@ pub struct Window {
     pub style: u32,
     pub ex_style: u32,
     pub dirty: bool, // triggers WM_PAINT
+    /// SetWindowText/GetWindowText title text.
+    pub title: String,
+    /// Keyboard/mouse input enable state from EnableWindow.
+    pub enabled: bool,
     pub x: i32,
     pub y: i32,
     pub width: u32,
@@ -117,6 +121,8 @@ impl State {
             style: args.style,
             ex_style: args.ex_style,
             dirty: true,
+            title: args.name.clone(),
+            enabled: true,
             x: args.x,
             y: args.y,
             width,
@@ -254,6 +260,9 @@ pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
     if !matches {
         return false;
     }
+    if state.focused.get() == hWnd {
+        state.focused.set(HWND::null());
+    }
     state.window.borrow_mut().take();
     state.message_queue.borrow_mut().window = None;
     true
@@ -272,6 +281,15 @@ pub fn ShowWindow(
     post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
     post_message(hWnd, WM::ACTIVATE as u32, 1, 0); // WA_ACTIVE
     post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
+    let state = state();
+    let is_window = state
+        .window
+        .borrow()
+        .as_ref()
+        .is_some_and(|window| window.borrow().hwnd == hWnd);
+    if is_window {
+        state.focused.set(hWnd);
+    }
     true
 }
 
@@ -289,6 +307,7 @@ pub fn SetForegroundWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
     post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
     post_message(hWnd, WM::ACTIVATE as u32, 1, 0);
     post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
+    state().focused.set(hWnd);
     true
 }
 
@@ -368,10 +387,34 @@ pub fn DefWindowProcW(
 }
 
 #[win32_derive::dllexport]
-pub fn SetFocus(_ctx: &mut Context, _hWnd: HWND) -> HWND {
-    // Focus is not tracked; with a single window there was nothing focused
-    // before, so null is the correct previous-focus value.
-    HWND::null()
+pub fn SetFocus(_ctx: &mut Context, hWnd: HWND) -> HWND {
+    let state = state();
+    let valid = hWnd.is_null()
+        || state
+            .window
+            .borrow()
+            .as_ref()
+            .is_some_and(|window| window.borrow().hwnd == hWnd);
+    if !valid {
+        return HWND::null();
+    }
+
+    let previous = state.focused.replace(hWnd);
+    if previous != hWnd {
+        use super::message::{WM, post_message};
+        if let Some(previous) = previous.to_option() {
+            post_message(previous, WM::KILLFOCUS as u32, hWnd.to_raw(), 0);
+        }
+        if let Some(hWnd) = hWnd.to_option() {
+            post_message(hWnd, WM::SETFOCUS as u32, previous.to_raw(), 0);
+        }
+    }
+    previous
+}
+
+#[win32_derive::dllexport]
+pub fn GetFocus(_ctx: &mut Context) -> HWND {
+    state().focused.get()
 }
 
 #[repr(C)]
@@ -638,13 +681,66 @@ pub fn SetWindowPos(
 }
 
 #[win32_derive::dllexport]
-pub fn SetWindowTextA(_ctx: &mut Context, _hWnd: HWND, _lpString: Ptr<u8>) -> bool {
-    stub!(true)
+pub fn SetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>) -> bool {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    window.title = ctx.memory.read_str(lpString.addr).to_owned();
+    true
 }
 
 #[win32_derive::dllexport]
-pub fn EnableWindow(_ctx: &mut Context, _hWnd: HWND, _bEnable: bool) -> bool {
-    stub!(false)
+pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCount: i32) -> i32 {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return 0;
+    };
+    let window = window.borrow();
+    if window.hwnd != hWnd || nMaxCount <= 0 {
+        return 0;
+    }
+    let title = window.title.as_bytes();
+    let copy = (nMaxCount as usize - 1).min(title.len());
+    let end = lpString.addr as usize + copy + 1;
+    if end > ctx.memory.bytes.len() {
+        return 0;
+    }
+    ctx.memory[lpString.addr..][..copy].copy_from_slice(&title[..copy]);
+    ctx.memory[lpString.addr + copy as u32] = 0;
+    copy as i32
+}
+
+#[win32_derive::dllexport]
+pub fn EnableWindow(_ctx: &mut Context, hWnd: HWND, bEnable: bool) -> bool {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    let was_enabled = std::mem::replace(&mut window.enabled, bEnable);
+    drop(window);
+    use super::message::{WM, post_message};
+    post_message(hWnd, WM::ENABLE as u32, bEnable as u32, 0);
+    // The contract: nonzero when the window was previously disabled.
+    !was_enabled
+}
+
+#[win32_derive::dllexport]
+pub fn IsWindowEnabled(_ctx: &mut Context, hWnd: HWND) -> bool {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let window = window.borrow();
+    window.hwnd == hWnd && window.enabled
 }
 
 #[win32_derive::dllexport]

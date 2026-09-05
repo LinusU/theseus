@@ -20,6 +20,9 @@ pub type LPARAM = u32;
 pub enum WM {
     ACTIVATE = 0x6,
     SETFOCUS = 0x7,
+    KILLFOCUS = 0x8,
+    ENABLE = 0xa,
+    SETTEXT = 0xc,
     PAINT = 0xf,
     QUIT = 0x12,
     SHOWWINDOW = 0x18,
