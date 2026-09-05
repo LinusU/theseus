@@ -539,11 +539,20 @@ pub struct PAINTSTRUCT {
 #[win32_derive::dllexport]
 pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> HDC {
     let window = state().window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
+    let Some(window) = window.as_ref() else {
+        return HDC::null();
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return HDC::null();
+    }
 
-    let wndclass = state().wndclass.borrow();
-    let wndclass = wndclass.as_ref().unwrap();
-    if let Some(background) = &wndclass.background {
+    let (has_brush, background) = {
+        let wndclass = state().wndclass.borrow();
+        let brush = wndclass.as_ref().and_then(|w| w.background.as_ref());
+        (brush.is_some(), brush.and_then(|b| b.0))
+    };
+    if let Some(color) = background {
         // TODO: send WM_ERASEBKGND, let DefWindowProc handle it
         let pixels = window.ensure_pixels(ctx);
         let pixel_count = (window.width * (window.height)) as usize;
@@ -553,33 +562,46 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
             pixel_count,
         )
         .unwrap();
-        if let Some(color) = background.0 {
-            pixels.fill(color.to_pixel());
-        }
+        pixels.fill(color.to_pixel());
     };
     let rcPaint = window.rect();
     drop(window);
 
     let hdc = GetDC(ctx, hWnd);
-    lpPaint
+    if hdc.is_null() {
+        return hdc;
+    }
+    if lpPaint
         .write(
             &mut ctx.memory,
             PAINTSTRUCT {
                 hdc,
-                fErase: wndclass.background.is_none() as u32,
+                fErase: !has_brush as u32,
                 rcPaint,
                 reserved: [0; 10],
             },
         )
-        .unwrap();
+        .is_none()
+    {
+        gdi32::lock().release_dc(hdc);
+        return HDC::null();
+    }
     hdc
 }
 
 #[win32_derive::dllexport]
-pub fn EndPaint(ctx: &mut Context, _hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> bool {
+pub fn EndPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> bool {
     let window = state().window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
-    let paint = lpPaint.read(&ctx.memory).unwrap();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    let Some(paint) = lpPaint.read(&ctx.memory) else {
+        return false;
+    };
     gdi32::lock().release_dc(paint.hdc);
     window.dirty = false;
     window.flush(ctx);
@@ -600,7 +622,13 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
 
     let state = state();
     let window = state.window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
+    let Some(window) = window.as_ref() else {
+        return HDC::null();
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return HDC::null();
+    }
 
     let pixels = window.ensure_pixels(ctx);
     let bitmap = gdi32::Bitmap::new_simple(window.width, window.height, pixels);
