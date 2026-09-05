@@ -43,7 +43,7 @@ pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
         wProcessorLevel: 6,
         ..Default::default()
     };
-    lpSystemInfo.write(&mut ctx.memory, info).unwrap();
+    let _ = lpSystemInfo.write(&mut ctx.memory, info);
 }
 
 fn processor_feature_present(feature: u32) -> bool {
@@ -141,7 +141,7 @@ pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
     let info = STARTUPINFOA {
         ..Default::default()
     };
-    lpStartupInfo.write(&mut ctx.memory, info).unwrap();
+    let _ = lpStartupInfo.write(&mut ctx.memory, info);
 }
 
 #[win32_derive::dllexport]
@@ -176,7 +176,7 @@ pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
         dwAvailVirtual: capacity,
         ..Default::default()
     };
-    lpBuffer.write(&mut ctx.memory, status).unwrap();
+    let _ = lpBuffer.write(&mut ctx.memory, status);
 }
 
 #[win32_derive::dllexport]
@@ -200,15 +200,14 @@ pub fn GetDiskFreeSpaceA(
         return false;
     }
 
-    lpSectorsPerCluster.write(&mut ctx.memory, 1).unwrap();
-    lpBytesPerSector.write(&mut ctx.memory, 512).unwrap();
-    lpNumberOfFreeClusters
-        .write(&mut ctx.memory, 0x1_0000)
-        .unwrap();
-    lpTotalNumberOfClusters
-        .write(&mut ctx.memory, 0x2_0000)
-        .unwrap();
-    true
+    lpSectorsPerCluster.write(&mut ctx.memory, 1).is_some()
+        && lpBytesPerSector.write(&mut ctx.memory, 512).is_some()
+        && lpNumberOfFreeClusters
+            .write(&mut ctx.memory, 0x1_0000)
+            .is_some()
+        && lpTotalNumberOfClusters
+            .write(&mut ctx.memory, 0x2_0000)
+            .is_some()
 }
 
 #[repr(C)]
@@ -224,7 +223,9 @@ pub struct OSVERSIONINFO {
 
 #[win32_derive::dllexport]
 pub fn GetVersionExA(ctx: &mut Context, lpVersionInformation: Ptr<OSVERSIONINFO>) -> bool {
-    let size = ctx.memory.read::<u32>(lpVersionInformation.addr);
+    let Some(size) = Ptr::<u32>::new(lpVersionInformation.addr).read(&ctx.memory) else {
+        return false;
+    };
     if size < std::mem::size_of::<OSVERSIONINFO>() as u32 {
         log::error!("GetVersionExA undersized buffer");
         return false;
@@ -235,9 +236,7 @@ pub fn GetVersionExA(ctx: &mut Context, lpVersionInformation: Ptr<OSVERSIONINFO>
         dwPlatformId: 2,   /* VER_PLATFORM_WIN32_NT */
         ..Default::default()
     };
-    lpVersionInformation.write(&mut ctx.memory, info).unwrap();
-
-    true
+    lpVersionInformation.write(&mut ctx.memory, info).is_some()
 }
 
 #[win32_derive::dllexport]

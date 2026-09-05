@@ -340,7 +340,9 @@ pub fn SetFilePointer(
     dwMoveMethod: MoveMethod,
 ) -> u32 {
     let distance = if lpDistanceToMoveHigh.addr != 0 {
-        let high = lpDistanceToMoveHigh.read(&ctx.memory).unwrap();
+        let Some(high) = lpDistanceToMoveHigh.read(&ctx.memory) else {
+            return INVALID_SET_FILE_POINTER;
+        };
         ((high as i64) << 32) | (lDistanceToMove as u32 as i64)
     } else {
         lDistanceToMove as i64
@@ -358,10 +360,12 @@ pub fn SetFilePointer(
     match file.seek(from) {
         Ok(pos) => {
             drop(kernel32);
-            if lpDistanceToMoveHigh.addr != 0 {
-                lpDistanceToMoveHigh
+            if lpDistanceToMoveHigh.addr != 0
+                && lpDistanceToMoveHigh
                     .write(&mut ctx.memory, (pos >> 32) as i32)
-                    .unwrap();
+                    .is_none()
+            {
+                return INVALID_SET_FILE_POINTER;
             }
             pos as u32
         }
@@ -584,9 +588,12 @@ pub fn FindFirstFileA(
     if entries.is_empty() {
         return crate::HANDLE::invalid();
     }
-    lpFindFileData
+    if lpFindFileData
         .write(&mut ctx.memory, find_data(&entries[0]))
-        .unwrap();
+        .is_none()
+    {
+        return crate::HANDLE::invalid();
+    }
     lock()
         .objects
         .add(Object::FindHandle(FindHandle { entries, index: 1 }))
@@ -609,8 +616,7 @@ pub fn FindNextFileA(
     let data = find_data(entry);
     find.index += 1;
     drop(kernel32);
-    lpFindFileData.write(&mut ctx.memory, data).unwrap();
-    true
+    lpFindFileData.write(&mut ctx.memory, data).is_some()
 }
 
 #[win32_derive::dllexport]
