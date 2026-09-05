@@ -147,7 +147,7 @@ impl<'a> CodeGen<'a> {
         if instr.memory_index() != None {
             if instr.memory_index_scale() != 1 {
                 expr.push(format!(
-                    "({}*{})",
+                    "{}*{}",
                     get_reg(instr.memory_index()),
                     instr.memory_index_scale()
                 ));
@@ -160,17 +160,14 @@ impl<'a> CodeGen<'a> {
             expr.push(format!("{offset:#x}u{}", self.module.bitness()));
         }
 
-        expr.into_iter()
-            .enumerate()
-            .map(|(i, e)| {
-                if i == 0 {
-                    e
-                } else {
-                    format!(".wrapping_add({e})")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("")
+        let mut it = expr.into_iter();
+        let first = it.next().unwrap();
+        let first = if first.contains('*') {
+            format!("({first})")
+        } else {
+            first
+        };
+        it.fold(first, |s, e| format!("{s}.wrapping_add({e})"))
     }
 
     /// Codegen the absolute address found in an instruction that has a memory reference.
@@ -732,7 +729,7 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.cpu.regs.eax.wrapping_add((((bit as i32 >> 5) * 4i32) as u32))")
+                .contains("ctx.cpu.regs.eax.wrapping_add(((bit as i32 >> 5) * 4i32) as u32)")
         );
     }
 

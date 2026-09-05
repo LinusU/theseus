@@ -112,7 +112,7 @@ impl<'a> CodeGen<'a> {
                         let shift = size.trailing_zeros();
                         let bytes = size / 8;
                         format!(
-                            "{addr}.wrapping_add((((bit as i32 >> {shift}) * {bytes}i32) as u32))"
+                            "{addr}.wrapping_add(((bit as i32 >> {shift}) * {bytes}i32) as u32)"
                         )
                     } else {
                         addr
