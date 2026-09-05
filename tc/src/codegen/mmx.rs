@@ -219,6 +219,12 @@ impl<'a> CodeGen<'a> {
                 self.line(self.mmx_set(instr, 0, format!("pswapd({})", self.mmx_get(instr, 1))))
             }
 
+            // 3DNow! packed single/integer conversions are unary MMX operations.
+            Pf2id | Pi2fd => {
+                let func = instr_name(instr);
+                self.line(self.mmx_set(instr, 0, format!("{func}({})", self.mmx_get(instr, 1))));
+            }
+
             Femms => {
                 self.line("// no-op");
             }

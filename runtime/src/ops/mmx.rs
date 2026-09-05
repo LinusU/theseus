@@ -549,6 +549,22 @@ pub fn pswapd(x: u64) -> u64 {
     [x[1], x[0]].pack()
 }
 
+/// PF2ID (3DNow!) converts two packed single-precision floats to two
+/// 32-bit signed integers using round-to-zero with saturation.
+pub fn pf2id(x: u64) -> u64 {
+    let low = f32::from_bits(x as u32) as i32 as u32;
+    let high = f32::from_bits((x >> 32) as u32) as i32 as u32;
+    ((high as u64) << 32) | (low as u64)
+}
+
+/// PI2FD (3DNow!) converts two packed 32-bit signed integers to two
+/// single-precision floats.
+pub fn pi2fd(x: u64) -> u64 {
+    let low = (x as u32 as i32) as f32;
+    let high = ((x >> 32) as u32 as i32) as f32;
+    ((high.to_bits() as u64) << 32) | (low.to_bits() as u64)
+}
+
 pub fn psrlw(x: u64, y: u64) -> u64 {
     if y > 15 {
         return 0;
@@ -668,9 +684,9 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb,
-        pextrw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw, pmulhuw,
-        pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd,
-        psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pextrw, pf2id, pi2fd, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
+        pmulhuw, pmulhw, pmuludq, psadbw, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
+        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -817,6 +833,20 @@ mod tests {
         assert_eq!(pmulhrw(0x0000_0000_0000_8000, 2), 0xfffe);
         // 0x7fff * 0x7fff = 0x3fff_0001; + 0x4000 = 0x3fff_4001; bits [30:15] = 0x7ffe.
         assert_eq!(pmulhrw(0x7fff, 0x7fff), 0x0000_0000_0000_7ffe);
+    }
+
+    #[test]
+    fn pf2id_and_pi2fd_convert_float_and_integer_lanes() {
+        // 1.5 as f32 -> 1 via round-to-zero; -2.7 as f32 -> -2.
+        let one_point_five = f32::to_bits(1.5);
+        let neg_two_point_seven = f32::to_bits(-2.7);
+        let floats = (neg_two_point_seven as u64) << 32 | (one_point_five as u64);
+        assert_eq!(pf2id(floats), (0xffff_ffff_ffff_fffeu64 << 32) | 1);
+
+        // 42 and -7 as i32 -> floats.
+        let ints = ((-7i32 as u64) << 32) | (42u64);
+        let expected = ((f32::to_bits(-7.0) as u64) << 32) | (f32::to_bits(42.0) as u64);
+        assert_eq!(pi2fd(ints), expected);
     }
 
     #[test]

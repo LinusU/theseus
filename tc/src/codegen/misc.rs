@@ -437,8 +437,8 @@ impl<'a> CodeGen<'a> {
             // and newer state-save or RNG opcodes. Emit an explicit #UD trap
             // so translation continues past the instruction instead of
             // dropping the rest of the block.
-            Ud0 | Ud1 | Pf2id | Pf2iw | Pfnacc | Pfpnacc | Pfcmpge | Pfcmpgt | Pfcmpeq | Pfmin
-            | Pfmax | Pfrcp | Pfrcpit1 | Pfrcpit2 | Pfrsqit1 | Pfrsqrt | Pfsub | Pfsubr | Pfacc
+            Ud0 | Ud1 | Pf2iw | Pfnacc | Pfpnacc | Pfcmpge | Pfcmpgt | Pfcmpeq | Pfmin | Pfmax
+            | Pfrcp | Pfrcpit1 | Pfrcpit2 | Pfrsqit1 | Pfrsqrt | Pfsub | Pfsubr | Pfacc
             | Pdistib | Xstore | Xcryptcbc | Xcryptcfb | Xcryptctr | Xcryptecb | Xcryptofb
             | Montmul | Xsha1 | Xsha256 | Getsec | Loadall | Jmpe | Xsave | Xrstor | Xsaveopt
             | Xsaves | Xrstors | Xsavec | Rdrand | Rdseed | Rdpid | Clzero | Clwb | Pcommit

@@ -3287,7 +3287,7 @@ mod tests {
         for bytes in [
             &[0x0f, 0xff, 0xc0][..],   // ud0 eax, eax
             &[0x0f, 0xb9, 0xc0],       // ud1 eax, eax
-            &[0x0f, 0x0f, 0xc0, 0x1d], // pf2id mm0, mm0
+            &[0x0f, 0x0f, 0xc0, 0x1c], // pf2iw mm0, mm0
             &[0x0f, 0xae, 0x21],       // xsave [ecx]
             &[0x0f, 0xae, 0x29],       // xrstor [ecx]
             &[0x0f, 0xc7, 0xf0],       // rdrand eax
@@ -4287,6 +4287,42 @@ mod tests {
             "wanted {want:?} in {:?}",
             codegen.buf
         );
+    }
+
+    #[test]
+    fn codegen_handles_3dnow_conversions() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // pf2id mm0, mm1 (0F 0F /r 1D)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x1d][..],
+                "ctx.cpu.mmx.mm0 = pf2id(ctx.cpu.mmx.mm1);",
+            ),
+            // pi2fd mm0, mm1 (0F 0F /r 0D)
+            (
+                &[0x0f, 0x0f, 0xc1, 0x0d],
+                "ctx.cpu.mmx.mm0 = pi2fd(ctx.cpu.mmx.mm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
     }
 
     #[test]
