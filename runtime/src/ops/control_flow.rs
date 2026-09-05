@@ -178,10 +178,11 @@ impl Context {
         let ret = self.pop16();
         if self.cpu.real_mode {
             self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
-        } else {
-            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+            return self.indirect16((self.cpu.regs.cs, ret).into());
         }
-        self.indirect16((self.cpu.regs.cs, ret).into())
+        self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+        // A 16-bit near return pops a 16-bit offset in the flat code segment.
+        self.indirect(ret as u32)
     }
 
     pub fn iret16(&mut self) -> Cont {
@@ -191,7 +192,10 @@ impl Context {
         self.cpu.regs.set_cs(cs);
         let flags = self.pop16();
         self.cpu.flags = Flags::from_bits_truncate(flags as u32 & !2);
-        self.indirect(segofs(cs, ip))
+        if self.cpu.real_mode {
+            return self.indirect(segofs(cs, ip));
+        }
+        self.indirect(ip as u32)
     }
 
     pub fn iret32(&mut self) -> Cont {
@@ -208,10 +212,11 @@ impl Context {
         let cs = self.pop16();
         if self.cpu.real_mode {
             self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
-        } else {
-            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+            return self.jmpf16(cs, ip);
         }
-        self.jmpf16(cs, ip)
+        self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+        self.cpu.regs.set_cs(cs);
+        self.indirect(ip as u32)
     }
 
     pub fn retf32(&mut self, n: u16) -> Cont {
@@ -331,6 +336,56 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.esp, 0x10000);
+    }
+
+    #[test]
+    fn flat_mode_ret16_dispatches_through_the_flat_block_table() {
+        let mut ctx = context();
+        // A protected-mode selector is not a real-mode segment base.
+        ctx.cpu.regs.cs = 0x0023;
+        ctx.cpu.regs.esp = 0x100;
+        ctx.memory.write::<u16>(0x100, 0x1234);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.ret16(0);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0x102);
+    }
+
+    #[test]
+    fn flat_mode_retf16_dispatches_through_the_flat_block_table() {
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0x100;
+        ctx.memory.write::<u16>(0x100, 0x1234);
+        ctx.memory.write::<u16>(0x102, 0x0023);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.retf16(0);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.cs, 0x0023);
+        assert_eq!(ctx.cpu.regs.esp, 0x104);
+    }
+
+    #[test]
+    fn flat_mode_iret16_dispatches_through_the_flat_block_table() {
+        let mut ctx = context();
+        ctx.cpu.regs.esp = 0x100;
+        ctx.memory.write::<u16>(0x100, 0x1234);
+        ctx.memory.write::<u16>(0x102, 0x0023);
+        ctx.memory.write::<u16>(0x104, 0x0202);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.iret16();
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.cs, 0x0023);
+        assert_eq!(ctx.cpu.regs.esp, 0x106);
+        assert_eq!(ctx.cpu.flags.bits(), Flags::IF.bits());
     }
 
     #[test]
