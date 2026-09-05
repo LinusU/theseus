@@ -1,4 +1,4 @@
-//! DirectInput keyboard and mouse.
+//! DirectInput keyboard, mouse, and a generic joystick.
 //!
 //! Device state comes from the shared input state in user32, which the host
 //! message pump keeps up to date; see user32::input.
@@ -21,6 +21,24 @@ const GUID_SysKeyboard: GUID = GUID::new(
     0xD5A0,
     0x11CF,
     [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
+
+const GUID_Joystick: GUID = GUID::new(
+    0x6F1D2B70,
+    0xD5A0,
+    0x11CF,
+    [0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00],
+);
+
+/// Product GUID the MM2 executable passes when creating a joystick.
+/// The debug string `00013b28-66c0-0057-bc20-ab0501000000` is produced by
+/// GUID's little-endian display of the first two data4 bytes, so the actual
+/// byte order is [0x20, 0xbc, ...].
+const GUID_Mm2Joystick: GUID = GUID::new(
+    0x0001_3B28,
+    0x66C0,
+    0x0057,
+    [0x20, 0xBC, 0xAB, 0x05, 0x01, 0x00, 0x00, 0x00],
 );
 
 const IID_IUnknown: GUID = GUID::new(
@@ -105,9 +123,11 @@ const MAX_PATH: usize = 260;
 /// DIDEVTYPE_* device type codes used by the DX5-era headers.
 const DIDEVTYPE_MOUSE: u32 = 2;
 const DIDEVTYPE_KEYBOARD: u32 = 3;
+const DIDEVTYPE_JOYSTICK: u32 = 4;
 /// DIDEVTYPEMOUSE_/DIDEVTYPEKEYBOARD_ subtype codes.
 const DIDEVTYPEMOUSE_TRADITIONAL: u32 = 1;
 const DIDEVTYPEKEYBOARD_PCENH: u32 = 4;
+const DIDEVTYPEJOYSTICK_TRADITIONAL: u32 = 1;
 
 /// DIDC_* capability flags.
 const DIDC_ATTACHED: u32 = 0x00000001;
@@ -138,11 +158,14 @@ fn write_cstr(ctx: &mut Context, addr: u32, s: &[u8]) {
 pub enum DeviceKind {
     Keyboard,
     Mouse,
+    Joystick,
 }
 
 pub struct Device {
     pub kind: DeviceKind,
     pub acquired: bool,
+    /// The GUID the device was created with; used to answer GetDeviceInfo.
+    pub guid: GUID,
 }
 
 #[derive(Default)]
@@ -231,6 +254,8 @@ pub mod IDirectInput {
             DeviceKind::Keyboard
         } else if guid == GUID_SysMouse {
             DeviceKind::Mouse
+        } else if guid == GUID_Joystick || guid == GUID_Mm2Joystick {
+            DeviceKind::Joystick
         } else {
             log::warn!("CreateDevice: unknown GUID {guid:?}");
             return DIERR_DEVICENOTREG;
@@ -243,6 +268,7 @@ pub mod IDirectInput {
             Device {
                 kind,
                 acquired: false,
+                guid,
             },
         );
         ctx.memory.write::<u32>(lplpDirectInputDevice, device);
@@ -267,7 +293,11 @@ pub mod IDirectInput {
             return DIERR_INVALIDPARAM;
         }
         let guid = crate::Ptr::<GUID>::new(rguid).read(&ctx.memory).unwrap();
-        if guid == GUID_SysKeyboard || guid == GUID_SysMouse {
+        if guid == GUID_SysKeyboard
+            || guid == GUID_SysMouse
+            || guid == GUID_Joystick
+            || guid == GUID_Mm2Joystick
+        {
             DI_OK
         } else {
             DIERR_DEVICENOTREG
@@ -338,6 +368,14 @@ pub mod IDirectInputDevice {
             .unwrap_or((DeviceKind::Keyboard, false))
     }
 
+    pub fn device_guid(this: u32) -> GUID {
+        lock()
+            .devices
+            .get(&this)
+            .map(|device| device.guid)
+            .unwrap_or(GUID_SysKeyboard)
+    }
+
     fn set_acquired(this: u32, acquired: bool) {
         if let Some(device) = lock().devices.get_mut(&this) {
             device.acquired = acquired;
@@ -384,6 +422,12 @@ pub mod IDirectInputDevice {
                 DIDEVTYPE_MOUSE | (DIDEVTYPEMOUSE_TRADITIONAL << 8),
                 3,
                 DIMOUSESTATE_SIZE as u32 - 12,
+            ),
+            DeviceKind::Joystick => (
+                DIDC_ATTACHED | DIDC_EMULATED,
+                DIDEVTYPE_JOYSTICK | (DIDEVTYPEJOYSTICK_TRADITIONAL << 8),
+                6,
+                32,
             ),
         };
         for (i, field) in [size as u32, flags, devtype, axes, buttons, 0]
@@ -458,6 +502,8 @@ pub mod IDirectInputDevice {
     /// Keyboard: a byte array indexed by DIK scan code (0x80 = pressed).
     /// Mouse: a DIMOUSESTATE — lX/lY/lZ relative to the last read, then one
     /// byte per button.
+    /// Joystick: a DIJOYSTATE (or DIJOYSTATE2) — the host has no real stick,
+    /// so the entire buffer is reported as centered/neutral with no buttons.
     #[win32_derive::dllexport]
     pub fn GetDeviceState(ctx: &mut Context, this: u32, cbData: u32, lpvData: u32) -> u32 {
         let (kind, acquired) = device(this);
@@ -472,9 +518,14 @@ pub mod IDirectInputDevice {
             DeviceKind::Keyboard => 256,
             // DIMOUSESTATE: lX, lY, lZ, then four buttons.
             DeviceKind::Mouse => DIMOUSESTATE_SIZE,
+            // Accept DIJOYSTATE (44 bytes) or the larger DIJOYSTATE2 layout.
+            DeviceKind::Joystick if (44..=256).contains(&cbData) => cbData as usize,
+            DeviceKind::Joystick => {
+                log::warn!("GetDeviceState: cbData {cbData} does not match Joystick");
+                return DIERR_INVALIDPARAM;
+            }
         };
-        if cbData as usize != len {
-            log::warn!("GetDeviceState: cbData {cbData} does not match {kind:?}");
+        if lpvData as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
         let mut buf = vec![0u8; len];
@@ -497,6 +548,10 @@ pub mod IDirectInputDevice {
                         buf[12 + index] = button;
                     }
                 }
+            }
+            DeviceKind::Joystick => {
+                // Leave the whole buffer zero: centered axes and no pressed
+                // buttons.  A real host joystick is not wired in yet.
             }
         }
         drop(input);
@@ -531,11 +586,17 @@ pub mod IDirectInputDevice {
             ctx.memory.read::<u32>(pdwInOut) as usize
         };
         let peek = dwFlags & DIGDD_PEEK != 0;
-        let (events, overflowed) = user32::state().input.borrow_mut().take_events(
-            kind == DeviceKind::Keyboard,
-            capacity,
-            peek,
-        );
+        let (events, overflowed) = if kind == DeviceKind::Joystick {
+            // The emulated joystick does not buffer events; it is read with
+            // GetDeviceState and is currently reported as neutral.
+            (Vec::new(), false)
+        } else {
+            user32::state().input.borrow_mut().take_events(
+                kind == DeviceKind::Keyboard,
+                capacity,
+                peek,
+            )
+        };
 
         if rgdod != 0 {
             for (i, event) in events.iter().enumerate() {
@@ -598,7 +659,8 @@ pub mod IDirectInputDevice {
             return DIERR_INVALIDPARAM;
         }
         let (kind, _) = device(this);
-        let (guid, devtype, instance, product): (&GUID, u32, &[u8], &[u8]) = match kind {
+        let guid = device_guid(this);
+        let (product, devtype, instance, product_name): (&GUID, u32, &[u8], &[u8]) = match kind {
             DeviceKind::Keyboard => (
                 &GUID_SysKeyboard,
                 DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8),
@@ -611,14 +673,21 @@ pub mod IDirectInputDevice {
                 b"Mouse",
                 b"System Mouse",
             ),
+            DeviceKind::Joystick => (
+                &GUID_Joystick,
+                DIDEVTYPE_JOYSTICK | (DIDEVTYPEJOYSTICK_TRADITIONAL << 8),
+                b"Joystick",
+                b"Theseus Joystick",
+            ),
         };
         ctx.memory[pdidi..][..size].fill(0);
         ctx.memory.write::<u32>(pdidi, size as u32);
-        write_guid(ctx, pdidi + 4, guid);
-        write_guid(ctx, pdidi + 20, guid);
+        // The first GUID is the device instance, the second is the product.
+        write_guid(ctx, pdidi + 4, &guid);
+        write_guid(ctx, pdidi + 20, product);
         ctx.memory.write::<u32>(pdidi + 36, devtype);
         write_cstr(ctx, pdidi + 40, instance);
-        write_cstr(ctx, pdidi + 40 + MAX_PATH as u32, product);
+        write_cstr(ctx, pdidi + 40 + MAX_PATH as u32, product_name);
         DI_OK
     }
 
