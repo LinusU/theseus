@@ -48,5 +48,9 @@ static LOGGER: Logger = Logger {};
 
 pub fn init() {
     log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Debug);
+    let max = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(log::LevelFilter::Debug);
+    log::set_max_level(max);
 }
