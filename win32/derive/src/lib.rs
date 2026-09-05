@@ -2,8 +2,16 @@ use proc_macro::TokenStream;
 use quote::*;
 use syn::*;
 
+/// `#[dllexport]` generates a stdcall wrapper: the callee pops its
+/// parameters. `#[dllexport(cdecl)]` generates a cdecl wrapper for CRT-style
+/// imports: the caller cleans up, so the wrapper pops only the return address.
 #[proc_macro_attribute]
-pub fn dllexport(_attr: TokenStream, mut tokens: TokenStream) -> TokenStream {
+pub fn dllexport(attr: TokenStream, mut tokens: TokenStream) -> TokenStream {
+    let cdecl = match attr.to_string().trim() {
+        "" => false,
+        "cdecl" => true,
+        other => panic!("unsupported dllexport attribute `{other}`"),
+    };
     let input = tokens.clone();
 
     let func: ItemFn = syn::parse_macro_input!(input);
@@ -54,7 +62,9 @@ pub fn dllexport(_attr: TokenStream, mut tokens: TokenStream) -> TokenStream {
     let trace_cache = format_ident!("{}_trace", name);
 
     let wrapper_name = format_ident!("{}_stdcall", name);
-    let stack_popped = args.len() as u32;
+    // stdcall: callee pops return address + parameters. cdecl: caller cleans
+    // up, so the wrapper pops only the return address.
+    let stack_popped = if cdecl { 1 } else { args.len() as u32 };
     let mut call_args = args.iter().map(|(arg, _)| arg);
     call_args.next(); // skip return_addr
 
