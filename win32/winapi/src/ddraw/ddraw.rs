@@ -101,7 +101,9 @@ impl DirectDraw {
                 },
             );
             back.borrow_mut().primary.replace(surface.clone());
-            surface.borrow_mut().attached.replace(back);
+            let mut surface_mut = surface.borrow_mut();
+            surface_mut.attached.replace(back.clone());
+            surface_mut.attachments.push(back);
         }
 
         surface
@@ -128,6 +130,7 @@ impl DirectDraw {
             target,
             primary: Default::default(),
             attached: Default::default(),
+            attachments: Vec::new(),
             pixels: None,
             palette: None,
             src_color_key: None,
@@ -174,6 +177,11 @@ pub struct Surface {
     pub primary: Option<Rc<RefCell<Surface>>>,
     /// Present on Target::Window, TODO should be vec
     pub attached: Option<Rc<RefCell<Surface>>>,
+    /// Every surface attached through AddAttachedSurface or an implicit
+    /// flipping chain. `attached` stays the front/back flip link while this
+    /// tracks the whole set so DeleteAttachedSurface and
+    /// EnumAttachedSurfaces can see z-buffers and friends.
+    pub attachments: Vec<Rc<RefCell<Surface>>>,
 
     /// Address of pixel data.
     pub pixels: Option<u32>,
@@ -378,7 +386,7 @@ pub fn DirectDrawCreateEx(
     DD::OK
 }
 
-fn alloc_string(ctx: &mut Context, s: &str) -> u32 {
+pub(crate) fn alloc_string(ctx: &mut Context, s: &str) -> u32 {
     let kernel32 = kernel32::lock();
     let addr = kernel32.process_heap.alloc(&mut ctx.memory, s.len() as u32);
     drop(kernel32);

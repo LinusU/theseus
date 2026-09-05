@@ -6,6 +6,7 @@ use std::{
 
 use runtime::{ContFn, Context};
 
+pub mod d3d7;
 mod ddraw;
 mod ddraw1;
 mod ddraw7;
@@ -84,6 +85,45 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
         add_blocks(ctx, blocks);
         log::debug!("IDirectDrawSurface7 vtable allocated at {addr:#x}");
     }
+    if unsafe { d3d7::IDirect3D7::VTABLE } == 0 {
+        let mut kernel32 = kernel32::lock();
+        let (addr, blocks) = init_vtable(
+            ctx,
+            &mut kernel32.process_heap,
+            0xfafe0500,
+            &d3d7::IDirect3D7::VTABLE_FUNCS,
+        );
+        unsafe { d3d7::IDirect3D7::VTABLE = addr };
+        drop(kernel32);
+        add_blocks(ctx, blocks);
+        log::debug!("IDirect3D7 vtable allocated at {addr:#x}");
+    }
+    if unsafe { d3d7::IDirect3DDevice7::VTABLE } == 0 {
+        let mut kernel32 = kernel32::lock();
+        let (addr, blocks) = init_vtable(
+            ctx,
+            &mut kernel32.process_heap,
+            0xfafe0600,
+            &d3d7::IDirect3DDevice7::VTABLE_FUNCS,
+        );
+        unsafe { d3d7::IDirect3DDevice7::VTABLE = addr };
+        drop(kernel32);
+        add_blocks(ctx, blocks);
+        log::debug!("IDirect3DDevice7 vtable allocated at {addr:#x}");
+    }
+    if unsafe { d3d7::IDirect3DVertexBuffer7::VTABLE } == 0 {
+        let mut kernel32 = kernel32::lock();
+        let (addr, blocks) = init_vtable(
+            ctx,
+            &mut kernel32.process_heap,
+            0xfafe0700,
+            &d3d7::IDirect3DVertexBuffer7::VTABLE_FUNCS,
+        );
+        unsafe { d3d7::IDirect3DVertexBuffer7::VTABLE = addr };
+        drop(kernel32);
+        add_blocks(ctx, blocks);
+        log::debug!("IDirect3DVertexBuffer7 vtable allocated at {addr:#x}");
+    }
 }
 
 fn init_vtable(
@@ -112,7 +152,7 @@ fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
     ctx.blocks = Box::leak(blocks.into_boxed_slice());
 }
 
-pub const VTABLES: [(&'static str, &[&str]); 5] = [
+pub const VTABLES: [(&'static str, &[&str]); 8] = [
     ("IDirectDraw", IDirectDraw::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectDrawSurface",
@@ -127,12 +167,22 @@ pub const VTABLES: [(&'static str, &[&str]); 5] = [
         "IDirectDrawPalette",
         IDirectDrawPalette::VTABLE_ENTRIES.as_slice(),
     ),
+    ("IDirect3D7", d3d7::IDirect3D7::VTABLE_ENTRIES.as_slice()),
+    (
+        "IDirect3DDevice7",
+        d3d7::IDirect3DDevice7::VTABLE_ENTRIES.as_slice(),
+    ),
+    (
+        "IDirect3DVertexBuffer7",
+        d3d7::IDirect3DVertexBuffer7::VTABLE_ENTRIES.as_slice(),
+    ),
 ];
 
 #[repr(C)]
 #[derive(
     Clone,
     Copy,
+    Default,
     PartialEq,
     zerocopy::FromBytes,
     zerocopy::IntoBytes,

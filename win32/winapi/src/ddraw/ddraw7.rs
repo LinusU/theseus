@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use runtime::*;
 use zerocopy::FromBytes;
 
@@ -93,6 +95,13 @@ pub mod IDirectDraw7 {
         if let Some(iid) = iid {
             if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
                 ctx.memory.write::<u32>(ppv, _this);
+                return DD::OK;
+            }
+            if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
+                let mut kernel32 = kernel32::lock();
+                let addr = crate::ddraw::d3d7::IDirect3D7::new(ctx, &mut kernel32.process_heap);
+                drop(kernel32);
+                ctx.memory.write::<u32>(ppv, addr);
                 return DD::OK;
             }
         }
@@ -539,6 +548,13 @@ pub mod IDirectDraw7 {
     }
 }
 
+const IID_IDIRECTDRAWSURFACE7: GUID = GUID::new(
+    0x06675a80,
+    0x3b9b,
+    0x11d2,
+    [0xb9, 0x2f, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b],
+);
+
 pub mod IDirectDrawSurface7 {
     use super::*;
 
@@ -647,23 +663,85 @@ pub mod IDirectDrawSurface7 {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> DD {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> DD {
+        if ppv == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let iid = ctx.memory.read::<GUID>(riid);
+        if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDIRECTDRAWSURFACE7 {
+            ctx.memory.write::<u32>(ppv, this);
+            return DD::OK;
+        }
+        ctx.memory.write::<u32>(ppv, 0);
+        DD::E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        match state().surf.borrow_mut().get(&this) {
+            Some(surface) => {
+                let mut surface = surface.borrow_mut();
+                surface.refs += 1;
+                surface.refs
+            }
+            None => 0,
+        }
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let surfaces = state().surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return 0;
+        };
+        let remaining = {
+            let mut surface = surface.borrow_mut();
+            surface.refs = surface.refs.saturating_sub(1);
+            surface.refs
+        };
+        drop(surfaces);
+        if remaining > 0 {
+            return remaining;
+        }
+        let Some(surface) = state().surf.borrow_mut().remove(&this) else {
+            return 0;
+        };
+        // Games recreate surfaces when changing screens, so returning the
+        // pixels keeps the heap from growing without bound.
+        if let Some(pixels) = surface.borrow_mut().pixels.take() {
+            kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
+        }
+        0
     }
 
     #[win32_derive::dllexport]
-    pub fn AddAttachedSurface(_ctx: &mut Context, _this: u32, _lpDDSAttachedSurface: u32) -> DD {
-        todo!()
+    pub fn AddAttachedSurface(_ctx: &mut Context, this: u32, lpDDSAttachedSurface: u32) -> DD {
+        if this == lpDDSAttachedSurface {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow_mut();
+        let (Some(attached), Some(surface)) = (
+            surfaces.get(&lpDDSAttachedSurface).cloned(),
+            surfaces.get(&this),
+        ) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let attached_addr = attached.borrow().addr;
+        let mut surface = surface.borrow_mut();
+        if surface
+            .attachments
+            .iter()
+            .any(|s| s.borrow().addr == attached_addr)
+        {
+            return DD::ERR_GENERIC; // already attached
+        }
+        // `attached` remains the flip-chain link; the full set lives in
+        // `attachments` so z-buffers don't clobber the back buffer.
+        if surface.attached.is_none() {
+            surface.attached = Some(attached.clone());
+        }
+        surface.attachments.push(attached);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -734,21 +812,99 @@ pub mod IDirectDrawSurface7 {
     #[win32_derive::dllexport]
     pub fn DeleteAttachedSurface(
         _ctx: &mut Context,
-        _this: u32,
+        this: u32,
         _dwFlags: u32,
-        _lpDDSAttachedSurface: u32,
+        lpDDSAttachedSurface: u32,
     ) -> DD {
-        todo!()
+        let surfaces = state().surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut surface = surface.borrow_mut();
+        let Some(pos) = surface
+            .attachments
+            .iter()
+            .position(|s| s.borrow().addr == lpDDSAttachedSurface)
+        else {
+            return DD::ERR_GENERIC; // not attached
+        };
+        surface.attachments.remove(pos);
+        if surface
+            .attached
+            .as_ref()
+            .is_some_and(|s| s.borrow().addr == lpDDSAttachedSurface)
+        {
+            surface.attached = surface.attachments.first().cloned();
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn EnumAttachedSurfaces(
-        _ctx: &mut Context,
-        _this: u32,
-        _lpContext: u32,
-        _lpEnumSurfacesCallback: u32,
+        ctx: &mut Context,
+        this: u32,
+        lpContext: u32,
+        lpEnumSurfacesCallback: u32,
     ) -> DD {
-        todo!()
+        if lpEnumSurfacesCallback == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let attached: Vec<u32> = {
+            let surfaces = state().surf.borrow();
+            let Some(surface) = surfaces.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            surface
+                .borrow()
+                .attachments
+                .iter()
+                .map(|s| s.borrow().addr)
+                .collect()
+        };
+        for addr in attached {
+            let desc = {
+                let surfaces = state().surf.borrow();
+                let surface = surfaces.get(&addr).unwrap().borrow();
+                let (flags, count, r, g, b, a) = match surface.bytes_per_pixel {
+                    1 => (0x40 | 0x20, 8, 0, 0, 0, 0),
+                    2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
+                    _ => (0x40, 32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
+                };
+                DDSURFACEDESC2 {
+                    dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                    dwHeight: surface.height,
+                    dwWidth: surface.width,
+                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                    ddpfPixelFormat: DDPIXELFORMAT {
+                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                        dwFlags: flags,
+                        dwFourCC: 0,
+                        dwRGBBitCount: count,
+                        dwRBitMask: r,
+                        dwGBitMask: g,
+                        dwBBitMask: b,
+                        dwRGBAlphaBitMask: a,
+                    },
+                    ..Default::default()
+                }
+            };
+            let desc_addr = kernel32::lock().process_heap.alloc(
+                &mut ctx.memory,
+                std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            );
+            ctx.memory.write(desc_addr, desc);
+            let callback = ctx.indirect(lpEnumSurfacesCallback);
+            ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
+            let ret = ctx.cpu.regs.eax;
+            kernel32::lock()
+                .process_heap
+                .free(&mut ctx.memory, desc_addr);
+            if ret == 0 {
+                return DD::OK; // DDENUMRET_CANCEL
+            }
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -788,11 +944,19 @@ pub mod IDirectDrawSurface7 {
         lplpDDAttachedSurface: u32,
     ) -> DD {
         let surfaces = state().surf.borrow_mut();
-        let surface = surfaces.get(&this).unwrap().borrow();
-        ctx.memory.write(
-            lplpDDAttachedSurface,
-            surface.attached.as_ref().unwrap().borrow().addr,
-        );
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let surface = surface.borrow();
+        let Some(attached) = surface
+            .attached
+            .as_ref()
+            .or_else(|| surface.attachments.first())
+        else {
+            return DD::ERR_GENERIC; // nothing attached
+        };
+        ctx.memory
+            .write(lplpDDAttachedSurface, attached.borrow().addr);
         DD::OK
     }
 
@@ -841,13 +1005,58 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPalette(_ctx: &mut Context, _this: u32, _lplpDDPalette: u32) -> DD {
-        todo!()
+    pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
+        if lplpDDPalette == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let palette = surface.borrow().palette.clone();
+        drop(surfaces);
+        let Some(palette) = palette else {
+            ctx.memory.write::<u32>(lplpDDPalette, 0);
+            return DD::ERR_GENERIC; // DDERR_NOPALETTEATTACHED
+        };
+        let addr = state()
+            .palette
+            .borrow()
+            .iter()
+            .find_map(|(&addr, p)| Rc::ptr_eq(p, &palette).then_some(addr))
+            .unwrap_or(0);
+        ctx.memory.write::<u32>(lplpDDPalette, addr);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPixelFormat(_ctx: &mut Context, _this: u32, _lpDDPixelFormat: u32) -> DD {
-        todo!()
+    pub fn GetPixelFormat(ctx: &mut Context, this: u32, lpDDPixelFormat: u32) -> DD {
+        if lpDDPixelFormat == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let (flags, count, r, g, b, a) = match surface.borrow().bytes_per_pixel {
+            1 => (0x40 | 0x20, 8, 0, 0, 0, 0), // DDPF_RGB | DDPF_PALETTEINDEXED8
+            2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
+            _ => (0x40, 32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
+        };
+        ctx.memory.write(
+            lpDDPixelFormat,
+            DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: flags,
+                dwFourCC: 0,
+                dwRGBBitCount: count,
+                dwRBitMask: r,
+                dwGBitMask: g,
+                dwBBitMask: b,
+                dwRGBAlphaBitMask: a,
+            },
+        );
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -872,24 +1081,50 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDD: u32, _lpDDSurfaceDesc: u32) -> DD {
-        todo!()
+        // Nothing to do: the object is fully constructed when it's created.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn IsLost(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK // our surfaces are never lost
     }
 
     #[win32_derive::dllexport]
     pub fn Lock(
-        _ctx: &mut Context,
-        _this: u32,
+        ctx: &mut Context,
+        this: u32,
         _lpDestRect: u32,
-        _lpDDSurfaceDesc2: u32,
+        lpDDSurfaceDesc2: u32,
         _dwFlags: u32,
         _hEvent: u32,
     ) -> DD {
-        todo!()
+        if lpDDSurfaceDesc2 == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut surface = surface.borrow_mut();
+        let pixels = surface.lock(&mut ctx.memory);
+        ctx.memory.write(
+            lpDDSurfaceDesc2,
+            DDSURFACEDESC2 {
+                dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+                dwFlags: DDSD::WIDTH
+                    | DDSD::HEIGHT
+                    | DDSD::PITCH
+                    | DDSD::PIXELFORMAT
+                    | DDSD::LPSURFACE,
+                dwWidth: surface.width,
+                dwHeight: surface.height,
+                lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                lpSurface: pixels,
+                ..Default::default()
+            },
+        );
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -922,13 +1157,29 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetPalette(_ctx: &mut Context, _this: u32, _lpDDPalette: u32) -> DD {
-        todo!()
+    pub fn SetPalette(_ctx: &mut Context, this: u32, lpDDPalette: u32) -> DD {
+        let state = state();
+        let palettes = state.palette.borrow();
+        let Some(palette) = palettes.get(&lpDDPalette) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let surfaces = state.surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().palette = Some(palette.clone());
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn Unlock(_ctx: &mut Context, _this: u32, _lpSurfaceData: u32) -> DD {
-        todo!()
+    pub fn Unlock(ctx: &mut Context, this: u32, _lpSurfaceData: u32) -> DD {
+        let surfaces = state().surf.borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        // unlock presents window-backed surfaces itself.
+        surface.borrow_mut().unlock(&mut ctx.memory);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
