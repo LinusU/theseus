@@ -23,7 +23,20 @@ impl<'a> CodeGen<'a> {
             }
             Pushad => self.line("ctx.pushad();"),
             Popad => self.line("ctx.popad();"),
-            Mov => self.line(self.set_op(instr, 0, self.get_op(instr, 1))),
+            Mov => {
+                // Moves to or from control, debug, or test registers are
+                // privileged in Windows usermode, and on DOS would imply a
+                // mode switch this machine cannot model.
+                let privileged = instr.op_count() == 2
+                    && [instr.op_register(0), instr.op_register(1)]
+                        .iter()
+                        .any(|r| r.is_cr() || r.is_dr() || r.is_tr());
+                if privileged {
+                    self.line(format!("unhandled_interrupt(0xd, {:#x});", instr.ip32()));
+                } else {
+                    self.line(self.set_op(instr, 0, self.get_op(instr, 1)))
+                }
+            }
 
             Sete | Setne | Setg | Setge | Setl | Setle | Seta | Setae | Setb | Setbe | Seto
             | Setno | Sets | Setns | Setp | Setnp => {
@@ -191,6 +204,13 @@ impl<'a> CodeGen<'a> {
             // No SSE unit is modeled, but the MXCSR value is real state.
             Stmxcsr => self.line(self.set_op(instr, 0, "ctx.cpu.mxcsr".into())),
             Ldmxcsr => self.line(format!("ctx.cpu.mxcsr = {};", self.get_op(instr, 0))),
+            Hlt => {
+                // Privileged in Windows usermode; on DOS it merely idles for
+                // interrupts the model never delivers, so continue.
+                if !self.module.is_dos() {
+                    self.line(format!("unhandled_interrupt(0xd, {:#x});", instr.ip32()));
+                }
+            }
             Cmpxchg8b => {
                 // Compare EDX:EAX with m64; on equal write ECX:EBX, else load
                 // EDX:EAX from memory. Only ZF is affected.

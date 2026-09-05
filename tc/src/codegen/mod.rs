@@ -2494,6 +2494,37 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_hlt_and_privileged_register_moves() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for bytes in [
+            &[0xf4][..],         // hlt
+            &[0x0f, 0x20, 0xc0], // mov eax, cr0
+            &[0x0f, 0x22, 0xc0], // mov cr0, eax
+            &[0x0f, 0x21, 0xc7], // mov eax, dr7
+            &[0x0f, 0x23, 0xc0], // mov dr0, eax
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains("unhandled_interrupt(0xd, 0x0);"),
+                "wanted privileged fault in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_ins_outs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());
