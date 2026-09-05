@@ -117,6 +117,71 @@ pub fn cvttsd2si(src: [u32; 2]) -> u32 {
     (qword2(src) as i32) as u32
 }
 
+pub fn cvtsd2ss(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    let mut out = dst;
+    out[0] = (qword2(src) as f32).to_bits();
+    out
+}
+
+pub fn cvtss2sd(dst: [u32; 4], src: u32) -> [u32; 4] {
+    let mut out = dst;
+    set_qword(&mut out, 0, f32::from_bits(src) as f64);
+    out
+}
+
+pub fn cvtpd2ps(src: [u32; 4]) -> [u32; 4] {
+    [
+        (qword(src, 0) as f32).to_bits(),
+        (qword(src, 1) as f32).to_bits(),
+        0,
+        0,
+    ]
+}
+
+pub fn cvtps2pd(src: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    set_qword(&mut out, 0, f32::from_bits(src[0]) as f64);
+    set_qword(&mut out, 1, f32::from_bits(src[1]) as f64);
+    out
+}
+
+pub fn cvtdq2ps(src: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| (src[i] as i32 as f32).to_bits())
+}
+
+pub fn cvtps2dq(src: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| (f32::from_bits(src[i]).round() as i32) as u32)
+}
+
+pub fn cvttps2dq(src: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| (f32::from_bits(src[i]) as i32) as u32)
+}
+
+pub fn cvtdq2pd(src: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    set_qword(&mut out, 0, (src[0] as i32) as f64);
+    set_qword(&mut out, 1, (src[1] as i32) as f64);
+    out
+}
+
+pub fn cvtpd2dq(src: [u32; 4]) -> [u32; 4] {
+    [
+        (qword(src, 0).round() as i32) as u32,
+        (qword(src, 1).round() as i32) as u32,
+        0,
+        0,
+    ]
+}
+
+pub fn cvttpd2dq(src: [u32; 4]) -> [u32; 4] {
+    [
+        (qword(src, 0) as i32) as u32,
+        (qword(src, 1) as i32) as u32,
+        0,
+        0,
+    ]
+}
+
 pub fn movsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     [src[0], src[1], dst[2], dst[3]]
 }

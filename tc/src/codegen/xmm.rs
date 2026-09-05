@@ -322,6 +322,26 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(instr, 0, format!("{func}({src})")));
             }
 
+            // Scalar mixed-precision and packed double/single conversions.
+            Cvtsd2ss => {
+                let src = self.xmm_get_64(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!("{} = cvtsd2ss({}, {});", xmm_reg(reg), dst, src));
+            }
+            Cvtss2sd => {
+                let src = self.xmm_get_32(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!("{} = cvtss2sd({}, {});", xmm_reg(reg), dst, src));
+            }
+            Cvtpd2ps | Cvtps2pd | Cvtdq2ps | Cvtps2dq | Cvttps2dq | Cvtdq2pd | Cvtpd2dq
+            | Cvttpd2dq => {
+                let func = instr_name(instr);
+                let src = self.xmm_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("{func}({src})")));
+            }
+
             // MMX/XMM packed conversions. CVTPI2PS reads a 64-bit MMX value and
             // converts two int32s to two floats in the low qword of the XMM
             // destination. CVTPS2PI/CVTTPS2PI read the low qword of an XMM
