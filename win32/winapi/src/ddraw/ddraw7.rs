@@ -334,8 +334,54 @@ pub mod IDirectDraw7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDisplayMode(_ctx: &mut Context, _this: u32, _lpDDSurfaceDesc2: u32) -> DD {
-        todo!()
+    pub fn GetDisplayMode(ctx: &mut Context, this: u32, lpDDSurfaceDesc2: u32) -> DD {
+        if lpDDSurfaceDesc2 == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc2..])
+        else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if desc.dwSize != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+
+        let ddraw = state().get_ddraw(this);
+        let (width, height) = match &ddraw.window {
+            Some(window) => {
+                let window = window.borrow();
+                (window.width, window.height)
+            }
+            None => (640, 480),
+        };
+        let bpp = ddraw.bytes_per_pixel * 8;
+        drop(ddraw);
+
+        let (flags, r, g, b) = match bpp {
+            8 => (0x40 | 0x20, 0, 0, 0),
+            16 => (0x40, 0xF800, 0x07E0, 0x001F),
+            _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF),
+        };
+        let mut desc = DDSURFACEDESC2::default();
+        desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
+        desc.dwFlags =
+            DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH | DDSD::REFRESHRATE;
+        desc.dwWidth = width;
+        desc.dwHeight = height;
+        desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
+        desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle = 60;
+        desc.ddpfPixelFormat = DDPIXELFORMAT {
+            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+            dwFlags: flags,
+            dwFourCC: 0,
+            dwRGBBitCount: bpp,
+            dwRBitMask: r,
+            dwGBitMask: g,
+            dwBBitMask: b,
+            dwRGBAlphaBitMask: 0,
+        };
+        ctx.memory.write(lpDDSurfaceDesc2, desc);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
