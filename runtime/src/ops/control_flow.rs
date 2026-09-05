@@ -18,6 +18,13 @@ impl Context {
         addr
     }
 
+    pub fn callf32(&mut self, ret: u32, seg: u16, addr: Cont) -> Cont {
+        self.push32(self.cpu.regs.cs as u32);
+        self.push32(ret);
+        self.cpu.regs.cs = seg;
+        addr
+    }
+
     /// Call a ContFn (builtin implementation) synchronously, without returning a continuation.
     pub fn call_builtin(&mut self, from: u32, func: ContFn) {
         // Because ContFn is stdcall it expects to pop a return address off the stack.
@@ -331,6 +338,22 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
+    }
+
+    #[test]
+    fn callf32_pushes_flat_far_return_state() {
+        let mut ctx = context();
+        ctx.cpu.regs.cs = 0x0023;
+        ctx.cpu.regs.esp = 0x100;
+
+        let next = ctx.callf32(0x1234, 0x001b, Cont(from));
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.cs, 0x001b);
+        assert_eq!(ctx.cpu.regs.esp, 0xf8);
+        assert_eq!(ctx.memory.read::<u32>(0xf8), 0x1234);
+        assert_eq!(ctx.memory.read::<u32>(0xfc), 0x0023);
     }
 
     #[test]

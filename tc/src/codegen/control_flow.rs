@@ -53,7 +53,10 @@ impl<'a> CodeGen<'a> {
                         cont = "ctx.indirect32(addr)".into();
                     }
                     iced_x86::MemorySize::SegPtr32 => {
-                        extra = Some(format!("let addr = ctx.memory.read::<u32>({addr});"));
+                        extra = Some(format!(
+                            "let addr = ctx.memory.read::<u32>({addr}); let seg = ctx.memory.read::<u16>(addr.wrapping_add(4u32));"
+                        ));
+                        seg = Some("seg".into());
                         cont = "ctx.indirect32(addr)".into();
                     }
                     s => cont = format!("todo!(\"{:?}\")", s),
@@ -102,8 +105,13 @@ impl<'a> CodeGen<'a> {
                         self.line(extra);
                     }
                     if let Some(seg) = seg {
+                        let call = if self.module.bitness() == 16 {
+                            "callf16"
+                        } else {
+                            "callf32"
+                        };
                         self.line(format!(
-                            "ctx.callf16({ip:#x}, {seg}, {cont})",
+                            "ctx.{call}({ip:#x}, {seg}, {cont})",
                             ip = instr.next_ip().local()
                         ));
                     } else {

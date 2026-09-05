@@ -933,7 +933,7 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.call32(0x3, ctx.indirect32(addr))")
+                .contains("ctx.callf32(0x3, seg, ctx.indirect32(addr))")
         );
     }
 
