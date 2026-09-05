@@ -6,8 +6,8 @@ use crate::{
 
 impl<'a> CodeGen<'a> {
     /// Codegen the Cont for a jump to an statically known address.
-    fn resolve_jmp(&mut self, ip: IP) -> String {
-        self.resolve_cont(ip.to_addr())
+    fn resolve_jmp(&mut self, ip: IP, from: u32) -> String {
+        self.resolve_cont(ip.to_addr(), from)
     }
 
     fn jmp_target(&mut self, instr: &Instr) -> (Option<String>, Option<String>, String) {
@@ -18,22 +18,22 @@ impl<'a> CodeGen<'a> {
         match instr.iced.op0_kind() {
             iced_x86::OpKind::NearBranch16 => {
                 let ip = instr.ip.with_local(instr.iced.near_branch16() as u32);
-                cont = self.resolve_jmp(ip);
+                cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
             iced_x86::OpKind::NearBranch32 => {
                 let ip = instr.ip.with_local(instr.iced.near_branch32());
-                cont = self.resolve_jmp(ip);
+                cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
             iced_x86::OpKind::FarBranch16 => {
                 let ip =
                     IP::Seg((instr.iced.far_branch_selector(), instr.iced.far_branch16()).into());
                 seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
-                cont = self.resolve_jmp(ip);
+                cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
             iced_x86::OpKind::FarBranch32 => {
                 let ip = IP::Flat(instr.iced.far_branch32());
                 seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
-                cont = self.resolve_jmp(ip);
+                cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
             k if is_memory_op(k) => {
                 // If it's like `jmp [someaddr]` where someaddr is in the IAT, resolve it directly.
@@ -170,7 +170,7 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("ctx.iret{bitness}()"));
             }
             Into => {
-                let next = self.resolve_jmp(instr.next_ip());
+                let next = self.resolve_jmp(instr.next_ip(), instr.ip.to_addr());
                 self.line("if ctx.cpu.flags.contains(Flags::OF) {");
                 if self.module.is_dos() {
                     // INTO is a trap: the pushed return address is the
@@ -190,7 +190,7 @@ impl<'a> CodeGen<'a> {
             }
             Je | Jne | Jb | Js | Jns | Jo | Jno | Jp | Jnp | Ja | Jae | Jl | Jg | Jge | Jecxz
             | Jle | Jbe | Jcxz | Loop | Loope | Loopne => {
-                let next = self.resolve_jmp(instr.next_ip());
+                let next = self.resolve_jmp(instr.next_ip(), instr.ip.to_addr());
                 let (None, None, cont) = self.jmp_target(instr) else {
                     panic!()
                 };

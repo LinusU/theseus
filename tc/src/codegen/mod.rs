@@ -319,11 +319,14 @@ impl<'a> CodeGen<'a> {
     /// Codegen a Cont expression for a jump to a statically known address.
     /// Safe to evaluate in argument position: an unknown target resolves to a
     /// stub that only panics once actually jumped to.
-    pub fn resolve_cont(&mut self, addr: u32) -> String {
+    /// `from` is the address of the instruction that references `addr`, if
+    /// known, and is included in the diagnostic so the source can be tracked
+    /// down.
+    pub fn resolve_cont(&mut self, addr: u32, from: u32) -> String {
         if let Some(block) = self.blocks.get(&addr) {
             format!("Cont({})", block.name())
         } else {
-            log::warn!("static jmp to unknown block {addr:08x}");
+            log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
             self.unknown.insert(addr);
             format!("Cont(unk_{addr:x})")
         }
@@ -360,7 +363,7 @@ impl<'a> CodeGen<'a> {
                 if last.iced.flow_control() == iced_x86::FlowControl::Next
                     || (last.iced.mnemonic() == iced_x86::Mnemonic::Call && last.hint.is_some())
                 {
-                    let cont = self.resolve_cont(last.next_ip().to_addr());
+                    let cont = self.resolve_cont(last.next_ip().to_addr(), last.ip.to_addr());
                     self.line(cont);
                 }
 
