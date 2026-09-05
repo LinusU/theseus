@@ -318,7 +318,22 @@ pub mod IDirectDraw {
             let desc_addr = kernel32::lock()
                 .process_heap
                 .alloc(&mut ctx.memory, desc.dwSize);
-            desc.write_to_prefix(&mut ctx.memory[desc_addr..]).unwrap();
+            let Some(buf) = ctx
+                .memory
+                .bytes
+                .get_mut(desc_addr as usize..(desc_addr + desc.dwSize) as usize)
+            else {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+                return DD::ERR_INVALIDPARAMS;
+            };
+            if desc.write_to(buf).is_err() {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+                return DD::ERR_INVALIDPARAMS;
+            }
             let callback = ctx.indirect(lpEnumSurfacesCallback);
             ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
             let ret = ctx.cpu.regs.eax;
@@ -740,7 +755,22 @@ pub mod IDirectDrawSurface {
             let desc_addr = kernel32::lock()
                 .process_heap
                 .alloc(&mut ctx.memory, desc.dwSize);
-            desc.write_to_prefix(&mut ctx.memory[desc_addr..]).unwrap();
+            let Some(buf) = ctx
+                .memory
+                .bytes
+                .get_mut(desc_addr as usize..(desc_addr + desc.dwSize) as usize)
+            else {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+                return DD::ERR_INVALIDPARAMS;
+            };
+            if desc.write_to(buf).is_err() {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+                return DD::ERR_INVALIDPARAMS;
+            }
             let callback = ctx.indirect(lpEnumSurfacesCallback);
             ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
             let ret = ctx.cpu.regs.eax;
