@@ -1648,7 +1648,7 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32);")
+                .contains("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32 & !2);")
         );
     }
 
@@ -1690,7 +1690,7 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop32());")
+                .contains("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop32() & !2);")
         );
     }
 
