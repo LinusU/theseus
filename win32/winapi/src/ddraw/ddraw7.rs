@@ -257,8 +257,80 @@ pub mod IDirectDraw7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetCaps(_ctx: &mut Context, _this: u32, _lpDDDriverCaps: u32, _lpDDEmulCaps: u32) -> DD {
-        todo!()
+    pub fn GetCaps(ctx: &mut Context, _this: u32, lpDDDriverCaps: u32, lpDDEmulCaps: u32) -> DD {
+        let all_caps = 0xFF7FFFFF;
+        let all_caps2 = 0xFFFFFFFF;
+        let dds = DDSCAPS2 {
+            dwCaps: DDSCAPS::from_bits_truncate(all_caps),
+            dwCaps2: all_caps2,
+            dwCaps3: 0,
+            dwCaps4: 0,
+        };
+        let mut caps = DDCAPS_DX7 {
+            dwSize: std::mem::size_of::<DDCAPS_DX7>() as u32,
+            dwCaps: all_caps,
+            dwCaps2: all_caps2,
+            dwCKeyCaps: 0xFFFFFFFF,
+            dwFXCaps: 0xFFFFFFFF,
+            dwFXAlphaCaps: 0xFFFFFFFF,
+            dwPalCaps: 0xFFFFFFFF,
+            dwSVCaps: 0xFFFFFFFF,
+            dwAlphaBltConstBitDepths: 0xFFFFFFFF,
+            dwAlphaBltPixelBitDepths: 0xFFFFFFFF,
+            dwAlphaBltSurfaceBitDepths: 0xFFFFFFFF,
+            dwAlphaOverlayConstBitDepths: 0xFFFFFFFF,
+            dwAlphaOverlayPixelBitDepths: 0xFFFFFFFF,
+            dwAlphaOverlaySurfaceBitDepths: 0xFFFFFFFF,
+            dwZBufferBitDepths: 0xFFFFFFFF,
+            dwVidMemTotal: 256 * 1024 * 1024,
+            dwVidMemFree: 256 * 1024 * 1024,
+            dwMaxVisibleOverlays: 0,
+            dwCurrVisibleOverlays: 0,
+            dwNumFourCCCodes: 0,
+            dwAlignBoundarySrc: 0,
+            dwAlignSizeSrc: 0,
+            dwAlignBoundaryDest: 0,
+            dwAlignSizeDest: 0,
+            dwAlignStrideAlign: 0,
+            dwRops: [0xFFFFFFFF; 8],
+            ddsOldCaps: DDSCAPS::from_bits_truncate(all_caps),
+            dwMinOverlayStretch: 1,
+            dwMaxOverlayStretch: 0x7FFFFFFF,
+            dwMinLiveVideoStretch: 1,
+            dwMaxLiveVideoStretch: 0x7FFFFFFF,
+            dwMinHwCodecStretch: 1,
+            dwMaxHwCodecStretch: 0x7FFFFFFF,
+            dwReserved1: 0,
+            dwReserved2: 0,
+            dwReserved3: 0,
+            dwSVBCaps: all_caps,
+            dwSVBCKeyCaps: 0xFFFFFFFF,
+            dwSVBFXCaps: 0xFFFFFFFF,
+            dwSVBRops: [0xFFFFFFFF; 8],
+            dwVSBCaps: all_caps,
+            dwVSBCKeyCaps: 0xFFFFFFFF,
+            dwVSBFXCaps: 0xFFFFFFFF,
+            dwVSBRops: [0xFFFFFFFF; 8],
+            dwSSBCaps: all_caps,
+            dwSSBCKeyCaps: 0xFFFFFFFF,
+            dwSSBFXCaps: 0xFFFFFFFF,
+            dwSSBRops: [0xFFFFFFFF; 8],
+            dwMaxVideoPorts: 0,
+            dwCurrVideoPorts: 0,
+            dwSVBCaps2: all_caps2,
+            dwNLVBCaps: all_caps,
+            dwNLVBCaps2: all_caps2,
+            dwNLVBCKeyCaps: 0xFFFFFFFF,
+            dwNLVBFXCaps: 0xFFFFFFFF,
+            dwNLVBRops: [0xFFFFFFFF; 8],
+            ddsCaps: dds,
+        };
+        ctx.memory.write(lpDDDriverCaps, caps);
+        if lpDDEmulCaps != 0 {
+            caps.dwCaps &= !0x00004000; // claim 3D is hardware only
+            ctx.memory.write(lpDDEmulCaps, caps);
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]

@@ -691,3 +691,33 @@ pub fn get_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
     ctx.memory.write::<u32>(lpDDColorKey + 4, key.high);
     DD::OK
 }
+
+#[win32_derive::dllexport]
+pub fn DirectDrawEnumerateW(_ctx: &mut Context, _lpCallback: u32, _lpContext: u32) -> DD {
+    DD::OK
+}
+
+#[win32_derive::dllexport]
+pub fn DirectDrawEnumerateExW(
+    _ctx: &mut Context,
+    _lpCallback: u32,
+    _lpContext: u32,
+    _dwFlags: u32,
+) -> DD {
+    DD::OK
+}
+
+#[win32_derive::dllexport]
+pub fn DirectDrawCreateClipper(
+    _ctx: &mut Context,
+    _dwFlags: u32,
+    _lplpDDClipper: u32,
+    _pUnkOuter: u32,
+) -> DD {
+    DD::ERR_GENERIC
+}
+
+#[win32_derive::dllexport]
+pub fn GetDXVB(_ctx: &mut Context) -> u32 {
+    0
+}

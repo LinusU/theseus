@@ -30,6 +30,8 @@ impl Into<ABIReturn> for DD {
 #[derive(
     Debug,
     Default,
+    Clone,
+    Copy,
     zerocopy::FromBytes,
     zerocopy::Immutable,
     zerocopy::KnownLayout,
@@ -37,10 +39,12 @@ impl Into<ABIReturn> for DD {
 )]
 pub struct DDSCAPS2 {
     pub dwCaps: DDSCAPS,
-    dwCaps2: u32,
-    dwCaps3: u32,
-    dwCaps4: u32,
+    pub dwCaps2: u32,
+    pub dwCaps3: u32,
+    pub dwCaps4: u32,
 }
+
+impl Copy for DDSCAPS2 {}
 
 win32flags! {
     pub struct DDSCAPS {
@@ -543,6 +547,75 @@ pub struct DDDEVICEIDENTIFIER {
     zerocopy::Immutable,
     zerocopy::KnownLayout,
 )]
+#[repr(C, packed)]
+#[derive(
+    Debug,
+    Clone,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
+    zerocopy::KnownLayout,
+)]
+pub struct DDCAPS_DX7 {
+    pub dwSize: u32,
+    pub dwCaps: u32,
+    pub dwCaps2: u32,
+    pub dwCKeyCaps: u32,
+    pub dwFXCaps: u32,
+    pub dwFXAlphaCaps: u32,
+    pub dwPalCaps: u32,
+    pub dwSVCaps: u32,
+    pub dwAlphaBltConstBitDepths: u32,
+    pub dwAlphaBltPixelBitDepths: u32,
+    pub dwAlphaBltSurfaceBitDepths: u32,
+    pub dwAlphaOverlayConstBitDepths: u32,
+    pub dwAlphaOverlayPixelBitDepths: u32,
+    pub dwAlphaOverlaySurfaceBitDepths: u32,
+    pub dwZBufferBitDepths: u32,
+    pub dwVidMemTotal: u32,
+    pub dwVidMemFree: u32,
+    pub dwMaxVisibleOverlays: u32,
+    pub dwCurrVisibleOverlays: u32,
+    pub dwNumFourCCCodes: u32,
+    pub dwAlignBoundarySrc: u32,
+    pub dwAlignSizeSrc: u32,
+    pub dwAlignBoundaryDest: u32,
+    pub dwAlignSizeDest: u32,
+    pub dwAlignStrideAlign: u32,
+    pub dwRops: [u32; 8],
+    pub ddsOldCaps: DDSCAPS,
+    pub dwMinOverlayStretch: u32,
+    pub dwMaxOverlayStretch: u32,
+    pub dwMinLiveVideoStretch: u32,
+    pub dwMaxLiveVideoStretch: u32,
+    pub dwMinHwCodecStretch: u32,
+    pub dwMaxHwCodecStretch: u32,
+    pub dwReserved1: u32,
+    pub dwReserved2: u32,
+    pub dwReserved3: u32,
+    pub dwSVBCaps: u32,
+    pub dwSVBCKeyCaps: u32,
+    pub dwSVBFXCaps: u32,
+    pub dwSVBRops: [u32; 8],
+    pub dwVSBCaps: u32,
+    pub dwVSBCKeyCaps: u32,
+    pub dwVSBFXCaps: u32,
+    pub dwVSBRops: [u32; 8],
+    pub dwSSBCaps: u32,
+    pub dwSSBCKeyCaps: u32,
+    pub dwSSBFXCaps: u32,
+    pub dwSSBRops: [u32; 8],
+    pub dwMaxVideoPorts: u32,
+    pub dwCurrVideoPorts: u32,
+    pub dwSVBCaps2: u32,
+    pub dwNLVBCaps: u32,
+    pub dwNLVBCaps2: u32,
+    pub dwNLVBCKeyCaps: u32,
+    pub dwNLVBFXCaps: u32,
+    pub dwNLVBRops: [u32; 8],
+    pub ddsCaps: DDSCAPS2,
+}
+
 pub struct DDDEVICEIDENTIFIER2 {
     pub szDriver: [u8; 512],
     pub szDescription: [u8; 512],

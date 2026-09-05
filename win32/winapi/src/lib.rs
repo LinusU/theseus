@@ -69,6 +69,42 @@ pub const BUILTIN_EXPORTS: &[(&str, &str, ContFn)] = &[
         "DirectDrawEnumerateExA",
         ddraw::DirectDrawEnumerateExA_stdcall,
     ),
+    (
+        "blade",
+        "DirectDrawCreate",
+        ddraw::DirectDrawCreate_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawCreateEx",
+        ddraw::DirectDrawCreateEx_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawCreateClipper",
+        ddraw::DirectDrawCreateClipper_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawEnumerateA",
+        ddraw::DirectDrawEnumerateA_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawEnumerateW",
+        ddraw::DirectDrawEnumerateW_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawEnumerateExA",
+        ddraw::DirectDrawEnumerateExA_stdcall,
+    ),
+    (
+        "blade",
+        "DirectDrawEnumerateExW",
+        ddraw::DirectDrawEnumerateExW_stdcall,
+    ),
+    ("blade", "GetDXVB", ddraw::GetDXVB_stdcall),
 ];
 
 pub use dllexport::{ABIReturn, FromABIParam};
