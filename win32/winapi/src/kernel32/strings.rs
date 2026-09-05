@@ -58,12 +58,15 @@ pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
 
 #[win32_derive::dllexport]
 pub fn lstrcmpA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i32 {
-    match ctx
-        .memory
-        .read_str(lpString1.addr)
-        .as_bytes()
-        .cmp(ctx.memory.read_str(lpString2.addr).as_bytes())
-    {
+    let Some(a) = read_c_string(ctx, lpString1.addr) else {
+        log::error!("lstrcmpA: unterminated first string");
+        return 0;
+    };
+    let Some(b) = read_c_string(ctx, lpString2.addr) else {
+        log::error!("lstrcmpA: unterminated second string");
+        return 0;
+    };
+    match a.cmp(&b) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,
@@ -199,6 +202,10 @@ mod tests {
             0x1200
         );
         assert_eq!(&ctx.memory[0x1200..][..4], &[b'X', 0x80, b'C', 0]);
+
+        ctx.memory[0x1300..][..2].copy_from_slice(&[0x80, 0]);
+        ctx.memory[0x1400..][..2].copy_from_slice(&[0x81, 0]);
+        assert_eq!(lstrcmpA(&mut ctx, Ptr::new(0x1300), Ptr::new(0x1400)), -1);
 
         ctx.memory[0x3ff0..].fill(0xff);
         assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x3ff0)), 0);
