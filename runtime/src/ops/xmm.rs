@@ -405,3 +405,73 @@ pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
         if result { 0xffff_ffff } else { 0 }
     })
 }
+
+fn cmppd_result(a: f64, b: f64, predicate: u8) -> bool {
+    match predicate {
+        0 => a == b,
+        1 => a < b,
+        2 => a <= b,
+        3 => a.is_nan() || b.is_nan(),
+        4 => a != b,
+        5 => !(a < b),
+        6 => !(a <= b),
+        7 => !a.is_nan() && !b.is_nan(),
+        _ => false,
+    }
+}
+
+pub fn cmppd(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    for n in 0..2 {
+        let bits = if cmppd_result(qword(a, n), qword(b, n), predicate) {
+            0xffff_ffff_ffff_ffffu64
+        } else {
+            0
+        };
+        out[n * 2] = bits as u32;
+        out[n * 2 + 1] = (bits >> 32) as u32;
+    }
+    out
+}
+
+pub fn cmpsd(dst: [u32; 4], src: [u32; 2], predicate: u8) -> [u32; 4] {
+    let mut out = dst;
+    let bits = if cmppd_result(qword(dst, 0), qword2(src), predicate) {
+        0xffff_ffff_ffff_ffffu64
+    } else {
+        0
+    };
+    out[0] = bits as u32;
+    out[1] = (bits >> 32) as u32;
+    out
+}
+
+fn compare_unordered_f64(a: f64, b: f64) -> (bool, bool, bool) {
+    if a.is_nan() || b.is_nan() {
+        (true, true, true)
+    } else if a == b {
+        (false, true, false)
+    } else if a < b {
+        (true, false, false)
+    } else {
+        (false, false, false)
+    }
+}
+
+pub fn comisd_update_flags(flags: crate::Flags, a: [u32; 2], b: [u32; 2]) -> crate::Flags {
+    let (cf, zf, pf) = compare_unordered_f64(qword2(a), qword2(b));
+    let mut flags = flags;
+    flags.set(crate::Flags::CF, cf);
+    flags.set(crate::Flags::ZF, zf);
+    flags.set(crate::Flags::PF, pf);
+    flags.remove(crate::Flags::OF | crate::Flags::SF | crate::Flags::AF);
+    flags
+}
+
+pub fn ucomisd_update_flags(flags: crate::Flags, a: [u32; 2], b: [u32; 2]) -> crate::Flags {
+    comisd_update_flags(flags, a, b)
+}
+
+pub fn movmskpd(src: [u32; 4]) -> u32 {
+    ((src[1] >> 31) & 1) | (((src[3] >> 31) & 1) << 1)
+}

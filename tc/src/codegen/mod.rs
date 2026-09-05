@@ -3616,6 +3616,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn codegen_handles_sse2_double_comparisons() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // cmppd xmm0, xmm1, 0
+            (
+                &[0x66, 0x0f, 0xc2, 0xc1, 0x00][..],
+                "ctx.cpu.xmm.xmm0 = cmppd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1, 0x0);",
+            ),
+            // cmpsd xmm0, xmm1, 1
+            (
+                &[0xf2, 0x0f, 0xc2, 0xc1, 0x01],
+                "ctx.cpu.xmm.xmm0 = cmpsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1), 0x1);",
+            ),
+            // comisd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x2f, 0xc1],
+                "ctx.cpu.flags = comisd_update_flags(ctx.cpu.flags, low_qword(ctx.cpu.xmm.xmm0), low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // ucomisd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x2e, 0x00],
+                "ctx.cpu.flags = ucomisd_update_flags(ctx.cpu.flags, low_qword(ctx.cpu.xmm.xmm0), ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movmskpd eax, xmm1
+            (
+                &[0x66, 0x0f, 0x50, 0xc1],
+                "ctx.cpu.regs.eax = movmskpd(ctx.cpu.xmm.xmm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
 }
 
 fn rustfmt(text: &str) -> Result<String> {

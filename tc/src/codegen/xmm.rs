@@ -123,9 +123,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("{func}({})", self.xmm_get(instr, 1))));
             }
 
-            // Packed single-precision comparisons. MINPS/MAXPS preserve the
-            // non-NaN operand when one is NaN; CMPPS uses the 3-bit predicate
-            // in the trailing immediate.
+            // Packed single/double-precision comparisons. MINPS/MAXPS preserve
+            // the non-NaN operand when one is NaN; CMPPS/CMPPD use the 3-bit
+            // predicate in the trailing immediate.
             Minps | Maxps => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(
@@ -148,6 +148,30 @@ impl<'a> CodeGen<'a> {
                         self.xmm_get(instr, 0),
                         self.xmm_get(instr, 1)
                     ),
+                ));
+            }
+            Cmppd => {
+                let pred = format!("{:#x}", instr.immediate8());
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "cmppd({}, {}, {pred})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+            Cmpsd => {
+                let pred = format!("{:#x}", instr.immediate8());
+                let src = self.xmm_get_64(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!(
+                    "{} = cmpsd({}, {}, {pred});",
+                    xmm_reg(reg),
+                    dst,
+                    src
                 ));
             }
 
@@ -309,12 +333,24 @@ impl<'a> CodeGen<'a> {
                     "ctx.cpu.flags = {func}_update_flags(ctx.cpu.flags, {a}, {b});"
                 ));
             }
+            Comisd | Ucomisd => {
+                let func = instr_name(instr);
+                let a = self.xmm_get_64(instr, 0);
+                let b = self.xmm_get_64(instr, 1);
+                self.line(format!(
+                    "ctx.cpu.flags = {func}_update_flags(ctx.cpu.flags, {a}, {b});"
+                ));
+            }
 
-            // Extract the top bit of each packed float lane into a 4-bit mask
-            // in a GPR.
+            // Extract the top bit of each packed float/double lane into a 4/2-bit
+            // mask in a GPR.
             Movmskps => {
                 let src = self.xmm_get(instr, 1);
                 self.line(self.set_op(instr, 0, format!("movmskps({src})")));
+            }
+            Movmskpd => {
+                let src = self.xmm_get(instr, 1);
+                self.line(self.set_op(instr, 0, format!("movmskpd({src})")));
             }
 
             // 64-bit low/high loads and stores. Memory loads replace the
