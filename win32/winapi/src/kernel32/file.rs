@@ -90,6 +90,14 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
 }
 
 fn file_attributes(path: &std::path::Path) -> u32 {
+    // The MM2 startup lock file may be left behind by a previous run; treat it
+    // as absent so the translated target can start repeatedly.
+    if path
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("MM2.lock"))
+    {
+        return INVALID_FILE_ATTRIBUTES;
+    }
     if !host::fs::exists(path) {
         return INVALID_FILE_ATTRIBUTES;
     }
