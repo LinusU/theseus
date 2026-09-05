@@ -107,9 +107,11 @@ pub struct BITMAP {
 #[win32_derive::dllexport]
 pub fn GetObjectA(ctx: &mut Context, handle: HGDIOBJ, size: u32, lpOut: Ptr<BITMAP>) -> u32 {
     let state = gdi32::lock();
-    let object = state.objects.get(handle).unwrap();
+    let Some(object) = state.objects.get(handle) else {
+        return 0;
+    };
     let Object::Bitmap(bitmap) = object else {
-        panic!();
+        return 0;
     };
     assert!(size == std::mem::size_of::<BITMAP>() as u32);
     let fields = BITMAP {

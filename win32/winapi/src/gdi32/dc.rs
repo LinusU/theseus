@@ -375,14 +375,18 @@ pub enum R2 {
 #[win32_derive::dllexport]
 pub fn SetROP2(_ctx: &mut Context, hdc: HDC, rop2: R2) -> i32 {
     let mut state = gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return 0;
+    };
     std::mem::replace(&mut dc.rop2, rop2) as i32
 }
 
 #[win32_derive::dllexport]
 pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
     let mut state = gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return false;
+    };
     let bitmap = dc.bitmap();
     assert!(bitmap.is_simple());
     let stride = bitmap.stride();
@@ -462,7 +466,9 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
 #[win32_derive::dllexport]
 pub fn MoveToEx(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lppt: Ptr<POINT>) -> bool {
     let mut state = gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return false;
+    };
     dc.pos = POINT { x, y };
     if lppt.addr != 0 {
         lppt.write(&mut ctx.memory, dc.pos).unwrap();
@@ -475,14 +481,18 @@ pub fn SetLayout(_ctx: &mut Context, hdc: HDC, l: u32 /* DC_LAYOUT */) -> u32 {
     // RTL mirroring is not modeled, but the layout is recorded so the
     // documented "previous layout" return value stays accurate.
     let mut state = gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return 0xFFFF_FFFF; // GDI_ERROR
+    };
     std::mem::replace(&mut dc.layout, l)
 }
 
 #[win32_derive::dllexport]
 pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) -> COLORREF {
     let mut state = gdi32::lock();
-    let dc = state.dcs.get_mut(hdc).unwrap();
+    let Some(dc) = state.dcs.get_mut(hdc) else {
+        return COLORREF(0xFFFF_FFFF); // CLR_INVALID
+    };
     let bitmap = dc.bitmap();
     if !bitmap.is_simple()
         || x < 0

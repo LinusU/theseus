@@ -51,10 +51,14 @@ pub fn StretchBlt(
     assert_eq!(rop, 0xcc0020);
 
     let state = gdi32::lock();
-    let dc_src = state.dcs.get(hdcSrc).unwrap();
+    let Some(dc_src) = state.dcs.get(hdcSrc) else {
+        return false;
+    };
     let bmp_src = &dc_src.bitmap.1;
 
-    let dc_dst = state.dcs.get(hdcDest).unwrap();
+    let Some(dc_dst) = state.dcs.get(hdcDest) else {
+        return false;
+    };
     let bmp_dst = &dc_dst.bitmap.1;
     assert!(bmp_dst.is_simple());
 
@@ -131,7 +135,9 @@ pub fn SetDIBitsToDevice(
     assert_eq!(cLines, h); // why would these ever be different?
 
     let state = gdi32::lock();
-    let dc_dst = state.dcs.get(hdc).unwrap();
+    let Some(dc_dst) = state.dcs.get(hdc) else {
+        return 0;
+    };
     let bmp_dst = &dc_dst.bitmap.1;
     assert!(bmp_dst.is_simple());
 
