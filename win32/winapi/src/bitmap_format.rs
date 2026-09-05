@@ -162,7 +162,7 @@ impl Bitmap {
         let palette_len = if header.bcBitCount <= 8 {
             2usize.pow(header.bcBitCount as u32)
         } else {
-            todo!();
+            0 // >8bpp core bitmaps have no color table
         };
         let (palette, buf) = <[[u8; 3]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBTRIPLE
         let palette = palette
@@ -192,7 +192,7 @@ impl Bitmap {
         } else if header.biBitCount <= 8 {
             2usize.pow(header.biBitCount as u32)
         } else {
-            todo!()
+            0 // >8bpp BI_RGB bitmaps have no color table
         };
 
         let (palette, buf) = <[[u8; 4]]>::ref_from_prefix_with_elems(buf, palette_len).unwrap(); // RGBQUAD
@@ -235,6 +235,36 @@ impl Bitmap {
                     } else {
                         src[(srci / 2) as usize] & 0xf
                     } as usize];
+                    dst[dsti..][..4].copy_from_slice(&color.to_pixel());
+                }
+            }
+            1 => {
+                let src = &pixels[(y * self.stride()) as usize..];
+                for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
+                    let bit = 7 - (srci % 8);
+                    let color = self.palette[((src[(srci / 8) as usize] >> bit) & 1) as usize];
+                    dst[dsti..][..4].copy_from_slice(&color.to_pixel());
+                }
+            }
+            16 => {
+                // BI_RGB 16bpp stores pixels as RGB555.
+                let src = &pixels[(y * self.stride()) as usize..];
+                for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
+                    let v =
+                        u16::from_le_bytes([src[srci as usize * 2], src[srci as usize * 2 + 1]]);
+                    let [r5, g5, b5] = [(v >> 10) & 0x1f, (v >> 5) & 0x1f, v & 0x1f];
+                    let color =
+                        COLORREF::from_rgb((r5 << 3) as u8, (g5 << 3) as u8, (b5 << 3) as u8);
+                    dst[dsti..][..4].copy_from_slice(&color.to_pixel());
+                }
+            }
+            24 => {
+                let src = &pixels[(y * self.stride()) as usize..];
+                for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
+                    let [b, g, r] = src[srci as usize * 3..][..3] else {
+                        panic!()
+                    };
+                    let color = COLORREF::from_rgb(r, g, b);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
