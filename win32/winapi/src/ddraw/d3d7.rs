@@ -19,6 +19,19 @@ use crate::{
     kernel32,
 };
 
+fn log_vertex_start(ctx: &mut Context, v: u32, vcount: u32, fvf: u32) {
+    if v == 0 || vcount == 0 || fvf == 0 {
+        return;
+    }
+    let size = vertex_size(fvf);
+    let max = (size * vcount.min(2)).min(64) as usize;
+    let mut bytes = Vec::with_capacity(max);
+    for i in 0..max as u32 {
+        bytes.push(ctx.memory.read::<u8>(v + i));
+    }
+    log::warn!("  vertex data: {:02x?}", bytes);
+}
+
 pub const IID_IDirect3D7: GUID = GUID::new(
     0xf5049e77,
     0x4861,
@@ -1116,29 +1129,46 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn DrawPrimitive(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _dwVertexTypeDesc: u32,
-        _lpvVertices: u32,
-        _dwVertexCount: u32,
+        dptPrimitiveType: u32,
+        dwVertexTypeDesc: u32,
+        lpvVertices: u32,
+        dwVertexCount: u32,
         _dwFlags: u32,
     ) -> DD {
+        log::warn!(
+            "DrawPrimitive: prim={} fvf={:#x} vaddr={:#x} vcount={}",
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpvVertices,
+            dwVertexCount
+        );
+        log_vertex_start(ctx, lpvVertices, dwVertexCount, dwVertexTypeDesc);
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn DrawIndexedPrimitive(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _dwVertexTypeDesc: u32,
-        _lpvVertices: u32,
-        _dwVertexCount: u32,
+        dptPrimitiveType: u32,
+        dwVertexTypeDesc: u32,
+        lpvVertices: u32,
+        dwVertexCount: u32,
         _lpwIndices: u32,
-        _dwIndexCount: u32,
+        dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
+        log::warn!(
+            "DrawIndexedPrimitive: prim={} fvf={:#x} vaddr={:#x} vcount={} icount={}",
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpvVertices,
+            dwVertexCount,
+            dwIndexCount
+        );
+        log_vertex_start(ctx, lpvVertices, dwVertexCount, dwVertexTypeDesc);
         DD::OK
     }
 
@@ -1174,12 +1204,19 @@ pub mod IDirect3DDevice7 {
     pub fn DrawPrimitiveStrided(
         _ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _dwVertexTypeDesc: u32,
-        _lpVertexArray: u32,
-        _dwVertexCount: u32,
+        dptPrimitiveType: u32,
+        dwVertexTypeDesc: u32,
+        lpVertexArray: u32,
+        dwVertexCount: u32,
         _dwFlags: u32,
     ) -> DD {
+        log::warn!(
+            "DrawPrimitiveStrided: prim={} fvf={:#x} arr={:#x} vcount={}",
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpVertexArray,
+            dwVertexCount
+        );
         DD::OK
     }
 
@@ -1187,42 +1224,93 @@ pub mod IDirect3DDevice7 {
     pub fn DrawIndexedPrimitiveStrided(
         _ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _dwVertexTypeDesc: u32,
-        _lpVertexArray: u32,
-        _dwVertexCount: u32,
+        dptPrimitiveType: u32,
+        dwVertexTypeDesc: u32,
+        lpVertexArray: u32,
+        dwVertexCount: u32,
         _lpwIndices: u32,
-        _dwIndexCount: u32,
+        dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
+        log::warn!(
+            "DrawIndexedPrimitiveStrided: prim={} fvf={:#x} arr={:#x} vcount={} icount={}",
+            dptPrimitiveType,
+            dwVertexTypeDesc,
+            lpVertexArray,
+            dwVertexCount,
+            dwIndexCount
+        );
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn DrawPrimitiveVB(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _lpd3dVertexBuffer: u32,
-        _dwStartVertex: u32,
-        _dwNumVertices: u32,
+        dptPrimitiveType: u32,
+        lpd3dVertexBuffer: u32,
+        dwStartVertex: u32,
+        dwNumVertices: u32,
         _dwFlags: u32,
     ) -> DD {
+        let (addr, fvf) = d3d_state()
+            .vertex_buffers
+            .borrow()
+            .get(&lpd3dVertexBuffer)
+            .map(|vb| (vb.data, vb.desc.dwFVF))
+            .unwrap_or((0, 0));
+        log::warn!(
+            "DrawPrimitiveVB: prim={} vb={:#x} start={} fvf={:#x} vcount={} data={:#x}",
+            dptPrimitiveType,
+            lpd3dVertexBuffer,
+            dwStartVertex,
+            fvf,
+            dwNumVertices,
+            addr
+        );
+        log_vertex_start(
+            ctx,
+            addr + dwStartVertex * vertex_size(fvf),
+            dwNumVertices,
+            fvf,
+        );
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn DrawIndexedPrimitiveVB(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _dptPrimitiveType: u32,
-        _lpd3dVertexBuffer: u32,
-        _dwStartVertex: u32,
-        _dwNumVertices: u32,
+        dptPrimitiveType: u32,
+        lpd3dVertexBuffer: u32,
+        dwStartVertex: u32,
+        dwNumVertices: u32,
         _lpwIndices: u32,
-        _dwIndexCount: u32,
+        dwIndexCount: u32,
         _dwFlags: u32,
     ) -> DD {
+        let (addr, fvf) = d3d_state()
+            .vertex_buffers
+            .borrow()
+            .get(&lpd3dVertexBuffer)
+            .map(|vb| (vb.data, vb.desc.dwFVF))
+            .unwrap_or((0, 0));
+        log::warn!(
+            "DrawIndexedPrimitiveVB: prim={} vb={:#x} start={} fvf={:#x} vcount={} icount={} data={:#x}",
+            dptPrimitiveType,
+            lpd3dVertexBuffer,
+            dwStartVertex,
+            fvf,
+            dwNumVertices,
+            dwIndexCount,
+            addr
+        );
+        log_vertex_start(
+            ctx,
+            addr + dwStartVertex * vertex_size(fvf),
+            dwNumVertices,
+            fvf,
+        );
         DD::OK
     }
 
