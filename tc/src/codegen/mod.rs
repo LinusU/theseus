@@ -642,6 +642,27 @@ regs.esp = {stack_pointer:#x};
     }
 }
 
+fn rustfmt(text: &str) -> Result<String> {
+    use std::io::Write;
+    // Stolen from https://github.com/microsoft/windows-rs/blob/master/crates/tools/lib/src/lib.rs
+    let mut child = std::process::Command::new("rustfmt")
+        .arg("--edition")
+        .arg("2024")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(text.as_bytes())?;
+    drop(stdin);
+    let output = child.wait_with_output()?;
+
+    if !output.status.success() {
+        bail!("rustfmt failed: {}", std::str::from_utf8(&output.stderr)?);
+    }
+    Ok(String::from_utf8(output.stdout)?)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -655,8 +676,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_float80_load_and_store() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -683,8 +706,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_bit_operations() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -702,7 +727,7 @@ mod tests {
             ),
         ] {
             let mut decoder =
-                iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
             let instr = crate::Instr {
                 ip: crate::IP::Flat(0),
                 iced: decoder.decode(),
@@ -715,8 +740,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_xchg() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         // xchg [esp+0], eax
@@ -743,8 +770,10 @@ mod tests {
 
     #[test]
     fn codegen_uses_signed_offsets_for_memory_bit_indices() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0xa3, 0x08];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -765,8 +794,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_16_bit_double_shifts() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -793,8 +824,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_packed_add_sub() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -821,8 +854,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_mmx_memory_widths() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for opcode in [0xfc, 0xfd, 0xfe, 0xf8, 0xfa, 0xe8, 0xe9] {
@@ -846,8 +881,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_port_io() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -874,8 +911,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_protected_mode_segment_loads() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xc4, 0x00];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -901,8 +940,10 @@ mod tests {
 
     #[test]
     fn codegen_reads_six_byte_protected_segment_pointers() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xc4, 0x00];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -933,41 +974,43 @@ mod tests {
 
     #[test]
     fn codegen_registers_statically_imported_modules() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule {
-            imports: vec![
-                crate::Import {
-                    dll: "KERNEL32".into(),
-                    func: "GetLastError".into(),
-                    iat_addr: 0x1000,
-                    addr: 0,
-                    data: false,
-                },
-                crate::Import {
-                    dll: "KERNEL32".into(),
-                    func: "SetLastError".into(),
-                    iat_addr: 0x1004,
-                    addr: 0,
-                    data: false,
-                },
-                crate::Import {
-                    dll: "USER32".into(),
-                    func: "GetActiveWindow".into(),
-                    iat_addr: 0x1008,
-                    addr: 0,
-                    data: false,
-                },
-                crate::Import {
-                    dll: "KERNEL32.DLL".into(),
-                    func: "IsProcessorFeaturePresent".into(),
-                    iat_addr: 0x100c,
-                    addr: 0xfafbfc00,
-                    data: false,
-                },
-            ],
-            dynamic_exports: vec![("kernel32".into(), "IsProcessorFeaturePresent".into())],
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule {
+                imports: vec![
+                    crate::Import {
+                        dll: "KERNEL32".into(),
+                        func: "GetLastError".into(),
+                        iat_addr: 0x1000,
+                        addr: 0,
+                        data: false,
+                    },
+                    crate::Import {
+                        dll: "KERNEL32".into(),
+                        func: "SetLastError".into(),
+                        iat_addr: 0x1004,
+                        addr: 0,
+                        data: false,
+                    },
+                    crate::Import {
+                        dll: "USER32".into(),
+                        func: "GetActiveWindow".into(),
+                        iat_addr: 0x1008,
+                        addr: 0,
+                        data: false,
+                    },
+                    crate::Import {
+                        dll: "KERNEL32.DLL".into(),
+                        func: "IsProcessorFeaturePresent".into(),
+                        iat_addr: 0x100c,
+                        addr: 0xfafbfc00,
+                        data: false,
+                    },
+                ],
+                dynamic_exports: vec![("kernel32".into(), "IsProcessorFeaturePresent".into())],
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         codegen.gen_init();
@@ -1009,8 +1052,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_segptr32_indirect_calls() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xff, 0x59, 0xc3];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -1036,8 +1081,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_32_bit_far_branches() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1064,8 +1111,10 @@ mod tests {
 
     #[test]
     fn codegen_uses_instruction_operand_size_for_rets() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1098,8 +1147,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_16_bit_operand_control_flow() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, wants) in [
@@ -1153,8 +1204,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_imul_imm8() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1191,8 +1244,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_div_idiv() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, wants) in [
@@ -1254,8 +1309,10 @@ mod tests {
 
     #[test]
     fn codegen_dispatches_dos_divide_error() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         // div cl in real mode: #DE dispatches through the DOS interrupt
@@ -1279,8 +1336,10 @@ mod tests {
 
     #[test]
     fn codegen_dispatches_dos_into() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         // into at 0x20: on OF the trap dispatches through DOS int 4 with the
@@ -1304,8 +1363,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fcom_variants() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, wants) in [
@@ -1364,8 +1425,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fpu_constants_and_stack_ops() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1413,8 +1476,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_mmx_ops() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1480,8 +1545,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1523,8 +1590,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1589,8 +1658,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_unary_math() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1630,8 +1701,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_comparisons() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1676,8 +1749,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_shuffles() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1717,8 +1792,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_partial_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1768,8 +1845,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_64bit_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1814,8 +1893,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_scalar_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1860,8 +1941,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_scalar_unary_and_compare() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1906,8 +1989,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_int_float_conversions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1952,8 +2037,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_mmx_xmm_conversions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -1998,8 +2085,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse1_scalar_compare_and_mask() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2039,8 +2128,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_non_temporal_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2080,8 +2171,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_push_imm8() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2110,8 +2203,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_bsf_xadd_cmov() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2161,8 +2256,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_ud2_prefetch_cmpxchg8b() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2202,8 +2299,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fabs() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xe1];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2223,8 +2322,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_f2xm1() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xf0];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2244,8 +2345,10 @@ mod tests {
 
     #[test]
     fn codegen_skips_register_self_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         // `mov edi,edi` / `mov ax,ax` are hot-patch padding: they emit only
@@ -2272,8 +2375,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fnstenv() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0x30];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2293,8 +2398,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fldenv() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0x20];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2314,8 +2421,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fnsave_and_frstor() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2342,8 +2451,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_16_bit_fpu_environment() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want, memory_size) in [
@@ -2367,8 +2478,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fninit() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xdb, 0xe3];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2384,8 +2497,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fptan() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xf2];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2406,8 +2521,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fscale() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xfd];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2425,8 +2542,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fldl2e() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xea];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2446,8 +2565,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fldpi() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xeb];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2467,8 +2588,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fldlg2() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xec];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2488,8 +2611,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_frndint() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xfc];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2509,8 +2634,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_rdtsc() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0x31];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2526,8 +2653,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_ftst() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xe4];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2547,8 +2676,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fxam() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xe5];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2564,8 +2695,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fyl2x() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd9, 0xf1];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2587,8 +2720,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fcompp() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xde, 0xd9];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2609,8 +2744,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fisub() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xda, 0x20];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2628,8 +2765,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fiadd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xda, 0x00];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2647,8 +2786,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fidiv_and_fidivr() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -2675,8 +2816,10 @@ mod tests {
 
     #[test]
     fn codegen_maps_sal_to_shl() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd0, 0xe0];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2692,8 +2835,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_int1_as_a_continuation() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xf1];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2709,8 +2854,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_int3_as_a_continuation() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xcc];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2726,8 +2873,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_loope() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xe1, 0x00];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2743,8 +2892,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_into_overflow_trap() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xce];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2762,8 +2913,10 @@ mod tests {
 
     #[test]
     fn codegen_maps_windows_int_to_explicit_failure() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xcd, 0x06];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2780,8 +2933,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_bswap() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0xc8];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2801,8 +2956,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_aam() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd4, 0x0a];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2818,8 +2975,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_aad() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xd5, 0x0a];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2835,8 +2994,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_aas() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x3f];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2852,8 +3013,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_aaa() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x37];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2869,8 +3032,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_das() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x2f];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2886,8 +3051,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_daa() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x27];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2903,8 +3070,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_cmc() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0xf5];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2920,8 +3089,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_lahf() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x9f];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2937,8 +3108,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pushf() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x9c];
         let mut decoder = iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2959,8 +3132,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_popf() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::DOS(crate::DOSModule::default());
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x9d];
         let mut decoder = iced_x86::Decoder::with_ip(16, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -2981,8 +3156,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pushfd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x9c];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -3002,8 +3179,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_popfd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x9d];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -3023,8 +3202,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_cpuid() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0xa2];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -3045,8 +3226,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_cmpxchg() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0xb1, 0xc1];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -3069,8 +3252,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_all_setcc_conditions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         for (opcode, condition) in [
             (0x90, "seto"),
             (0x91, "setno"),
@@ -3096,8 +3281,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_xgetbv() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
         let bytes = [0x0f, 0x01, 0xd0];
         let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
@@ -3114,8 +3301,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pavg_pmin_pmax() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (opcode, want) in [
@@ -3142,8 +3331,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_psadbw_and_high_multiplies() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (opcode, want) in [
@@ -3168,8 +3359,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_movntq_and_maskmovq() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3197,8 +3390,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fxsave_fxrstor() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3226,8 +3421,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_ffree() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3250,8 +3447,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_hlt_and_privileged_register_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for bytes in [
@@ -3281,8 +3480,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_system_register_stores_and_arpl() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3331,8 +3532,10 @@ mod tests {
 
     #[test]
     fn codegen_traps_privileged_system_instructions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for bytes in [
@@ -3380,8 +3583,10 @@ mod tests {
 
     #[test]
     fn codegen_traps_unimplemented_isa_extensions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for bytes in [
@@ -3433,8 +3638,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_ins_outs() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3467,8 +3674,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_fences_hints_and_mxcsr() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3507,8 +3716,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pextrw_pinsrw_pshufw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3548,8 +3759,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_movsd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3589,8 +3802,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_double_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3640,8 +3855,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_double_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3681,8 +3898,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_scalar_double_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3717,8 +3936,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_double_comparisons() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3768,8 +3989,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_scalar_double_conversions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3819,8 +4042,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_and_mixed_conversions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3875,8 +4100,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_shifts() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3926,8 +4153,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_unpacks_and_shuffles() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -3977,8 +4206,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pshufb() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4023,8 +4254,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pabsb_pabsw_pabsd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4064,8 +4297,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_phaddw_phaddd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4110,8 +4345,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_phsubw_phsubd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4156,8 +4393,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_phsubsw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4192,8 +4431,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pmaddubsw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4228,8 +4469,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_pmulhrsw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4264,8 +4507,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_palignr() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4305,8 +4550,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_phaddsw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4341,8 +4588,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_psign() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4382,8 +4631,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_integer_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4428,8 +4679,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_packed_compare_and_minmax() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4474,8 +4727,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_saturating_and_pack() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4515,8 +4770,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_pmovmskb_pextrw_pinsrw() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4555,8 +4812,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_psadbw_and_high_multiplies() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4601,8 +4860,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_pmullw_and_pmaddwd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4637,8 +4898,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_128_bit_integer_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4678,8 +4941,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_movd_and_movq() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4734,8 +4999,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_sse2_qword_xmm_mmx_moves() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4770,8 +5037,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_maskmovdqu() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         // maskmovdqu m128, xmm1 (mask implicit in xmm0)
@@ -4795,8 +5064,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_3dnow_conversions() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4841,8 +5112,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_3dnow_float_arithmetic() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4897,8 +5170,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_3dnow_compare_and_minmax() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4948,8 +5223,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_3dnow_integer_ops() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -4991,8 +5268,10 @@ mod tests {
 
     #[test]
     fn codegen_handles_3dnow_reciprocal_and_mul() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want) in [
@@ -5047,8 +5326,10 @@ mod tests {
 
     #[test]
     fn codegen_routes_string_and_sse_movsd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want, avoid) in [
@@ -5086,8 +5367,10 @@ mod tests {
 
     #[test]
     fn codegen_routes_string_and_sse_cmpsd() {
-        let mut state = crate::State::default();
-        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
         let mut codegen = super::CodeGen::new(&state, false);
 
         for (bytes, want, avoid) in [
@@ -5122,25 +5405,4 @@ mod tests {
             );
         }
     }
-}
-
-fn rustfmt(text: &str) -> Result<String> {
-    use std::io::Write;
-    // Stolen from https://github.com/microsoft/windows-rs/blob/master/crates/tools/lib/src/lib.rs
-    let mut child = std::process::Command::new("rustfmt")
-        .arg("--edition")
-        .arg("2024")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(text.as_bytes())?;
-    drop(stdin);
-    let output = child.wait_with_output()?;
-
-    if !output.status.success() {
-        bail!("rustfmt failed: {}", std::str::from_utf8(&output.stderr)?);
-    }
-    Ok(String::from_utf8(output.stdout)?)
 }
