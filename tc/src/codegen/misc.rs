@@ -79,6 +79,7 @@ impl<'a> CodeGen<'a> {
             Wait => {}
 
             Not => self.line(self.set_op(instr, 0, format!("!{}", self.get_op(instr, 0)))),
+            Bswap => self.line(self.set_op(instr, 0, format!("bswap({})", self.get_op(instr, 0)))),
 
             Bt | Bts | Btr | Btc => {
                 let size = op_size(instr, 0);

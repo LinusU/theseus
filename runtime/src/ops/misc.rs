@@ -290,6 +290,12 @@ mod tests {
     }
 
     #[test]
+    fn bswap_reverses_all_register_bytes() {
+        assert_eq!(crate::bswap(0x1234_5678), 0x7856_3412);
+        assert_eq!(crate::bswap(0), 0);
+    }
+
+    #[test]
     fn cli_and_sti_update_interrupt_enable_flag() {
         let mut ctx = context();
         ctx.cpu.flags.insert(Flags::IF);

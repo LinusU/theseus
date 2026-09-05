@@ -90,6 +90,10 @@ pub fn xgetbv(index: u32) -> (u32, u32) {
     }
 }
 
+pub fn bswap(value: u32) -> u32 {
+    value.swap_bytes()
+}
+
 pub type ContFn = fn(&mut Context) -> Cont;
 
 #[derive(Clone, Copy)]
