@@ -730,6 +730,20 @@ pub fn phsubd(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
+/// PMADDUBSW (SSSE3) multiplies each unsigned byte of `dest` by the
+/// corresponding signed byte of `src`, adds each pair of adjacent 16-bit
+/// products, and saturates the sum to a signed word.
+pub fn pmaddubsw(dest: u64, src: u64) -> u64 {
+    let d: [u8; 8] = dest.unpack();
+    let s: [i8; 8] = src.unpack();
+    let out: [u16; 4] = std::array::from_fn(|i| {
+        let lo = d[2 * i] as i32 * s[2 * i] as i32;
+        let hi = d[2 * i + 1] as i32 * s[2 * i + 1] as i32;
+        (lo + hi).clamp(i16::MIN as i32, i16::MAX as i32) as u16
+    });
+    out.pack()
+}
+
 /// PHSUBSW (SSSE3) subtracts adjacent 16-bit signed words horizontally,
 /// with signed saturation.
 pub fn phsubsw(dest: u64, src: u64) -> u64 {
@@ -1078,9 +1092,9 @@ mod tests {
         pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
         pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
         pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubsw, phsubw, pi2fd, pi2fw,
-        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw, pmulhuw,
-        pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb,
-        psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pinsrw, pmaddubsw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw,
+        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq,
+        psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1276,6 +1290,20 @@ mod tests {
         let c = 0x0000_0002_0000_0001u64;
         let d = 0x0000_0001_8000_0000u64;
         assert_eq!(phsubd(c, d), 0x7fff_ffff_ffff_ffff);
+    }
+
+    #[test]
+    fn pmaddubsw_multiplies_unsigned_by_signed_and_saturates() {
+        // 2*3 + 2*3 = 12 in each word.
+        assert_eq!(
+            pmaddubsw(0x0202_0202_0202_0202, 0x0303_0303_0303_0303),
+            0x000c_000c_000c_000c
+        );
+        // 255*127 + 255*127 = 64770 saturates to 0x7fff;
+        // 255*(-128) + 255*(-128) = -65280 saturates to 0x8000.
+        let d = 0xffff_ffff_ffff_ffffu64;
+        let s = 0x8080_8080_7f7f_7f7fu64;
+        assert_eq!(pmaddubsw(d, s), 0x8000_8000_7fff_7fff);
     }
 
     #[test]

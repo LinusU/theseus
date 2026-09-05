@@ -560,6 +560,21 @@ pub fn phsubd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
     ]
 }
 
+/// PMADDUBSW (SSSE3) multiplies each unsigned byte of `dest` by the
+/// corresponding signed byte of `src`, adds each pair of adjacent 16-bit
+/// products, and saturates the sum to a signed word.
+pub fn pmaddubsw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_bytes(dest);
+    let s = to_bytes(src).map(|b| b as i8);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        let lo = d[2 * i] as i32 * s[2 * i] as i32;
+        let hi = d[2 * i + 1] as i32 * s[2 * i + 1] as i32;
+        out[i] = (lo + hi).clamp(i16::MIN as i32, i16::MAX as i32) as u16;
+    }
+    from_words(out)
+}
+
 /// PHSUBSW (SSSE3) subtracts adjacent 16-bit signed words horizontally, with
 /// signed saturation. The first four result words come from dest; the last
 /// four come from src.
@@ -1459,6 +1474,22 @@ mod tests {
         assert_eq!(
             phsubw_xmm(wa, wb),
             [0xffff_ffff, 0xffff_ffff, 0x7fff_0005, 0x0000_0000]
+        );
+    }
+
+    #[test]
+    fn pmaddubsw_xmm_multiplies_unsigned_by_signed_and_saturates() {
+        // 2*3 + 2*3 = 12 in each word.
+        assert_eq!(
+            pmaddubsw_xmm([0x0202_0202; 4], [0x0303_0303; 4]),
+            [0x000c_000c; 4]
+        );
+        // 255*127*2 saturates to 0x7fff; 255*(-128)*2 saturates to 0x8000.
+        let d = [0xffff_ffff; 4];
+        let s = [0x8080_7f7f, 0x8080_7f7f, 0x8080_7f7f, 0x8080_7f7f];
+        assert_eq!(
+            pmaddubsw_xmm(d, s),
+            [0x8000_7fff, 0x8000_7fff, 0x8000_7fff, 0x8000_7fff]
         );
     }
 
