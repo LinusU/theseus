@@ -192,13 +192,27 @@ impl Context {
     }
 
     pub fn loop_(&mut self, from: Cont, x: Cont) -> Cont {
-        self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
-        if self.cpu.regs.ecx != 0 { x } else { from }
+        let count = if self.cpu.real_mode {
+            let count = self.cpu.regs.get_cx().wrapping_sub(1);
+            self.cpu.regs.set_cx(count);
+            count as u32
+        } else {
+            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+            self.cpu.regs.ecx
+        };
+        if count != 0 { x } else { from }
     }
 
     pub fn loopne(&mut self, from: Cont, x: Cont) -> Cont {
-        self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
-        if self.cpu.regs.ecx != 0 && !self.cpu.flags.contains(Flags::ZF) {
+        let count = if self.cpu.real_mode {
+            let count = self.cpu.regs.get_cx().wrapping_sub(1);
+            self.cpu.regs.set_cx(count);
+            count as u32
+        } else {
+            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+            self.cpu.regs.ecx
+        };
+        if count != 0 && !self.cpu.flags.contains(Flags::ZF) {
             x
         } else {
             from
@@ -248,6 +262,38 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0106);
+    }
+
+    #[test]
+    fn real_mode_loop_uses_cx_without_changing_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ecx = 0xabcd_0001;
+
+        let next = ctx.loop_(Cont(from), Cont(taken));
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
+    }
+
+    #[test]
+    fn real_mode_loopne_uses_cx_for_count_and_zero_flag() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ecx = 0xabcd_0002;
+
+        let next = ctx.loopne(Cont(from), Cont(taken));
+
+        let expected: ContFn = taken;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0001);
+
+        ctx.cpu.flags.insert(Flags::ZF);
+        let next = ctx.loopne(Cont(from), Cont(taken));
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
     }
 
     #[test]
