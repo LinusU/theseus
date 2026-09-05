@@ -99,6 +99,18 @@ pub fn unpckhps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     [a[2], b[2], a[3], b[3]]
 }
 
+pub fn movss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [src, dst[1], dst[2], dst[3]]
+}
+
+pub fn movhlps(dst: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    [src[2], src[3], dst[2], dst[3]]
+}
+
+pub fn movlhps(dst: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    [dst[0], dst[1], src[0], src[1]]
+}
+
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
     std::array::from_fn(|i| {
         let a = f32::from_bits(a[i]);

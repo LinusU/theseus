@@ -40,6 +40,25 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    fn xmm_get_32(&self, instr: &iced_x86::Instruction, n: u32) -> String {
+        use iced_x86::OpKind::*;
+        match instr.op_kind(n) {
+            Register => {
+                let reg = instr.op_register(n);
+                if is_xmm_reg(reg) {
+                    format!("{}[0]", xmm_reg(reg))
+                } else {
+                    self.get_op(instr, n)
+                }
+            }
+            Memory => {
+                let addr = self.gen_addr(instr);
+                codegen::get_mem("u32".into(), addr)
+            }
+            k => todo!("{k:?}"),
+        }
+    }
+
     fn xmm_set(&self, instr: &iced_x86::Instruction, n: u32, expr: String) -> String {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
@@ -130,6 +149,37 @@ impl<'a> CodeGen<'a> {
                 ));
             }
             Unpckhps | Unpcklps => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
+            // Scalar and cross-lane partial-width moves. MOVSS only touches the
+            // low 32 bits; MOVHLPS/MOVLHPS move 64 bits between high/low qwords.
+            Movss => {
+                let src = self.xmm_get_32(instr, 1);
+                use iced_x86::OpKind::*;
+                match instr.op_kind(0) {
+                    Register => {
+                        let dst = self.xmm_get(instr, 0);
+                        let reg = instr.op_register(0);
+                        self.line(format!("{} = movss({}, {});", xmm_reg(reg), dst, src));
+                    }
+                    Memory => {
+                        let addr = self.gen_addr(instr);
+                        self.line(codegen::set_mem("u32".into(), addr, src));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Movhlps | Movlhps => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(
                     instr,
