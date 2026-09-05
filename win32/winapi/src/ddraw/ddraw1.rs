@@ -84,12 +84,25 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn Compact(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        // Nothing to compact: emulated surfaces are not real video memory.
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn CreateClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn CreateClipper(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lplpDDClipper: u32,
+        pUnkOuter: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::CreateClipper(
+            ctx,
+            this,
+            dwFlags,
+            lplpDDClipper,
+            pUnkOuter,
+        )
     }
 
     #[win32_derive::dllexport]
@@ -135,8 +148,18 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn DuplicateSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn DuplicateSurface(
+        ctx: &mut Context,
+        this: u32,
+        lpDDSurface: u32,
+        lplpDupDDSurface: u32,
+    ) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::DuplicateSurface(
+            ctx,
+            this,
+            lpDDSurface,
+            lplpDupDDSurface,
+        )
     }
 
     #[win32_derive::dllexport]
@@ -148,9 +171,19 @@ pub mod IDirectDraw {
         lpContext: u32,
         lpEnumCallback: u32,
     ) -> DD {
-        if lpSurfaceDesc != 0 {
-            todo!("EnumDisplayModes with a filter desc");
-        }
+        // A filter desc limits enumeration to modes matching its DDSD fields.
+        let filter = if lpSurfaceDesc != 0 {
+            let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpSurfaceDesc..])
+            else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            if desc.dwSize != std::mem::size_of::<DDSURFACEDESC>() as u32 {
+                return DD::ERR_INVALIDPARAMS;
+            }
+            Some(desc)
+        } else {
+            None
+        };
 
         // Report the standard display modes; games match these against their
         // internal mode tables by width/height/bit count.
@@ -160,6 +193,19 @@ pub mod IDirectDraw {
 
         for &(width, height) in RESOLUTIONS {
             for &bpp in BIT_DEPTHS {
+                if let Some(filter) = &filter {
+                    if filter.dwFlags.contains(DDSD::WIDTH) && filter.dwWidth != width {
+                        continue;
+                    }
+                    if filter.dwFlags.contains(DDSD::HEIGHT) && filter.dwHeight != height {
+                        continue;
+                    }
+                    if filter.dwFlags.contains(DDSD::PIXELFORMAT)
+                        && filter.ddpfPixelFormat.dwRGBBitCount != bpp
+                    {
+                        continue;
+                    }
+                }
                 let mut desc = DDSURFACEDESC::default();
                 desc.dwSize = std::mem::size_of::<DDSURFACEDESC>() as u32;
                 desc.dwFlags = DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH;
@@ -206,65 +252,167 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumSurfaces(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn FlipToGDISurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetCaps(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetDisplayMode(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetFourCCCodes(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetGDISurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetMonitorFrequency(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetScanLine(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn GetVerticalBlankStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
-    }
-
-    #[win32_derive::dllexport]
-    pub fn Initialize(
-        _ctx: &mut Context,
+    pub fn EnumSurfaces(
+        ctx: &mut Context,
         _this: u32,
-        _lpDD: u32,
-        _dwFlags: u32,
-        _lpDDColorTable: u32,
+        dwFlags: u32,
+        _lpDDSD: u32,
+        lpContext: u32,
+        lpEnumSurfacesCallback: u32,
     ) -> DD {
+        // Only DDENUMSURFACES_DOESEXIST lists live surfaces; MATCH/ALL would
+        // enumerate hypothetical surfaces, which the emulated model reports
+        // none of.
+        const DDENUMSURFACES_DOESEXIST: u32 = 0x1;
+        if dwFlags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumSurfacesCallback == 0 {
+            return DD::OK;
+        }
+        let addrs: Vec<u32> = state().surf.borrow().keys().cloned().collect();
+        for addr in addrs {
+            let desc = {
+                let surfaces = state().surf.borrow();
+                let Some(surface) = surfaces.get(&addr) else {
+                    continue; // released by an earlier callback
+                };
+                let surface = surface.borrow();
+                let bpp = surface.bytes_per_pixel * 8;
+                let pixel_format = if bpp == 8 {
+                    DDPIXELFORMAT {
+                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                        dwFlags: 0x40 | 0x20, // DDPF_RGB | DDPF_PALETTEINDEXED8
+                        dwFourCC: 0,
+                        dwRGBBitCount: 8,
+                        dwRBitMask: 0,
+                        dwGBitMask: 0,
+                        dwBBitMask: 0,
+                        dwRGBAlphaBitMask: 0,
+                    }
+                } else {
+                    get_pixel_format()
+                };
+                DDSURFACEDESC {
+                    dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                    dwWidth: surface.width,
+                    dwHeight: surface.height,
+                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                    ddpfPixelFormat: pixel_format,
+                    ..DDSURFACEDESC::default()
+                }
+            };
+            let desc_addr = kernel32::lock()
+                .process_heap
+                .alloc(&mut ctx.memory, desc.dwSize);
+            desc.write_to_prefix(&mut ctx.memory[desc_addr..]).unwrap();
+            let callback = ctx.indirect(lpEnumSurfacesCallback);
+            ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
+            let ret = ctx.cpu.regs.eax;
+            kernel32::lock()
+                .process_heap
+                .free(&mut ctx.memory, desc_addr);
+            if ret == 0 {
+                return DD::OK; // DDENUMRET_CANCEL
+            }
+        }
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn FlipToGDISurface(ctx: &mut Context, this: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::FlipToGDISurface(ctx, this)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetCaps(ctx: &mut Context, this: u32, lpDDDriverCaps: u32, lpDDEmulCaps: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetCaps(ctx, this, lpDDDriverCaps, lpDDEmulCaps)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetDisplayMode(ctx: &mut Context, this: u32, lpDDSurfaceDesc: u32) -> DD {
+        if lpDDSurfaceDesc == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc..])
+        else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if desc.dwSize != std::mem::size_of::<DDSURFACEDESC>() as u32 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+
+        let ddraw = state().get_ddraw(this);
+        let (width, height) = match &ddraw.window {
+            Some(window) => {
+                let window = window.borrow();
+                (window.width, window.height)
+            }
+            None => (640, 480),
+        };
+        let bpp = ddraw.bytes_per_pixel * 8;
+        drop(ddraw);
+
+        let (flags, r, g, b) = match bpp {
+            8 => (0x40 | 0x20, 0, 0, 0),
+            16 => (0x40, 0xF800, 0x07E0, 0x001F),
+            _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000),
+        };
+        let desc = DDSURFACEDESC {
+            dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+            dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH,
+            dwWidth: width,
+            dwHeight: height,
+            lPitch_dwLinearSize: width * bpp.div_ceil(8),
+            ddpfPixelFormat: DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: flags,
+                dwFourCC: 0,
+                dwRGBBitCount: bpp,
+                dwRBitMask: r,
+                dwGBitMask: g,
+                dwBBitMask: b,
+                dwRGBAlphaBitMask: 0,
+            },
+            ..DDSURFACEDESC::default()
+        };
+        desc.write_to_prefix(&mut ctx.memory[lpDDSurfaceDesc..])
+            .unwrap();
+        DD::OK
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetFourCCCodes(ctx: &mut Context, this: u32, lpNumCodes: u32, lpCodes: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetFourCCCodes(ctx, this, lpNumCodes, lpCodes)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetGDISurface(ctx: &mut Context, this: u32, lplpGDIDDSSurface: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetGDISurface(ctx, this, lplpGDIDDSSurface)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetMonitorFrequency(ctx: &mut Context, this: u32, lpdwFrequency: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetMonitorFrequency(ctx, this, lpdwFrequency)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetScanLine(ctx: &mut Context, this: u32, lpdwScanLine: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetScanLine(ctx, this, lpdwScanLine)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetVerticalBlankStatus(ctx: &mut Context, this: u32, lpbIsInVB: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::GetVerticalBlankStatus(ctx, this, lpbIsInVB)
+    }
+
+    #[win32_derive::dllexport]
+    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpGUID: u32) -> DD {
         // Nothing to do: the object is fully constructed when it's created.
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn RestoreDisplayMode(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn RestoreDisplayMode(ctx: &mut Context, this: u32) -> DD {
+        crate::ddraw::ddraw7::IDirectDraw7::RestoreDisplayMode(ctx, this)
     }
 
     #[win32_derive::dllexport]
