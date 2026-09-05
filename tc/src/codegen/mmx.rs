@@ -163,6 +163,17 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // MOVNTQ is a memory-destination store; the non-temporal hint is
+            // a no-op on the emulated host.
+            Movntq => self.line(self.set_op(instr, 0, self.mmx_get(instr, 1))),
+            // MASKMOVQ's destination is the implicit DS:(E)DI operand; the
+            // first register carries the data and the second the byte mask.
+            Maskmovq => self.line(format!(
+                "ctx.maskmovq({}, {});",
+                self.mmx_get(instr, 1),
+                self.mmx_get(instr, 2)
+            )),
+
             // The low unpacks only read 4 bytes of a memory source.
             Punpcklbw | Punpcklwd | Punpckldq => {
                 let func = instr_name(instr);

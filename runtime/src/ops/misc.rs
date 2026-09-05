@@ -312,6 +312,18 @@ impl Context {
         let value = self.memory.read::<u8>(self.addr(self.cpu.regs.ds, offset));
         self.cpu.regs.set_al(value);
     }
+
+    /// MASKMOVQ stores each byte of `data` to the implicit DS:(E)DI
+    /// destination only where the matching `mask` byte's high bit is set.
+    pub fn maskmovq(&mut self, data: u64, mask: u64) {
+        let addr = self.addr(self.cpu.regs.ds, self.cpu.regs.edi);
+        for i in 0..8u32 {
+            if mask & (0x80_u64 << (i * 8)) != 0 {
+                self.memory
+                    .write::<u8>(addr.wrapping_add(i), (data >> (i * 8)) as u8);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +341,18 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn maskmovq_stores_only_masked_bytes_at_ds_edi() {
+        let mut ctx = context();
+        ctx.cpu.regs.edi = 0x100;
+        ctx.memory.write::<u64>(0x100, u64::MAX);
+
+        // Mask bytes 0, 4, and 7 have their high bit set.
+        ctx.maskmovq(0x0807_0605_0403_0201, 0x8000_0080_0000_0080);
+
+        assert_eq!(ctx.memory.read::<u64>(0x100), 0x08ff_ff05_ffff_ff01);
     }
 
     #[test]
