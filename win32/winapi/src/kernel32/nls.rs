@@ -214,7 +214,10 @@ pub fn LCMapStringA(
         return 0;
     }
     let len = if cchSrc < 0 {
-        ctx.memory.read_str(lpSrcStr.addr).len() as u32 + 1
+        let Some(src) = read_string_type_a(ctx, lpSrcStr.addr, -1) else {
+            return 0;
+        };
+        src.len() as u32
     } else {
         cchSrc as u32
     };
@@ -464,6 +467,26 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn lcmap_ansi_accepts_cp1252_bytes() {
+        let mut ctx = context();
+        ctx.memory[0x1000..][..3].copy_from_slice(&[b'A', 0x80, 0]);
+
+        assert_eq!(
+            LCMapStringA(
+                &mut ctx,
+                0,
+                0x200,
+                Ptr::new(0x1000),
+                -1,
+                Ptr::new(0x1200),
+                3,
+            ),
+            3
+        );
+        assert_eq!(&ctx.memory[0x1200..][..3], &[b'A', 0x80, 0]);
     }
 
     #[test]
