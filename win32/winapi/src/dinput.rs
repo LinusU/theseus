@@ -130,6 +130,15 @@ const DIGDD_PEEK: u32 = 0x00000001;
 /// DirectInput property GUIDs are really small integers cast to a GUID pointer
 /// (see MAKEDIPROP), so a property is identified by the pointer value itself.
 const DIPROP_BUFFERSIZE: u32 = 1;
+const DIPROP_AXISMODE: u32 = 2;
+const DIPROP_GRANULARITY: u32 = 3;
+const DIPROP_RANGE: u32 = 4;
+const DIPROP_DEADZONE: u32 = 5;
+const DIPROP_SATURATION: u32 = 6;
+const DIPROP_FFGAIN: u32 = 7;
+const DIPROP_FFLOAD: u32 = 8;
+const DIPROP_AUTOCENTER: u32 = 9;
+const DIPROP_CALIBRATIONMODE: u32 = 10;
 /// Offset of DIPROPDWORD::dwData, past the DIPROPHEADER.
 const DIPROPDWORD_DWDATA: u32 = 16;
 
@@ -191,6 +200,10 @@ pub struct Device {
     pub acquired: bool,
     /// The GUID the device was created with; used to answer GetDeviceInfo.
     pub guid: GUID,
+    /// Properties most recently set through SetProperty, keyed by MAKEDIPROP id.
+    pub properties: HashMap<u32, Vec<u8>>,
+    /// COM reference count for this device object.
+    pub refcount: u32,
 }
 
 #[derive(Default)]
@@ -300,6 +313,8 @@ pub mod IDirectInput {
                 kind,
                 acquired: false,
                 guid,
+                properties: HashMap::new(),
+                refcount: 1,
             },
         );
         ctx.memory.write::<u32>(lplpDirectInputDevice, device);
@@ -413,26 +428,52 @@ pub mod IDirectInputDevice {
         }
     }
 
+    fn add_ref(this: u32) -> u32 {
+        if let Some(device) = lock().devices.get_mut(&this) {
+            device.refcount += 1;
+            device.refcount
+        } else {
+            1
+        }
+    }
+
+    fn release(this: u32) -> u32 {
+        let mut state = lock();
+        let Some(device) = state.devices.get_mut(&this) else {
+            return 0;
+        };
+        device.refcount -= 1;
+        if device.refcount == 0 {
+            state.devices.remove(&this);
+            0
+        } else {
+            device.refcount
+        }
+    }
+
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
-        query_interface(
+        let hr = query_interface(
             ctx,
             this,
             riid,
             ppv,
             &[IID_IDirectInputDeviceA, IID_IDirectInputDevice2A],
-        )
+        );
+        if hr == DI_OK {
+            add_ref(this);
+        }
+        hr
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        add_ref(this)
     }
 
     #[win32_derive::dllexport]
     pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
-        lock().devices.remove(&this);
-        0
+        release(this)
     }
 
     #[win32_derive::dllexport]
@@ -491,34 +532,72 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn GetProperty(ctx: &mut Context, this: u32, rguidProp: u32, pdiph: u32) -> u32 {
-        if rguidProp != DIPROP_BUFFERSIZE {
-            log::warn!("dinput GetProperty: unhandled property {rguidProp:#x}");
+        if pdiph == 0 {
+            return E_POINTER;
+        }
+        if rguidProp == DIPROP_BUFFERSIZE {
+            let (kind, _) = device(this);
+            let size = user32::state()
+                .input
+                .borrow()
+                .buffer_size(kind == DeviceKind::Keyboard);
+            ctx.memory
+                .write::<u32>(pdiph + DIPROPDWORD_DWDATA, size as u32);
+            return DI_OK;
+        }
+        let state = lock();
+        let Some(device) = state.devices.get(&this) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let Some(stored) = device.properties.get(&rguidProp) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let size = ctx.memory.read::<u32>(pdiph) as usize;
+        let len = stored.len().min(size);
+        if len == 0 || pdiph as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
-        let (kind, _) = device(this);
-        let size = user32::state()
-            .input
-            .borrow()
-            .buffer_size(kind == DeviceKind::Keyboard);
-        ctx.memory
-            .write::<u32>(pdiph + DIPROPDWORD_DWDATA, size as u32);
+        ctx.memory[pdiph..][..len].copy_from_slice(&stored[..len]);
         DI_OK
     }
 
     #[win32_derive::dllexport]
     pub fn SetProperty(ctx: &mut Context, this: u32, rguidProp: u32, pdiph: u32) -> u32 {
-        if rguidProp != DIPROP_BUFFERSIZE {
-            // Axis mode, dead zone and the force feedback properties don't
-            // apply to the plain keyboard/mouse we emulate.
-            log::warn!("dinput SetProperty: ignoring property {rguidProp:#x}");
+        if pdiph == 0 {
+            return DIERR_INVALIDPARAM;
+        }
+        if rguidProp == DIPROP_BUFFERSIZE {
+            let (kind, _) = device(this);
+            let size = ctx.memory.read::<u32>(pdiph + DIPROPDWORD_DWDATA);
+            user32::state()
+                .input
+                .borrow_mut()
+                .set_buffer_size(kind == DeviceKind::Keyboard, size as usize);
             return DI_OK;
         }
-        let (kind, _) = device(this);
-        let size = ctx.memory.read::<u32>(pdiph + DIPROPDWORD_DWDATA);
-        user32::state()
-            .input
-            .borrow_mut()
-            .set_buffer_size(kind == DeviceKind::Keyboard, size as usize);
+        if rguidProp != DIPROP_AXISMODE
+            && rguidProp != DIPROP_GRANULARITY
+            && rguidProp != DIPROP_RANGE
+            && rguidProp != DIPROP_DEADZONE
+            && rguidProp != DIPROP_SATURATION
+            && rguidProp != DIPROP_FFGAIN
+            && rguidProp != DIPROP_FFLOAD
+            && rguidProp != DIPROP_AUTOCENTER
+            && rguidProp != DIPROP_CALIBRATIONMODE
+        {
+            log::warn!("dinput SetProperty: unhandled property {rguidProp:#x}");
+            return DI_OK;
+        }
+        let size = ctx.memory.read::<u32>(pdiph) as usize;
+        if size == 0 || pdiph as usize + size > ctx.memory.bytes.len() {
+            return DIERR_INVALIDPARAM;
+        }
+        let mut state = lock();
+        let Some(device) = state.devices.get_mut(&this) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let bytes = ctx.memory[pdiph..][..size].to_vec();
+        device.properties.insert(rguidProp, bytes);
         DI_OK
     }
 
@@ -887,6 +966,49 @@ mod tests {
         assert_eq!(
             IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0),
             E_POINTER
+        );
+    }
+
+    #[test]
+    fn set_and_get_property_stores_dword_properties() {
+        let mut ctx = context();
+        lock().devices.insert(
+            0x2100,
+            Device {
+                kind: DeviceKind::Joystick,
+                acquired: false,
+                guid: GUID_Joystick,
+                properties: HashMap::new(),
+                refcount: 1,
+            },
+        );
+
+        // Write a DIPROPDWORD for DIPROP_DEADZONE at 0x1000.
+        ctx.memory.write::<u32>(0x1000, 20); // dwSize
+        ctx.memory.write::<u32>(0x1004, 16); // dwHeaderSize
+        ctx.memory.write::<u32>(0x1008, 0); // dwObj
+        ctx.memory.write::<u32>(0x100c, 0); // dwHow
+        ctx.memory.write::<u32>(0x1010, 5000); // dwData
+
+        assert_eq!(
+            IDirectInputDevice::SetProperty(&mut ctx, 0x2100, DIPROP_DEADZONE, 0x1000),
+            DI_OK
+        );
+
+        // GetProperty should return the stored DIPROPDWORD into 0x1100.
+        ctx.memory.write::<u32>(0x1100, 20);
+        ctx.memory.write::<u32>(0x1104, 16);
+        ctx.memory.write::<u32>(0x1108, 0);
+        ctx.memory.write::<u32>(0x110c, 0);
+        assert_eq!(
+            IDirectInputDevice::GetProperty(&mut ctx, 0x2100, DIPROP_DEADZONE, 0x1100),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1110), 5000);
+
+        assert_eq!(
+            IDirectInputDevice::GetProperty(&mut ctx, 0x2100, DIPROP_SATURATION, 0x1100),
+            DIERR_INVALIDPARAM
         );
     }
 
