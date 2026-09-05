@@ -2023,7 +2023,38 @@ const TEXFMT_RGB565: u8 = 0;
 const TEXFMT_A1R5G5B5: u8 = 1;
 const TEXFMT_A4R4G4B4: u8 = 2;
 
-/// Sample one texel, returning (RGB565 color, 0-255 alpha).
+/// Decode one raw texture word to 8-bit (r, g, b, a).
+fn decode_texel(p: u16, fmt: u8) -> (u8, u8, u8, u8) {
+    match fmt {
+        // A1R5G5B5: 1-bit alpha, 5/5/5 color.
+        TEXFMT_A1R5G5B5 => (
+            ((((p >> 10) & 0x1f) << 3) | ((p >> 10) & 0x1f) >> 2) as u8,
+            ((((p >> 5) & 0x1f) << 3) | ((p >> 5) & 0x1f) >> 2) as u8,
+            (((p & 0x1f) << 3) | (p & 0x1f) >> 2) as u8,
+            if p & 0x8000 != 0 { 255 } else { 0 },
+        ),
+        // A4R4G4B4: 4-bit channels expanded to 8.
+        TEXFMT_A4R4G4B4 => (
+            (((p >> 8) & 0xf) * 17) as u8,
+            (((p >> 4) & 0xf) * 17) as u8,
+            ((p & 0xf) * 17) as u8,
+            (((p >> 12) & 0xf) * 17) as u8,
+        ),
+        // RGB565 (and any unrecognized mask, treated as opaque 565).
+        _ => (
+            ((((p >> 11) & 0x1f) << 3) | ((p >> 11) & 0x1f) >> 2) as u8,
+            ((((p >> 5) & 0x3f) << 2) | ((p >> 5) & 0x3f) >> 4) as u8,
+            (((p & 0x1f) << 3) | (p & 0x1f) >> 2) as u8,
+            255,
+        ),
+    }
+}
+
+fn pack_565(r: u8, g: u8, b: u8) -> u16 {
+    ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
+}
+
+/// Sample one texel (nearest), returning (RGB565 color, 0-255 alpha).
 fn sample_texel(
     mem: &Memory,
     addr: u32,
@@ -2043,29 +2074,59 @@ fn sample_texel(
     let x = (u * (width - 1) as f32) as u32 % width;
     let y = (v * (height - 1) as f32) as u32 % height;
     let p = mem.read::<u16>(addr + (y * width + x) * 2);
-    Some(match fmt {
-        // A1R5G5B5: 1-bit alpha, 5/5/5 color.
-        TEXFMT_A1R5G5B5 => {
-            let r = (p >> 10) & 0x1f;
-            let g = (p >> 5) & 0x1f;
-            let b = p & 0x1f;
-            (
-                (r << 11) | (((g << 1) | (g >> 4)) << 5) | b,
-                if p & 0x8000 != 0 { 255 } else { 0 },
-            )
-        }
-        // A4R4G4B4: 4-bit alpha, 4/4/4 color expanded to 5/6/5.
-        TEXFMT_A4R4G4B4 => {
-            let r = (p >> 8) & 0xf;
-            let g = (p >> 4) & 0xf;
-            let b = p & 0xf;
-            (
-                ((r << 1) | (r >> 3)) << 11 | (((g << 2) | (g >> 2)) << 5) | ((b << 1) | (b >> 3)),
-                (((p >> 12) & 0xf) * 17) as u8,
-            )
-        }
-        _ => (p, 255),
-    })
+    let (r, g, b, a) = decode_texel(p, fmt);
+    Some((pack_565(r, g, b), a))
+}
+
+/// Bilinear sample (D3DTFG_LINEAR), returning (RGB565 color, 0-255 alpha).
+/// Texel centers sit at half-integer coordinates, so the footprint is
+/// offset by 0.5 and addresses wrap like the nearest sampler.
+fn sample_texel_linear(
+    mem: &Memory,
+    addr: u32,
+    width: u32,
+    height: u32,
+    u: f32,
+    v: f32,
+    fmt: u8,
+) -> Option<(u16, u8)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let u = u.fract();
+    let u = if u < 0.0 { u + 1.0 } else { u };
+    let v = v.fract();
+    let v = if v < 0.0 { v + 1.0 } else { v };
+    let fx = u * width as f32 - 0.5;
+    let fy = v * height as f32 - 0.5;
+    let x0 = fx.floor() as i32;
+    let y0 = fy.floor() as i32;
+    let dx = fx - x0 as f32;
+    let dy = fy - y0 as f32;
+    let tap = |x: i32, y: i32| {
+        let x = x.rem_euclid(width as i32) as u32;
+        let y = y.rem_euclid(height as i32) as u32;
+        let p = mem.read::<u16>(addr + (y * width + x) * 2);
+        decode_texel(p, fmt)
+    };
+    let c00 = tap(x0, y0);
+    let c10 = tap(x0 + 1, y0);
+    let c01 = tap(x0, y0 + 1);
+    let c11 = tap(x0 + 1, y0 + 1);
+    // Lerp each channel: top row c00->c10, bottom c01->c11, then across.
+    let mix = |i: usize| {
+        let g = |c: (u8, u8, u8, u8)| match i {
+            0 => c.0,
+            1 => c.1,
+            2 => c.2,
+            _ => c.3,
+        };
+        let a = g(c00) as f32 + (g(c10) as f32 - g(c00) as f32) * dx;
+        let b = g(c01) as f32 + (g(c11) as f32 - g(c01) as f32) * dx;
+        (a + (b - a) * dy) as u8
+    };
+    let (r, g, b, a) = (mix(0), mix(1), mix(2), mix(3));
+    Some((pack_565(r, g, b), a))
 }
 
 fn rasterize(
@@ -2101,6 +2162,8 @@ fn rasterize(
         tex_height: u32,
         tex_bpp: u32,
         tex_fmt: u8,
+        mag_filter: u32,
+        min_filter: u32,
         // (pixels, width, height) for each filled sub-level past the base.
         tex_mips: Vec<(u32, u32, u32)>,
         zbuf_addr: u32,
@@ -2256,6 +2319,12 @@ fn rasterize(
             Vec::new()
         };
 
+        // Texture-stage filters: D3DTSS_MAGFILTER=16, MINFILTER=17 —
+        // D3DTFG_POINT(1) by default.
+        let tss = |s: u32| *device.texture_stage_states.get(&(0, s)).unwrap_or(&1);
+        let mag_filter = tss(16);
+        let min_filter = tss(17);
+
         // Lock the render target now so its pixel address is known.
         drop(rt);
         let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory);
@@ -2274,6 +2343,8 @@ fn rasterize(
             tex_height: tex_h,
             tex_bpp,
             tex_fmt,
+            mag_filter,
+            min_filter,
             tex_mips,
             zbuf_addr,
             cull,
@@ -2313,12 +2384,10 @@ fn rasterize(
     let vsize = vertex_size(dwVertexTypeDesc);
     let stride = t.rt_width * t.rt_bpp;
     // THESEUS_PROBE=x,y logs every draw that writes that render-target pixel.
-    let probe_addr = std::env::var("THESEUS_PROBE")
-        .ok()
-        .and_then(|s| {
-            let (x, y) = s.split_once(',')?;
-            Some(t.rt_addr + y.parse::<u32>().ok()? * stride + x.parse::<u32>().ok()? * 2)
-        });
+    let probe_addr = std::env::var("THESEUS_PROBE").ok().and_then(|s| {
+        let (x, y) = s.split_once(',')?;
+        Some(t.rt_addr + y.parse::<u32>().ok()? * stride + x.parse::<u32>().ok()? * 2)
+    });
     // Z-testing is only meaningful when a z-buffer is actually attached.
     let zbuf_addr = if t.zenable != 0 && std::env::var("THESEUS_NO_ZTEST").is_err() {
         t.zbuf_addr
@@ -2484,9 +2553,11 @@ fn rasterize(
                     + beta * ((b.diffuse >> 24) & 0xff) as f32
                     + gamma * ((c.diffuse >> 24) & 0xff) as f32;
                 let (color, sa) = if t.tex_addr != 0 {
-                    let (taddr, tw, th) = if t.tex_mips.is_empty() {
-                        base_level
-                    } else {
+                    // rho is the texel-space UV derivative magnitude, needed
+                    // both to pick the mip level and to choose between the
+                    // magnification and minification filters.
+                    let filtered = t.min_filter == 2 || t.mag_filter == 2; // D3DTFG_LINEAR
+                    let rho = if !t.tex_mips.is_empty() || filtered {
                         // d(uv)/dx and d(uv)/dy: re-evaluate the barycentrics
                         // one pixel right and one down (w0/w1 were already
                         // stepped in x, so step them back for the y probe).
@@ -2511,11 +2582,15 @@ fn rasterize(
                         };
                         let (u2, v2) = uv_at(alpha2, beta2);
                         let (u3, v3) = uv_at(alpha3, beta3);
-                        let rho = ((u2 - u) * t.tex_width as f32)
+                        ((u2 - u) * t.tex_width as f32)
                             .abs()
                             .max(((v2 - v) * t.tex_height as f32).abs())
                             .max(((u3 - u) * t.tex_width as f32).abs())
-                            .max(((v3 - v) * t.tex_height as f32).abs());
+                            .max(((v3 - v) * t.tex_height as f32).abs())
+                    } else {
+                        0.0
+                    };
+                    let (taddr, tw, th) = if rho > 0.0 && !t.tex_mips.is_empty() {
                         let lvl = rho.max(1e-9).log2().round().max(0.0) as usize;
                         if lvl == 0 {
                             base_level
@@ -2526,9 +2601,21 @@ fn rasterize(
                                 .or_else(|| t.tex_mips.last().copied())
                                 .unwrap_or(base_level)
                         }
+                    } else {
+                        base_level
                     };
-                    let (c, ta) = sample_texel(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
-                        .unwrap_or((argb_to_565(0xff_00_00_00), 255));
+                    // rho > 1 is minifying (MINFILTER), <= 1 magnifying.
+                    let linear = if rho > 1.0 {
+                        t.min_filter == 2
+                    } else {
+                        t.mag_filter == 2
+                    };
+                    let (c, ta) = if linear {
+                        sample_texel_linear(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
+                    } else {
+                        sample_texel(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
+                    }
+                    .unwrap_or((argb_to_565(0xff_00_00_00), 255));
                     (c, ta as f32 * diff_a / 255.0)
                 } else {
                     let r = ((alpha * ((a.diffuse >> 16) & 0xff) as f32
@@ -2588,12 +2675,33 @@ fn rasterize(
                         t.tex_height,
                         t.tex_mips.len(),
                         sa as u32,
-                        t.zenable, t.zwrite, t.zfunc,
-                        t.alpha_test, t.alpha_func, t.alpha_ref,
-                        t.alpha_blend, t.src_blend, t.dst_blend,
-                        a.x, a.y, a.z, a.diffuse, a.u, a.v,
-                        b.x, b.y, b.z, b.diffuse, b.u, b.v,
-                        c.x, c.y, c.z, c.diffuse, c.u, c.v,
+                        t.zenable,
+                        t.zwrite,
+                        t.zfunc,
+                        t.alpha_test,
+                        t.alpha_func,
+                        t.alpha_ref,
+                        t.alpha_blend,
+                        t.src_blend,
+                        t.dst_blend,
+                        a.x,
+                        a.y,
+                        a.z,
+                        a.diffuse,
+                        a.u,
+                        a.v,
+                        b.x,
+                        b.y,
+                        b.z,
+                        b.diffuse,
+                        b.u,
+                        b.v,
+                        c.x,
+                        c.y,
+                        c.z,
+                        c.diffuse,
+                        c.u,
+                        c.v,
                     );
                     // Dump each distinct texture feeding the probed draws.
                     if t.tex_addr != 0 {
@@ -2606,8 +2714,7 @@ fn rasterize(
                             .insert(t.tex_addr)
                         {
                             let (ta, tw, th) = base_level;
-                            let mut out =
-                                format!("P6\n{tw} {th}\n255\n").into_bytes();
+                            let mut out = format!("P6\n{tw} {th}\n255\n").into_bytes();
                             for i in 0..(tw * th) {
                                 let p = ctx.memory.read::<u16>(ta + i * 2);
                                 out.push((((p >> 11) & 0x1f) << 3) as u8);
