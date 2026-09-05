@@ -403,6 +403,72 @@ pub fn pshufw(x: u64, imm: u8) -> u64 {
     .pack()
 }
 
+/// PAVGB averages each unsigned byte lane, rounding up.
+pub fn pavgb(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    let mut out = [0u8; 8];
+    for i in 0..8 {
+        out[i] = ((x[i] as u16 + y[i] as u16 + 1) >> 1) as u8;
+    }
+    out.pack()
+}
+
+/// PAVGW averages each unsigned word lane, rounding up.
+pub fn pavgw(x: u64, y: u64) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    let y: [u16; 4] = y.unpack();
+    let mut out = [0u16; 4];
+    for i in 0..4 {
+        out[i] = ((x[i] as u32 + y[i] as u32 + 1) >> 1) as u16;
+    }
+    out.pack()
+}
+
+/// PMINSW keeps the smaller signed word of each lane.
+pub fn pminsw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    let mut out = [0i16; 4];
+    for i in 0..4 {
+        out[i] = x[i].min(y[i]);
+    }
+    out.pack()
+}
+
+/// PMINUB keeps the smaller unsigned byte of each lane.
+pub fn pminub(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    let mut out = [0u8; 8];
+    for i in 0..8 {
+        out[i] = x[i].min(y[i]);
+    }
+    out.pack()
+}
+
+/// PMAXSW keeps the larger signed word of each lane.
+pub fn pmaxsw(x: u64, y: u64) -> u64 {
+    let x: [i16; 4] = x.unpack();
+    let y: [i16; 4] = y.unpack();
+    let mut out = [0i16; 4];
+    for i in 0..4 {
+        out[i] = x[i].max(y[i]);
+    }
+    out.pack()
+}
+
+/// PMAXUB keeps the larger unsigned byte of each lane.
+pub fn pmaxub(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    let mut out = [0u8; 8];
+    for i in 0..8 {
+        out[i] = x[i].max(y[i]);
+    }
+    out.pack()
+}
+
 /// PMOVMSKB packs the sign bit of each byte lane: bit i = byte i's MSB.
 pub fn pmovmskb(x: u64) -> u32 {
     x.to_le_bytes()
@@ -541,9 +607,10 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        packssdw, packsswb, paddb, paddd, paddw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pinsrw,
-        pmaddwd, pmovmskb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb,
-        psubsw, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw,
+        pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pshufw, pslld, psllw, psrad,
+        psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, punpckhbw, punpckhwd, punpckldq,
+        punpcklwd,
     };
 
     #[test]
@@ -636,6 +703,28 @@ mod tests {
         assert_eq!(psrld(0xffff_ffff_0000_0100, 8), 0x00ff_ffff_0000_0001);
         assert_eq!(psrlq(0x8000_0000_0000_0000, 63), 1);
         assert_eq!(psrad(0x8000_0000_0000_0001, 31), 0xffff_ffff_0000_0000);
+    }
+
+    #[test]
+    fn pavg_rounds_up_and_min_max_reduce_lanes() {
+        // (0xff + 0x00 + 1) >> 1 = 0x80 in the low byte lane.
+        assert_eq!(pavgb(0xff, 0), 0x80);
+        assert_eq!(pavgb(u64::MAX, u64::MAX), u64::MAX);
+        // (0xffff + 0x0000 + 1) >> 1 = 0x8000 in the low word lane.
+        assert_eq!(pavgw(0xffff, 0), 0x8000);
+        assert_eq!(pavgw(u64::MAX, u64::MAX), u64::MAX);
+        // words [0x7fff, 0x8000, 0, 0] vs 0: signed and unsigned differ.
+        assert_eq!(pminsw(0x0000_0000_8000_7fff, 0), 0x0000_0000_8000_0000);
+        assert_eq!(pmaxsw(0x0000_0000_8000_7fff, 0), 0x0000_0000_0000_7fff);
+        // bytes [0x80, 0xff, 0, 0, 0, 0, 0xff, 0] vs [0x80, 0, ff, ff, ff, ff, 0, 0x7f].
+        assert_eq!(
+            pminub(0x00ff_0000_0000_ff80, 0x7f00_ffff_ffff_0080),
+            0x0000_0000_0000_0080
+        );
+        assert_eq!(
+            pmaxub(0x00ff_0000_0000_ff80, 0x7f00_ffff_ffff_0080),
+            0x7fff_ffff_ffff_ff80
+        );
     }
 
     #[test]

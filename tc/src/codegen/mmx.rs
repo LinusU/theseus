@@ -108,7 +108,8 @@ impl<'a> CodeGen<'a> {
             Paddb | Paddd | Paddsb | Paddsw | Paddusb | Paddw | Pmullw | Pmaddwd | Psrlw
             | Psrld | Psrlq | Psllw | Pslld | Psllq | Psraw | Psrad | Packuswb | Packsswb
             | Packssdw | Pcmpeqb | Pcmpeqw | Pcmpeqd | Pcmpgtb | Pcmpgtw | Pcmpgtd | Punpckhbw
-            | Punpckhwd | Punpckhdq | Psubb | Psubd | Psubsb | Psubsw | Psubusb | Psubw => {
+            | Punpckhwd | Punpckhdq | Psubb | Psubd | Psubsb | Psubsw | Psubusb | Psubw | Pavgb
+            | Pavgw | Pminsw | Pminub | Pmaxsw | Pmaxub => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,
