@@ -863,15 +863,58 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn Clear(
-        _ctx: &mut Context,
-        _this: u32,
+        ctx: &mut Context,
+        this: u32,
         _dwCount: u32,
         _lpRects: u32,
-        _dwFlags: u32,
-        _dwColor: u32,
+        dwFlags: u32,
+        dwColor: u32,
         _dvZ: u32,
         _dwStencil: u32,
     ) -> DD {
+        const D3DCLEAR_TARGET: u32 = 0x00000001;
+        if dwFlags & D3DCLEAR_TARGET == 0 {
+            return DD::OK;
+        }
+        let surface_addr = {
+            let devices = d3d_state().devices.borrow();
+            let Some(device) = devices.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            device.render_target
+        };
+        let surf = {
+            let surfs = state().surf.borrow();
+            let Some(surf) = surfs.get(&surface_addr) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            surf.clone()
+        };
+        let mut surface = surf.borrow_mut();
+        let addr = surface.lock(&mut ctx.memory);
+        let size = (surface.width * surface.height * surface.bytes_per_pixel) as usize;
+        match surface.bytes_per_pixel {
+            4 => {
+                let pixels = &mut ctx.memory[addr..][..size];
+                for chunk in pixels.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&dwColor.to_le_bytes());
+                }
+            }
+            2 => {
+                let r = (dwColor >> 16) & 0xFF;
+                let g = (dwColor >> 8) & 0xFF;
+                let b = dwColor & 0xFF;
+                let pixel = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+                let bytes = pixel.to_le_bytes();
+                let pixels = &mut ctx.memory[addr..][..size];
+                for chunk in pixels.chunks_exact_mut(2) {
+                    chunk.copy_from_slice(&bytes);
+                }
+            }
+            _ => {
+                ctx.memory[addr..][..size].fill(0);
+            }
+        }
         DD::OK
     }
 
