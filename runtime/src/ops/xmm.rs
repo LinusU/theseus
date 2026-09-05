@@ -1111,6 +1111,40 @@ pub fn pinsrw_xmm(dst: [u32; 4], src: u16, sel: u8) -> [u32; 4] {
     from_words(words)
 }
 
+pub fn psadbw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let low: u16 = (0..8).map(|i| a[i].abs_diff(b[i]) as u16).sum();
+    let high: u16 = (8..16).map(|i| a[i].abs_diff(b[i]) as u16).sum();
+    [low as u32, 0, high as u32, 0]
+}
+
+pub fn pmulhw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = ((a[i] as i16 as i32 * b[i] as i16 as i32) >> 16) as i16 as u16;
+    }
+    from_words(out)
+}
+
+pub fn pmulhuw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = ((a[i] as u32 * b[i] as u32) >> 16) as u16;
+    }
+    from_words(out)
+}
+
+pub fn pmuludq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let low = (a[0] as u64) * (b[0] as u64);
+    let high = (a[2] as u64) * (b[2] as u64);
+    from_qwords([low, high])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,6 +1165,50 @@ mod tests {
         assert_eq!(
             pinsrw_xmm(xmm, 0xabcd, 7),
             [0x0004_0003, 0x0002_0001, 0x0008_0007, 0xabcd_0005]
+        );
+    }
+
+    #[test]
+    fn psadbw_and_high_multiplies_reduce_xmm_lanes() {
+        let a = [0x0001_0002, 0x0003_0004, 0x0005_0006, 0x0007_0008];
+        let b = [0x0001_0002, 0x0003_0004, 0x0005_0006, 0x0007_0008];
+        assert_eq!(psadbw_xmm(a, b), [0, 0, 0, 0]);
+
+        // low qword bytes: 02,00,01,00,04,00,03,00 vs 00.. gives sum 0x0a.
+        // high qword bytes: 06,00,05,00,08,00,07,00 vs 00.. gives sum 0x1a.
+        let c = [0, 0, 0, 0];
+        assert_eq!(psadbw_xmm(a, c), [0x000a, 0, 0x001a, 0]);
+
+        // 0x0001 * 0x0002 = 2, high word 0; 0x0003 * 0x0004 = 12, high word 0; etc.
+        assert_eq!(pmulhuw_xmm(a, a), [0, 0, 0, 0]);
+
+        // 0xffff * 0x0002 = 0x0001_fffe; high word 0x0001.
+        let x = [0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff];
+        let y = [0x0002_0002, 0x0002_0002, 0x0002_0002, 0x0002_0002];
+        assert_eq!(
+            pmulhuw_xmm(x, y),
+            [0x0001_0001, 0x0001_0001, 0x0001_0001, 0x0001_0001]
+        );
+
+        // 0x8000 * 0x0002 as signed i16: -32768 * 2 = -65536; high word 0xffff.
+        let neg = [0x8000_8000; 4];
+        assert_eq!(
+            pmulhw_xmm(neg, y),
+            [0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff]
+        );
+
+        // 0x8000 * 0x8000 as signed i16: -32768 * -32768 = 0x4000_0000; high 0x4000.
+        assert_eq!(
+            pmulhw_xmm(neg, neg),
+            [0x4000_4000, 0x4000_4000, 0x4000_4000, 0x4000_4000]
+        );
+
+        // low dword product: 0x0002_0001 * 0x0002_0001 = 0x0000000400040001.
+        let u = [0x0002_0001, 0, 0x0002_0001, 0];
+        let v = [0x0002_0001, 0, 0x0002_0001, 0];
+        assert_eq!(
+            pmuludq_xmm(u, v),
+            [0x0004_0001, 0x0000_0004, 0x0004_0001, 0x0000_0004]
         );
     }
 }

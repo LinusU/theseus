@@ -527,6 +527,23 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // Packed multiply and absolute-difference reductions. PSADBW sums
+            // byte-lane absolute differences into the low word of each qword;
+            // PMULHW/PMULHUW keep the high word of signed/unsigned word products;
+            // PMULUDQ multiplies the low dword of each qword.
+            Psadbw | Pmulhw | Pmulhuw | Pmuludq => {
+                let func = format!("{}_xmm", instr_name(instr));
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.
