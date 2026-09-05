@@ -45,6 +45,9 @@ const DIERR_NOTACQUIRED: u32 = make_dierror(0x0c); // ERROR_INVALID_ACCESS
 const DIERR_INVALIDPARAM: u32 = make_dierror(0x57); // ERROR_INVALID_PARAMETER
 const E_POINTER: u32 = 0x80004003;
 const E_NOINTERFACE: u32 = 0x80004002;
+const E_NOTIMPL: u32 = 0x80004001;
+/// DIERR_UNSUPPORTED aliases E_NOINTERFACE in the DirectInput headers.
+const DIERR_UNSUPPORTED: u32 = E_NOINTERFACE;
 
 /// Shared COM identity check: the object answers for IID_IUnknown only.
 fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
@@ -273,7 +276,8 @@ pub mod IDirectInput {
 
     #[win32_derive::dllexport]
     pub fn RunControlPanel(_ctx: &mut Context, _this: u32, _hwnd: u32, _dwFlags: u32) -> u32 {
-        todo!()
+        // No host control panel exists to run.
+        E_NOTIMPL
     }
 
     #[win32_derive::dllexport]
@@ -620,7 +624,8 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn RunControlPanel(_ctx: &mut Context, _this: u32, _hwnd: u32, _dwFlags: u32) -> u32 {
-        todo!()
+        // No host control panel exists to run.
+        E_NOTIMPL
     }
 
     #[win32_derive::dllexport]
@@ -634,39 +639,65 @@ pub mod IDirectInputDevice {
         DI_OK
     }
 
+    /// The emulated keyboard and mouse have no force-feedback actuators, so
+    /// every effect-management call reports an explicit failure or an empty
+    /// enumeration rather than fabricating an effect object.
     #[win32_derive::dllexport]
-    pub fn CreateEffect(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn CreateEffect(
+        ctx: &mut Context,
+        _this: u32,
+        _rguid: u32,
+        _lpeff: u32,
+        lplpde: u32,
+        _punkOuter: u32,
+    ) -> u32 {
+        if lplpde != 0 {
+            ctx.memory.write::<u32>(lplpde, 0);
+        }
+        DIERR_UNSUPPORTED
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumEffects(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn EnumEffects(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpCallback: u32,
+        _pvRef: u32,
+        _dwEffType: u32,
+    ) -> u32 {
+        DI_OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetEffectInfo(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn GetEffectInfo(_ctx: &mut Context, _this: u32, _pdei: u32, _rguid: u32) -> u32 {
+        DIERR_OBJECTNOTFOUND
     }
 
     #[win32_derive::dllexport]
-    pub fn GetForceFeedbackState(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn GetForceFeedbackState(_ctx: &mut Context, _this: u32, _pdwOut: u32) -> u32 {
+        DIERR_UNSUPPORTED
     }
 
     #[win32_derive::dllexport]
-    pub fn SendForceFeedbackCommand(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn SendForceFeedbackCommand(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> u32 {
+        DIERR_UNSUPPORTED
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumCreatedEffectObjects(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn EnumCreatedEffectObjects(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpenum: u32,
+        _pv: u32,
+        _fl: u32,
+    ) -> u32 {
+        DI_OK
     }
 
     #[win32_derive::dllexport]
-    pub fn Escape(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn Escape(_ctx: &mut Context, _this: u32, _pesc: u32) -> u32 {
+        // Hardware-specific escapes have no backing device.
+        E_NOTIMPL
     }
 
     #[win32_derive::dllexport]
@@ -675,8 +706,16 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn SendDeviceData(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+    pub fn SendDeviceData(
+        _ctx: &mut Context,
+        _this: u32,
+        _cbObjectData: u32,
+        _rgdod: u32,
+        _pdwInOut: u32,
+        _dwFlags: u32,
+    ) -> u32 {
+        // There is no hardware to accept device data.
+        DIERR_UNSUPPORTED
     }
 }
 
