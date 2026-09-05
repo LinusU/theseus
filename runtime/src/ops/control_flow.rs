@@ -175,7 +175,7 @@ impl Context {
         log::info!("iret16 {cs:x} {ip:x}");
         self.cpu.regs.set_cs(cs);
         let flags = self.pop16();
-        self.cpu.flags = Flags::from_bits(flags as u32).unwrap();
+        self.cpu.flags = Flags::from_bits_truncate(flags as u32 & !2);
         self.indirect(segofs(cs, ip))
     }
 
@@ -294,6 +294,24 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);
+    }
+
+    #[test]
+    fn iret16_ignores_reserved_flags_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.cs = 0;
+        ctx.cpu.regs.ss = 0x100;
+        ctx.cpu.regs.esp = 0xabcd_0100;
+        ctx.memory.write::<u16>(segofs(0x100, 0x100), 0x1234);
+        ctx.memory.write::<u16>(segofs(0x100, 0x102), 0);
+        ctx.memory.write::<u16>(segofs(0x100, 0x104), 0x0202);
+        ctx.blocks = &BLOCKS;
+
+        ctx.iret16();
+
+        assert_eq!(ctx.cpu.regs.cs, 0);
+        assert_eq!(ctx.cpu.flags.bits(), Flags::IF.bits());
     }
 
     #[test]
