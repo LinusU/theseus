@@ -159,15 +159,23 @@ pub mod IDirectDraw7 {
         lplpDDSurface: u32,
         _pUnkOuter: u32,
     ) -> DD {
-        let mut ddraw = state().get_ddraw(this);
-        let desc = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc2..])
-            .unwrap()
-            .0;
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Some(desc) = crate::Ptr::<DDSURFACEDESC2>::new(lpDDSurfaceDesc2).read(&ctx.memory)
+        else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if desc.dwSize != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
+            return DD::ERR_INVALIDPARAMS;
+        }
 
         let mut lock = kernel32::lock();
-        let surface = ddraw.create_surface(&desc, &mut || {
+        let Some(surface) = ddraw.create_surface(&desc, &mut || {
             IDirectDrawSurface7::new(ctx, &mut lock.process_heap)
-        });
+        }) else {
+            return DD::ERR_GENERIC;
+        };
         let s = surface.borrow();
         log::debug!(
             "CreateSurface: {:#x} {}x{} {}bpp caps={:#x} flags={:#x} mips={} lpSurface={:#x} pf_flags={:#x} fourcc={:#x} masks={:#x},{:#x},{:#x},{:#x}",
@@ -186,7 +194,12 @@ pub mod IDirectDraw7 {
             desc.ddpfPixelFormat.dwBBitMask,
             desc.ddpfPixelFormat.dwRGBAlphaBitMask,
         );
-        ctx.memory.write(lplpDDSurface, s.addr);
+        if crate::Ptr::<u32>::new(lplpDDSurface)
+            .write(&mut ctx.memory, s.addr)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
 
         DD::OK
     }
@@ -458,7 +471,9 @@ pub mod IDirectDraw7 {
             return DD::ERR_INVALIDPARAMS;
         }
 
-        let ddraw = state().get_ddraw(this);
+        let Some(ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         let (width, height) = match &ddraw.window {
             Some(window) => {
                 let window = window.borrow();
@@ -573,7 +588,10 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn SetCooperativeLevel(_ctx: &mut Context, this: u32, hwnd: HWND, flags: u32) -> DD {
-        state().get_ddraw(this).set_cooperative_level(hwnd, flags);
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ddraw.set_cooperative_level(hwnd, flags);
         DD::OK
     }
 
@@ -588,7 +606,9 @@ pub mod IDirectDraw7 {
         _flags: u32,
     ) -> DD {
         log::debug!("SetDisplayMode: {width}x{height} {bpp}bpp");
-        let mut ddraw = state().get_ddraw(this);
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         if let Some(window) = &ddraw.window {
             window.borrow_mut().resize(ctx, width, height);
         }
@@ -1089,15 +1109,17 @@ pub mod IDirectDrawSurface7 {
         _lpDDSurfaceTargetOverride: u32,
         _dwFlags: u32,
     ) -> DD {
-        {
+        let result = {
             let surfaces = state().surf.borrow_mut();
-            let mut surface = surfaces.get(&this).unwrap().borrow_mut();
-            surface.flip(&mut ctx.memory);
-        }
+            let Some(surface) = surfaces.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            surface.borrow_mut().flip(&mut ctx.memory)
+        };
         // A frame flip is the one thing a game does every frame no matter what
         // it's doing, so it's where we keep the audio mixer fed.
         crate::dsound::pump(ctx);
-        DD::OK
+        result
     }
 
     #[win32_derive::dllexport]
@@ -1182,7 +1204,10 @@ pub mod IDirectDrawSurface7 {
     #[win32_derive::dllexport]
     pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
         let surfaces = state().surf.borrow_mut();
-        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut surface = surface.borrow_mut();
         let (width, height, bpp) = (surface.width, surface.height, surface.bytes_per_pixel);
         let bitmap = if bpp == 4 {
             gdi32::Bitmap::new_simple(width, height, surface.lock(&mut ctx.memory))
@@ -1268,10 +1293,18 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetSurfaceDesc(ctx: &mut Context, this: u32, lpDDSurfaceDesc2: u32) -> DD {
-        let surfaces = state().surf.borrow_mut();
-        let surface = surfaces.get(&this).unwrap().borrow();
+        if !crate::ddraw::guest_range(ctx, lpDDSurfaceDesc2, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let surface = surface.borrow();
         let size = ctx.memory.read::<u32>(lpDDSurfaceDesc2);
-        assert_eq!(size, std::mem::size_of::<DDSURFACEDESC2>() as u32);
+        if size != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ctx.memory.write(
             lpDDSurfaceDesc2,
             DDSURFACEDESC2 {
@@ -1346,7 +1379,10 @@ pub mod IDirectDrawSurface7 {
     pub fn ReleaseDC(ctx: &mut Context, this: u32, hDC: HDC) -> DD {
         let scratch = state().surface_dcs.borrow_mut().remove(&hDC.to_raw());
         let surfaces = state().surf.borrow_mut();
-        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut surface = surface.borrow_mut();
         gdi32::lock().release_dc(hDC);
         if let Some(scratch) = scratch {
             // GetDC gave the game a 32-bit scratch buffer; convert it back to

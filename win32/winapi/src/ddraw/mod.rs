@@ -239,10 +239,13 @@ pub struct State {
 }
 
 impl State {
-    pub fn get_ddraw(&self, ptr: u32) -> RefMut<'_, DirectDraw> {
-        let ddraw = RefMut::map(self.ddraw.borrow_mut(), |ddraw| ddraw.as_mut().unwrap());
-        assert!(ptr == ddraw.addr);
-        ddraw
+    /// The `DirectDraw` object when `ptr` names it: `None` when no object
+    /// was created or the COM `this` pointer isn't ours.
+    pub fn get_ddraw(&self, ptr: u32) -> Option<RefMut<'_, DirectDraw>> {
+        RefMut::filter_map(self.ddraw.borrow_mut(), |ddraw| {
+            ddraw.as_mut().filter(|ddraw| ddraw.addr == ptr)
+        })
+        .ok()
     }
 }
 

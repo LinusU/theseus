@@ -2683,20 +2683,20 @@ fn rasterize(
                 } else {
                     let rr = (alpha * ((a.diffuse >> 16) & 0xff) as f32
                         + beta * ((b.diffuse >> 16) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 16) & 0xff) as f32) as u32;
+                        + gamma * ((c.diffuse >> 16) & 0xff) as f32)
+                        as u32;
                     let gg = (alpha * ((a.diffuse >> 8) & 0xff) as f32
                         + beta * ((b.diffuse >> 8) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 8) & 0xff) as f32) as u32;
+                        + gamma * ((c.diffuse >> 8) & 0xff) as f32)
+                        as u32;
                     let bb = (alpha * ((a.diffuse) & 0xff) as f32
                         + beta * ((b.diffuse) & 0xff) as f32
                         + gamma * ((c.diffuse) & 0xff) as f32) as u32;
                     let aa = (alpha * ((a.diffuse >> 24) & 0xff) as f32
                         + beta * ((b.diffuse >> 24) & 0xff) as f32
-                        + gamma * ((c.diffuse >> 24) & 0xff) as f32) as u32;
-                    (aa.min(255) << 24)
-                        | (rr.min(255) << 16)
-                        | (gg.min(255) << 8)
-                        | bb.min(255)
+                        + gamma * ((c.diffuse >> 24) & 0xff) as f32)
+                        as u32;
+                    (aa.min(255) << 24) | (rr.min(255) << 16) | (gg.min(255) << 8) | bb.min(255)
                 };
                 let diff_a = ((diffuse >> 24) & 0xff) as f32;
                 let (mut color, sa) = if t.tex_addr != 0 {

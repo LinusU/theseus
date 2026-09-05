@@ -19,9 +19,19 @@ pub struct DirectDraw {
 
 impl DirectDraw {
     pub fn set_cooperative_level(&mut self, _hwnd: HWND, _flags: u32) {
-        let window = user32::state().window.borrow().as_ref().unwrap().clone();
-        self.window = Some(window);
+        // SetCooperativeLevel can run before the app's window exists, or with
+        // no window at all in a headless session.
+        self.window = user32::state().window.borrow().as_ref().cloned();
     }
+}
+
+/// Whether `addr..addr + bytes` is a range a guest may supply: outside the
+/// null page and fully inside emulated memory.
+pub(crate) fn guest_range(ctx: &Context, addr: u32, bytes: u32) -> bool {
+    addr >= 0x1000
+        && (addr as usize)
+            .checked_add(bytes as usize)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
 }
 
 struct SurfaceParams {
@@ -34,15 +44,17 @@ struct SurfaceParams {
 }
 
 impl DirectDraw {
+    /// Surfaces target the cooperative-level window, so this returns `None`
+    /// when no window was bound yet rather than fabricating a display.
     pub fn create_surface(
         &mut self,
         desc: &DDSURFACEDESC2,
         new_pointer: &mut dyn FnMut() -> u32,
-    ) -> Rc<RefCell<Surface>> {
+    ) -> Option<Rc<RefCell<Surface>>> {
         let is_primary = desc.dwFlags.contains(DDSD::CAPS)
             && desc.ddsCaps.dwCaps.contains(DDSCAPS::PRIMARYSURFACE);
 
-        let window = self.window.as_ref().unwrap().borrow();
+        let window = self.window.as_ref()?.borrow();
         let width = if desc.dwFlags.contains(DDSD::WIDTH) {
             desc.dwWidth
         } else {
@@ -111,7 +123,7 @@ impl DirectDraw {
                 caps,
                 pixel_format: pixel_format.clone(),
             },
-        );
+        )?;
 
         if desc.dwFlags.contains(DDSD::CKSRCBLT) {
             surface.borrow_mut().src_color_key = Some(ColorKey {
@@ -127,7 +139,11 @@ impl DirectDraw {
         }
 
         if let Some(count) = desc.back_buffer_count() {
-            assert_eq!(count, 1);
+            // Only a single back buffer is modeled; anything more fails
+            // creation rather than faking a longer flip chain.
+            if count != 1 {
+                return None;
+            }
             // The implicit back buffer shares the primary's caps minus
             // PRIMARYSURFACE, plus the BACKBUFFER role.
             let mut back_caps = caps;
@@ -143,7 +159,7 @@ impl DirectDraw {
                     caps: back_caps,
                     pixel_format: pixel_format.clone(),
                 },
-            );
+            )?;
             back.borrow_mut().primary.replace(surface.clone());
             let mut surface_mut = surface.borrow_mut();
             surface_mut.attached.replace(back.clone());
@@ -171,7 +187,7 @@ impl DirectDraw {
                         caps,
                         pixel_format: pixel_format.clone(),
                     },
-                );
+                )?;
                 parent.borrow_mut().attachments.push(level.clone());
                 parent = level;
                 if w == 1 && h == 1 {
@@ -180,11 +196,15 @@ impl DirectDraw {
             }
         }
 
-        surface
+        Some(surface)
     }
 
-    fn create_one_surface(&mut self, addr: u32, params: &SurfaceParams) -> Rc<RefCell<Surface>> {
-        let window = self.window.as_ref().unwrap();
+    fn create_one_surface(
+        &mut self,
+        addr: u32,
+        params: &SurfaceParams,
+    ) -> Option<Rc<RefCell<Surface>>> {
+        let window = self.window.as_ref()?;
         let target = if params.is_primary {
             Target::Window(window.clone())
         } else {
@@ -219,7 +239,7 @@ impl DirectDraw {
         }));
         // TODO: move surf to ddraw
         state().surf.borrow_mut().insert(addr, surf.clone());
-        surf
+        Some(surf)
     }
 }
 
@@ -428,13 +448,16 @@ impl Surface {
         window.borrow_mut().host.render(texture);
     }
 
-    pub fn flip(&mut self, mem: &mut Memory) {
+    pub fn flip(&mut self, mem: &mut Memory) -> DD {
         // "Flip can be called only for a surface that has the DDSCAPS_FLIP and DDSCAPS_FRONTBUFFER capabilities."
         let Target::Window(window) = &self.target else {
-            unreachable!()
+            return DD::ERR_INVALIDSURFACETYPE;
         };
 
-        let mut back = self.attached.as_ref().unwrap().borrow_mut();
+        let Some(back) = self.attached.as_ref() else {
+            return DD::ERR_INVALIDSURFACETYPE;
+        };
+        let mut back = back.borrow_mut();
         // Refresh the back buffer's texture every flip, not just in
         // palettized modes — a palette is only needed to expand indexed
         // pixels, while 16/32bpp buffers convert without one.
@@ -473,10 +496,11 @@ impl Surface {
             }
         }
         let Target::Texture(texture) = &mut back.target else {
-            unreachable!()
+            return DD::ERR_INVALIDSURFACETYPE;
         };
         let mut window = window.borrow_mut();
         window.host.render(texture);
+        DD::OK
     }
 }
 
@@ -495,7 +519,7 @@ pub fn create_palette(
     lplp_pal: u32,
     new_pointer: impl FnOnce(&mut Context) -> u32,
 ) -> DD {
-    if lplp_pal == 0 {
+    if !guest_range(ctx, lplp_pal, 4) {
         return DD::ERR_INVALIDPARAMS;
     }
     // DDPCAPS_8BIT/4BIT/2BIT/1BIT choose the table size; absent a depth flag
@@ -522,7 +546,10 @@ pub fn create_palette(
             count
         ]
     } else {
-        match <[PALETTEENTRY]>::ref_from_prefix_with_elems(&ctx.memory[lp_entries..], count) {
+        let Some(bytes) = ctx.memory.bytes.get(lp_entries as usize..) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        match <[PALETTEENTRY]>::ref_from_prefix_with_elems(bytes, count) {
             Ok((entries, _)) => entries.to_vec(),
             Err(_) => return DD::ERR_INVALIDPARAMS,
         }
@@ -563,15 +590,20 @@ pub fn DirectDrawCreateEx(
     _pUnkOuter: u32,
 ) -> DD {
     unsafe { super::init_vtables(ctx) };
-    if lpGuid != 0 {
-        let _guid = ctx.memory.read::<GUID>(lpGuid);
-        log::debug!("DirectDrawCreateEx with GUID {_guid:?}");
+    if let Some(guid) = crate::Ptr::<GUID>::new(lpGuid).read(&ctx.memory) {
+        log::debug!("DirectDrawCreateEx with GUID {guid:?}");
     }
     let iid = if iid == 0 {
         None
     } else {
-        Some(ctx.memory.read::<GUID>(iid))
+        let Some(iid) = crate::Ptr::<GUID>::new(iid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        Some(iid)
     };
+    if !guest_range(ctx, lplpDD, 4) {
+        return DD::ERR_INVALIDPARAMS;
+    }
 
     let mut kernel32 = kernel32::lock();
     let addr: u32 = match iid {
@@ -579,7 +611,8 @@ pub fn DirectDrawCreateEx(
         Some(ddraw7::IID_IDirectDraw7) => {
             ddraw7::IDirectDraw7::new(ctx, &mut kernel32.process_heap)
         }
-        _ => panic!(),
+        // The emulated object exposes only IDirectDraw and IDirectDraw7.
+        Some(_) => return DD::E_NOINTERFACE,
     };
 
     let mut ddraw = state().ddraw.borrow_mut();
@@ -659,9 +692,14 @@ pub fn blit_copy(
     src_ptr: u32,
     src_rect: Option<RECT>,
     color_key: Option<ColorKey>,
-) {
-    let src_rc = state().surf.borrow_mut().get(&src_ptr).unwrap().clone();
-    let dst_rc = state().surf.borrow_mut().get(&dst_ptr).unwrap().clone();
+) -> DD {
+    let (src_rc, dst_rc) = {
+        let surfaces = state().surf.borrow();
+        let (Some(src), Some(dst)) = (surfaces.get(&src_ptr), surfaces.get(&dst_ptr)) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        (src.clone(), dst.clone())
+    };
 
     // THESEUS_SRC_DUMP=<path> writes the Nth full-screen blit's raw source
     // pixels as a PPM (N from THESEUS_SRC_DUMP_AT), for comparing what the
@@ -714,7 +752,7 @@ pub fn blit_copy(
     let mut dst = dst_rc.borrow_mut();
     if dst.bytes_per_pixel != bpp {
         log::warn!("blit between different pixel formats");
-        return;
+        return DD::OK;
     }
     let addr = dst.lock(&mut ctx.memory);
     let stride = dst.width * bpp;
@@ -744,7 +782,7 @@ pub fn blit_copy(
                         4 => u32::from_le_bytes(pixel.try_into().unwrap()),
                         _ => {
                             log::warn!("colorkey blit at {bpp} bytes per pixel");
-                            return;
+                            return DD::OK;
                         }
                     };
                     if key.matches(value) {
@@ -757,6 +795,7 @@ pub fn blit_copy(
         }
     }
     dst.present(&mut ctx.memory);
+    DD::OK
 }
 
 pub fn surface_src_color_key(surface: u32) -> Option<ColorKey> {
@@ -788,10 +827,15 @@ pub fn blt(
 
     let dst_rect = read_rect(ctx, lpDstRect);
     if dwFlags & DDBLT_COLORFILL != 0 {
+        if !guest_range(ctx, lpDDBLTFX, 84) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         // DDBLTFX.dwFillColor is at offset 80.
         let color = ctx.memory.read::<u32>(lpDDBLTFX + 80);
         log::debug!("Blt colorfill: dst={this:#x} rect={dst_rect:?} color={color:#x}");
-        let dst_rc = state().surf.borrow_mut().get(&this).unwrap().clone();
+        let Some(dst_rc) = state().surf.borrow().get(&this).cloned() else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         let mut dst = dst_rc.borrow_mut();
         let bpp = dst.bytes_per_pixel;
         let rect = dst_rect
@@ -830,6 +874,9 @@ pub fn blt(
     }
 
     let color_key = if dwFlags & DDBLT_KEYSRCOVERRIDE != 0 {
+        if !guest_range(ctx, lpDDBLTFX, 100) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         // DDBLTFX.ddckSrcColorkey, past the z-buffer and alpha fields.
         Some(ColorKey {
             low: ctx.memory.read::<u32>(lpDDBLTFX + 92),
@@ -843,8 +890,7 @@ pub fn blt(
 
     let src_rect = read_rect(ctx, lpSrcRect);
     log::debug!("Blt: dst={this:#x} src={lpDDSrcSurface:#x} flags={dwFlags:#x}");
-    blit_copy(ctx, this, dst_rect, lpDDSrcSurface, src_rect, color_key);
-    DD::OK
+    blit_copy(ctx, this, dst_rect, lpDDSrcSurface, src_rect, color_key)
 }
 
 pub fn blt_fast(
@@ -879,12 +925,10 @@ pub fn blt_fast(
     let (w, h) = match &src_rect {
         Some(r) => ((r.right - r.left).max(0), (r.bottom - r.top).max(0)),
         None => {
-            let src = state()
-                .surf
-                .borrow_mut()
-                .get(&lpDDSrcSurface)
-                .unwrap()
-                .clone();
+            let surfaces = state().surf.borrow();
+            let Some(src) = surfaces.get(&lpDDSrcSurface) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
             let src = src.borrow();
             (src.width as i32, src.height as i32)
         }
@@ -902,14 +946,16 @@ pub fn blt_fast(
         lpDDSrcSurface,
         src_rect,
         color_key,
-    );
-    DD::OK
+    )
 }
 
 pub fn set_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u32) -> DD {
     let key = if lpDDColorKey == 0 {
         None
     } else {
+        if !guest_range(ctx, lpDDColorKey, 8) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         // DDCOLORKEY: dwColorSpaceLowValue, dwColorSpaceHighValue.
         Some(ColorKey {
             low: ctx.memory.read::<u32>(lpDDColorKey),
@@ -949,6 +995,9 @@ pub fn get_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
     let Some(key) = key else {
         return DD::ERR_NOCOLORKEY;
     };
+    if !guest_range(ctx, lpDDColorKey, 8) {
+        return DD::ERR_INVALIDPARAMS;
+    }
     ctx.memory.write::<u32>(lpDDColorKey, key.low);
     ctx.memory.write::<u32>(lpDDColorKey + 4, key.high);
     DD::OK

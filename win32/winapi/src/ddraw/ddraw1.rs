@@ -134,16 +134,29 @@ pub mod IDirectDraw {
         lplpDDSurface: u32,
         _pUnkOuter: u32,
     ) -> DD {
-        let mut ddraw = state().get_ddraw(this);
-        let desc = <DDSURFACEDESC>::ref_from_prefix(&ctx.memory[desc..])
-            .unwrap()
-            .0;
-        let desc2 = DDSURFACEDESC2::from_desc(desc);
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Some(desc) = crate::Ptr::<DDSURFACEDESC>::new(desc).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if desc.dwSize != std::mem::size_of::<DDSURFACEDESC>() as u32 {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let desc2 = DDSURFACEDESC2::from_desc(&desc);
         let mut state = kernel32::lock();
-        let surface = ddraw.create_surface(&desc2, &mut || {
+        let Some(surface) = ddraw.create_surface(&desc2, &mut || {
             IDirectDrawSurface::new(ctx, &mut state.process_heap)
-        });
-        ctx.memory.write(lplpDDSurface, surface.borrow().addr);
+        }) else {
+            return DD::ERR_GENERIC;
+        };
+        let addr = surface.borrow().addr;
+        if crate::Ptr::<u32>::new(lplpDDSurface)
+            .write(&mut ctx.memory, addr)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
 
         DD::OK
     }
@@ -342,7 +355,9 @@ pub mod IDirectDraw {
             return DD::ERR_INVALIDPARAMS;
         }
 
-        let ddraw = state().get_ddraw(this);
+        let Some(ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         let (width, height) = match &ddraw.window {
             Some(window) => {
                 let window = window.borrow();
@@ -376,8 +391,12 @@ pub mod IDirectDraw {
             },
             ..DDSURFACEDESC::default()
         };
-        desc.write_to_prefix(&mut ctx.memory[lpDDSurfaceDesc..])
-            .unwrap();
+        if crate::Ptr::<DDSURFACEDESC>::new(lpDDSurfaceDesc)
+            .write(&mut ctx.memory, desc)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -419,20 +438,24 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn SetCooperativeLevel(_ctx: &mut Context, this: u32, hwnd: HWND, flags: u32) -> DD {
-        state().get_ddraw(this).set_cooperative_level(hwnd, flags);
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ddraw.set_cooperative_level(hwnd, flags);
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn SetDisplayMode(ctx: &mut Context, this: u32, width: u32, height: u32, bpp: u32) -> DD {
-        let mut ddraw = state().get_ddraw(this);
-        ddraw
-            .window
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .resize(ctx, width, height);
-        assert!(bpp.is_multiple_of(8));
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if let Some(window) = &ddraw.window {
+            window.borrow_mut().resize(ctx, width, height);
+        }
+        if bpp == 0 || !bpp.is_multiple_of(8) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ddraw.bytes_per_pixel = bpp / 8;
         DD::OK
     }
@@ -755,15 +778,17 @@ pub mod IDirectDrawSurface {
         _lpDDSurfaceTargetOverride: u32,
         _dwFlags: u32,
     ) -> DD {
-        {
+        let result = {
             let surfaces = state().surf.borrow_mut();
-            let mut surface = surfaces.get(&this).unwrap().borrow_mut();
-            surface.flip(&mut ctx.memory);
-        }
+            let Some(surface) = surfaces.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            surface.borrow_mut().flip(&mut ctx.memory)
+        };
         // A frame flip is the one thing a game does every frame no matter what
         // it's doing, so it's where we keep the audio mixer fed.
         crate::dsound::pump(ctx);
-        DD::OK
+        result
     }
 
     #[win32_derive::dllexport]
@@ -845,7 +870,10 @@ pub mod IDirectDrawSurface {
     pub fn GetSurfaceDesc(ctx: &mut Context, this: u32, lpDDSurfaceDesc: u32) -> DD {
         let desc = {
             let surfaces = state().surf.borrow_mut();
-            let surface = surfaces.get(&this).unwrap().borrow();
+            let Some(surface) = surfaces.get(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            let surface = surface.borrow();
             let bpp = surface.bytes_per_pixel * 8;
             let pixel_format = if bpp == 8 {
                 DDPIXELFORMAT {
@@ -871,8 +899,12 @@ pub mod IDirectDrawSurface {
                 ..DDSURFACEDESC::default()
             }
         };
-        desc.write_to_prefix(&mut ctx.memory[lpDDSurfaceDesc..])
-            .unwrap();
+        if crate::Ptr::<DDSURFACEDESC>::new(lpDDSurfaceDesc)
+            .write(&mut ctx.memory, desc)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -891,14 +923,18 @@ pub mod IDirectDrawSurface {
     pub fn Lock(
         ctx: &mut Context,
         this: u32,
-        rect: u32,
+        _rect: u32,
         lpDesc: u32,
         _flags: u32,
         _unused: u32,
     ) -> DD {
         let surfaces = state().surf.borrow_mut();
-        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
-        assert_eq!(rect, 0);
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut surface = surface.borrow_mut();
+        // A non-null rect locks a subregion; we always hand out the whole
+        // surface, matching the ddraw7 Lock below.
 
         let pixels = surface.lock(&mut ctx.memory);
         let desc = DDSURFACEDESC {
@@ -907,7 +943,12 @@ pub mod IDirectDrawSurface {
             lpSurface: pixels,
             ..DDSURFACEDESC::default()
         };
-        desc.write_to_prefix(&mut ctx.memory[lpDesc..]).unwrap();
+        if crate::Ptr::<DDSURFACEDESC>::new(lpDesc)
+            .write(&mut ctx.memory, desc)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -935,19 +976,25 @@ pub mod IDirectDrawSurface {
     pub fn SetPalette(_ctx: &mut Context, this: u32, lpPalette: u32) -> DD {
         let state = state();
         let surfaces = state.surf.borrow_mut();
-        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
-        let palettes = state.palette.borrow_mut();
-        let palette = palettes.get(&lpPalette).unwrap();
-        surface.palette = Some(palette.clone());
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let palettes = state.palette.borrow();
+        let Some(palette) = palettes.get(&lpPalette) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        surface.borrow_mut().palette = Some(palette.clone());
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn Unlock(ctx: &mut Context, this: u32, _lpRect: u32) -> DD {
         let surfaces = state().surf.borrow_mut();
-        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         // unlock presents window-backed surfaces itself.
-        surface.unlock(&mut ctx.memory);
+        surface.borrow_mut().unlock(&mut ctx.memory);
         DD::OK
     }
 
@@ -1100,15 +1147,20 @@ pub mod IDirectDrawPalette {
         dwCount: u32,
         lpEntries: u32,
     ) -> DD {
-        let new_entries = <[PALETTEENTRY]>::ref_from_prefix_with_elems(
-            &ctx.memory[lpEntries..],
-            dwCount as usize,
-        )
-        .unwrap()
-        .0
-        .to_vec();
+        let Some(bytes) = ctx.memory.bytes.get(lpEntries as usize..) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Ok((new_entries, _)) =
+            <[PALETTEENTRY]>::ref_from_prefix_with_elems(bytes, dwCount as usize)
+        else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let new_entries = new_entries.to_vec();
         let palettes = state().palette.borrow_mut();
-        let mut palette = palettes.get(&this).unwrap().borrow_mut();
+        let Some(palette) = palettes.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let mut palette = palette.borrow_mut();
         for (i, entry) in new_entries.into_iter().enumerate() {
             let index = dwStartingEntry as usize + i;
             if index < palette.entries.len() {
