@@ -54,24 +54,65 @@ pub mod IDirectDraw7 {
         "EvaluateMode",
     ];
 
+    pub const VTABLE_FUNCS: [runtime::ContFn; 30] = [
+        QueryInterface_stdcall,
+        AddRef_stdcall,
+        Release_stdcall,
+        Compact_stdcall,
+        CreateClipper_stdcall,
+        CreatePalette_stdcall,
+        CreateSurface_stdcall,
+        DuplicateSurface_stdcall,
+        EnumDisplayModes_stdcall,
+        EnumSurfaces_stdcall,
+        FlipToGDISurface_stdcall,
+        GetCaps_stdcall,
+        GetDisplayMode_stdcall,
+        GetFourCCCodes_stdcall,
+        GetGDISurface_stdcall,
+        GetMonitorFrequency_stdcall,
+        GetScanLine_stdcall,
+        GetVerticalBlankStatus_stdcall,
+        Initialize_stdcall,
+        RestoreDisplayMode_stdcall,
+        SetCooperativeLevel_stdcall,
+        SetDisplayMode_stdcall,
+        WaitForVerticalBlank_stdcall,
+        GetAvailableVidMem_stdcall,
+        GetSurfaceFromDC_stdcall,
+        RestoreAllSurfaces_stdcall,
+        TestCooperativeLevel_stdcall,
+        GetDeviceIdentifier_stdcall,
+        StartModeTest_stdcall,
+        EvaluateMode_stdcall,
+    ];
+
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> DD {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, ppv: u32) -> DD {
+        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
+        if let Some(iid) = iid {
+            if iid == crate::ddraw::GUID((0, 0, 0, [0; 8])) || iid == IID_IDirectDraw7 {
+                ctx.memory.write::<u32>(ppv, _this);
+                return DD::OK;
+            }
+        }
+        ctx.memory.write::<u32>(ppv, 0);
+        DD::E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
     pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+        1
     }
 
     #[win32_derive::dllexport]
     pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        todo!()
+        0
     }
 
     #[win32_derive::dllexport]
     pub fn Compact(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -131,14 +172,71 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn EnumDisplayModes(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
         _flags: u32,
-        _lpSurfaceDesc2: u32,
-        _lpContext: u32,
-        _lpEnumCallback: u32,
+        lpSurfaceDesc2: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
     ) -> DD {
-        todo!()
+        if lpSurfaceDesc2 != 0 {
+            todo!("EnumDisplayModes with a filter desc");
+        }
+
+        const RESOLUTIONS: &[(u32, u32)] = &[(640, 480), (800, 600), (1024, 768)];
+        const BIT_DEPTHS: &[u32] = &[8, 16, 32];
+        const REFRESH_RATES: &[u32] = &[60, 75, 85];
+
+        for &(width, height) in RESOLUTIONS {
+            for &bpp in BIT_DEPTHS {
+                for &refresh in REFRESH_RATES {
+                    let mut desc = DDSURFACEDESC2::default();
+                    desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
+                    desc.dwFlags = DDSD::WIDTH
+                        | DDSD::HEIGHT
+                        | DDSD::PIXELFORMAT
+                        | DDSD::PITCH
+                        | DDSD::REFRESHRATE;
+                    desc.dwWidth = width;
+                    desc.dwHeight = height;
+                    desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
+                    desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle = refresh;
+
+                    let (flags, r, g, b) = match bpp {
+                        8 => (0x40 | 0x20, 0, 0, 0),
+                        16 => (0x40, 0xF800, 0x07E0, 0x001F),
+                        _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF),
+                    };
+                    desc.ddpfPixelFormat = DDPIXELFORMAT {
+                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                        dwFlags: flags,
+                        dwFourCC: 0,
+                        dwRGBBitCount: bpp,
+                        dwRBitMask: r,
+                        dwGBitMask: g,
+                        dwBBitMask: b,
+                        dwRGBAlphaBitMask: 0,
+                    };
+
+                    let desc_addr = kernel32::lock()
+                        .process_heap
+                        .alloc(&mut ctx.memory, desc.dwSize);
+                    ctx.memory.write(desc_addr, desc);
+                    let callback = ctx.indirect(lpEnumCallback);
+                    ctx.call32_x86(callback, vec![desc_addr, lpContext]);
+                    let ret = ctx.cpu.regs.eax;
+                    kernel32::lock()
+                        .process_heap
+                        .free(&mut ctx.memory, desc_addr);
+
+                    if ret == 0 {
+                        return DD::OK;
+                    }
+                }
+            }
+        }
+
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -195,12 +293,12 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn Initialize(_ctx: &mut Context, _this: u32, _lpGUID: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn RestoreDisplayMode(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -224,33 +322,39 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn WaitForVerticalBlank(_ctx: &mut Context, _this: u32, _flags: u32, _hEvent: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn GetAvailableVidMem(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
         _lpDDSCaps2: u32,
-        _lpdwTotal: u32,
-        _lpdwFree: u32,
+        lpdwTotal: u32,
+        lpdwFree: u32,
     ) -> DD {
-        todo!()
+        if lpdwTotal != 0 {
+            ctx.memory.write::<u32>(lpdwTotal, 256 * 1024 * 1024);
+        }
+        if lpdwFree != 0 {
+            ctx.memory.write::<u32>(lpdwFree, 256 * 1024 * 1024);
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn GetSurfaceFromDC(_ctx: &mut Context, _this: u32, _hdc: HDC, _lplpDDSurface: u32) -> DD {
-        todo!()
+        DD::ERR_GENERIC
     }
 
     #[win32_derive::dllexport]
     pub fn RestoreAllSurfaces(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn TestCooperativeLevel(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -260,7 +364,7 @@ pub mod IDirectDraw7 {
         _lpDDDeviceIdentifier: u32,
         _flags: u32,
     ) -> DD {
-        todo!()
+        stub!(DD::OK)
     }
 
     #[win32_derive::dllexport]
@@ -346,6 +450,58 @@ pub mod IDirectDrawSurface7 {
         "GetPriority",
         "SetLOD",
         "GetLOD",
+    ];
+
+    pub const VTABLE_FUNCS: [runtime::ContFn; 49] = [
+        QueryInterface_stdcall,
+        AddRef_stdcall,
+        Release_stdcall,
+        AddAttachedSurface_stdcall,
+        AddOverlayDirtyRect_stdcall,
+        Blt_stdcall,
+        BltBatch_stdcall,
+        BltFast_stdcall,
+        DeleteAttachedSurface_stdcall,
+        EnumAttachedSurfaces_stdcall,
+        EnumOverlayZOrders_stdcall,
+        Flip_stdcall,
+        GetAttachedSurface_stdcall,
+        GetBltStatus_stdcall,
+        GetCaps_stdcall,
+        GetClipper_stdcall,
+        GetColorKey_stdcall,
+        GetDC_stdcall,
+        GetFlipStatus_stdcall,
+        GetOverlayPosition_stdcall,
+        GetPalette_stdcall,
+        GetPixelFormat_stdcall,
+        GetSurfaceDesc_stdcall,
+        Initialize_stdcall,
+        IsLost_stdcall,
+        Lock_stdcall,
+        ReleaseDC_stdcall,
+        Restore_stdcall,
+        SetClipper_stdcall,
+        SetColorKey_stdcall,
+        SetOverlayPosition_stdcall,
+        SetPalette_stdcall,
+        Unlock_stdcall,
+        UpdateOverlay_stdcall,
+        UpdateOverlayDisplay_stdcall,
+        UpdateOverlayZOrder_stdcall,
+        GetDDInterface_stdcall,
+        PageLock_stdcall,
+        PageUnlock_stdcall,
+        SetSurfaceDesc_stdcall,
+        SetPrivateData_stdcall,
+        GetPrivateData_stdcall,
+        FreePrivateData_stdcall,
+        GetUniquenessValue_stdcall,
+        ChangeUniquenessValue_stdcall,
+        SetPriority_stdcall,
+        GetPriority_stdcall,
+        SetLOD_stdcall,
+        GetLOD_stdcall,
     ];
 
     #[win32_derive::dllexport]

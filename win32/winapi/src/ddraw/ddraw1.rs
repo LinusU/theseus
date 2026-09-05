@@ -39,6 +39,32 @@ pub mod IDirectDraw {
         "WaitForVerticalBlank",
     ];
 
+    pub const VTABLE_FUNCS: [runtime::ContFn; 23] = [
+        QueryInterface_stdcall,
+        AddRef_stdcall,
+        Release_stdcall,
+        Compact_stdcall,
+        CreateClipper_stdcall,
+        CreatePalette_stdcall,
+        CreateSurface_stdcall,
+        DuplicateSurface_stdcall,
+        EnumDisplayModes_stdcall,
+        EnumSurfaces_stdcall,
+        FlipToGDISurface_stdcall,
+        GetCaps_stdcall,
+        GetDisplayMode_stdcall,
+        GetFourCCCodes_stdcall,
+        GetGDISurface_stdcall,
+        GetMonitorFrequency_stdcall,
+        GetScanLine_stdcall,
+        GetVerticalBlankStatus_stdcall,
+        Initialize_stdcall,
+        RestoreDisplayMode_stdcall,
+        SetCooperativeLevel_stdcall,
+        SetDisplayMode_stdcall,
+        WaitForVerticalBlank_stdcall,
+    ];
+
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
         let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
@@ -281,6 +307,9 @@ pub mod IDirectDraw {
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
         let addr = heap.alloc(&mut ctx.memory, 4);
+        log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
+            VTABLE
+        });
         ctx.memory.write(addr, unsafe { VTABLE });
         addr
     }
@@ -326,6 +355,45 @@ pub mod IDirectDrawSurface {
         "UpdateOverlay",
         "UpdateOverlayDisplay",
         "UpdateOverlayZOrder",
+    ];
+
+    pub const VTABLE_FUNCS: [runtime::ContFn; 36] = [
+        QueryInterface_stdcall,
+        AddRef_stdcall,
+        Release_stdcall,
+        AddAttachedSurface_stdcall,
+        AddOverlayDirtyRect_stdcall,
+        Blt_stdcall,
+        BltBatch_stdcall,
+        BltFast_stdcall,
+        DeleteAttachedSurface_stdcall,
+        EnumAttachedSurfaces_stdcall,
+        EnumOverlayZOrders_stdcall,
+        Flip_stdcall,
+        GetAttachedSurface_stdcall,
+        GetBltStatus_stdcall,
+        GetCaps_stdcall,
+        GetClipper_stdcall,
+        GetColorKey_stdcall,
+        GetDC_stdcall,
+        GetFlipStatus_stdcall,
+        GetOverlayPosition_stdcall,
+        GetPalette_stdcall,
+        GetPixelFormat_stdcall,
+        GetSurfaceDesc_stdcall,
+        Initialize_stdcall,
+        IsLost_stdcall,
+        Lock_stdcall,
+        ReleaseDC_stdcall,
+        Restore_stdcall,
+        SetClipper_stdcall,
+        SetColorKey_stdcall,
+        SetOverlayPosition_stdcall,
+        SetPalette_stdcall,
+        Unlock_stdcall,
+        UpdateOverlay_stdcall,
+        UpdateOverlayDisplay_stdcall,
+        UpdateOverlayZOrder_stdcall,
     ];
 
     #[win32_derive::dllexport]
@@ -659,6 +727,9 @@ pub mod IDirectDrawSurface {
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
         let addr = heap.alloc(&mut ctx.memory, 4);
+        log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
+            VTABLE
+        });
         ctx.memory.write(addr, unsafe { VTABLE });
         addr
     }
@@ -675,6 +746,16 @@ pub mod IDirectDrawPalette {
         "GetEntries",
         "Initialize",
         "SetEntries",
+    ];
+
+    pub const VTABLE_FUNCS: [runtime::ContFn; 7] = [
+        QueryInterface_stdcall,
+        AddRef_stdcall,
+        Release_stdcall,
+        GetCaps_stdcall,
+        GetEntries_stdcall,
+        Initialize_stdcall,
+        SetEntries_stdcall,
     ];
 
     #[win32_derive::dllexport]
@@ -772,6 +853,9 @@ pub mod IDirectDrawPalette {
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
         let addr = heap.alloc(&mut ctx.memory, 4);
+        log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
+            VTABLE
+        });
         ctx.memory.write(addr, unsafe { VTABLE });
         addr
     }

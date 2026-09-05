@@ -347,6 +347,7 @@ pub fn DirectDrawCreateEx(
     iid: u32,
     _pUnkOuter: u32,
 ) -> DD {
+    unsafe { super::init_vtables(ctx) };
     if lpGuid != 0 {
         let _guid = ctx.memory.read::<GUID>(lpGuid);
         log::debug!("DirectDrawCreateEx with GUID {_guid:?}");
@@ -367,7 +368,6 @@ pub fn DirectDrawCreateEx(
     };
 
     let mut ddraw = state().ddraw.borrow_mut();
-    assert!(ddraw.is_none());
     *ddraw = Some(DirectDraw {
         addr,
         bytes_per_pixel: 4,
