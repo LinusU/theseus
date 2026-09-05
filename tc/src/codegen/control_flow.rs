@@ -52,6 +52,10 @@ impl<'a> CodeGen<'a> {
                         extra = Some(format!("let addr = ctx.memory.read::<u32>({addr});"));
                         cont = "ctx.indirect32(addr)".into();
                     }
+                    iced_x86::MemorySize::SegPtr32 => {
+                        extra = Some(format!("let addr = ctx.memory.read::<u32>({addr});"));
+                        cont = "ctx.indirect32(addr)".into();
+                    }
                     s => cont = format!("todo!(\"{:?}\")", s),
                 }
             }
