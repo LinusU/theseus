@@ -90,11 +90,9 @@ pub fn load(exe: &EXEData) -> Context {
     // added after they were translated. Append them to the block table and
     // register them with the DLL state so GetProcAddress can resolve them.
     let mut blocks: Vec<(u32, ContFn)> = exe.blocks.iter().copied().collect();
-    let mut next_addr = 0xfafd_0000;
-    for (dll, name, func) in BUILTIN_EXPORTS {
+    for (next_addr, (dll, name, func)) in (0xfafd_0000..).zip(BUILTIN_EXPORTS) {
         blocks.push((next_addr, *func));
         lock.dlls.register_export(dll, name, next_addr);
-        next_addr += 1;
     }
     blocks.sort_by_key(|(addr, _)| *addr);
     let blocks: &'static [(u32, ContFn)] = Box::leak(blocks.into_boxed_slice());
