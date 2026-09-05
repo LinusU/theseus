@@ -1,4 +1,4 @@
-use crate::codegen::{CodeGen, get_mem, instr_name, op_size};
+use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, op_size};
 
 impl<'a> CodeGen<'a> {
     pub fn codegen_misc(&mut self, instr: &iced_x86::Instruction) -> bool {
@@ -106,7 +106,7 @@ impl<'a> CodeGen<'a> {
                 let operation = instr_name(instr);
                 let bit = self.get_op(instr, 1);
                 self.line(format!("let bit = ({bit}) as u32;"));
-                if instr.op_kind(0) == iced_x86::OpKind::Memory {
+                if is_memory_op(instr.op_kind(0)) {
                     let addr = self.gen_addr(instr);
                     let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
                         let shift = size.trailing_zeros();
@@ -384,7 +384,7 @@ impl<'a> CodeGen<'a> {
                         };
                         format!("ctx.cpu.regs.{set}(res);")
                     }
-                    iced_x86::OpKind::Memory => {
+                    k if is_memory_op(k) => {
                         format!("ctx.memory.write::<u16>({}, res);", self.gen_addr(instr))
                     }
                     k => todo!("{k:?}"),

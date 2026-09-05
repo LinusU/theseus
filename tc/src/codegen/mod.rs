@@ -65,6 +65,41 @@ pub fn get_reg(r: iced_x86::Register) -> String {
     }
 }
 
+/// True for any OpKind that refers to a memory location.
+pub fn is_memory_op(kind: iced_x86::OpKind) -> bool {
+    use iced_x86::OpKind::*;
+    matches!(
+        kind,
+        Memory
+            | MemorySegSI
+            | MemorySegESI
+            | MemorySegRSI
+            | MemorySegDI
+            | MemorySegEDI
+            | MemorySegRDI
+            | MemoryESDI
+            | MemoryESEDI
+            | MemoryESRDI
+    )
+}
+
+/// Some `iced` memory op kinds encode the base register in the variant rather
+/// than in `Instruction::memory_base()`. Return the flat address expression for
+/// the special string-op-style kinds, or `None` for ordinary `Memory`.
+pub fn memory_kind_base(kind: iced_x86::OpKind) -> Option<String> {
+    use iced_x86::OpKind::*;
+    let reg = match kind {
+        MemorySegSI | MemoryESDI => iced_x86::Register::SI,
+        MemorySegESI | MemoryESEDI => iced_x86::Register::ESI,
+        MemorySegRSI | MemoryESRDI => iced_x86::Register::RSI,
+        MemorySegDI => iced_x86::Register::DI,
+        MemorySegEDI => iced_x86::Register::EDI,
+        MemorySegRDI => iced_x86::Register::RDI,
+        _ => return None,
+    };
+    Some(get_reg(reg))
+}
+
 pub fn set_reg(r: iced_x86::Register, expr: String) -> String {
     use iced_x86::Register::*;
     match r {
@@ -100,7 +135,13 @@ impl<'a> CodeGen<'a> {
             }
         }
         match instr.memory_base() {
-            None => {}
+            None => {
+                if let Some(base) =
+                    (0..instr.op_count()).find_map(|i| memory_kind_base(instr.op_kind(i)))
+                {
+                    expr.push(base);
+                }
+            }
             r => expr.push(get_reg(r)),
         }
         if instr.memory_index() != None {
@@ -179,7 +220,7 @@ impl<'a> CodeGen<'a> {
             Immediate8to32 => format!("{:#x}u32", instr.immediate8to32()),
             Immediate32 => format!("{:#x}u32", instr.immediate32()),
             Register => get_reg(instr.op_register(n)),
-            Memory => get_mem(type_for_size(mem_size(instr)), self.gen_addr(instr)),
+            k if is_memory_op(k) => get_mem(type_for_size(mem_size(instr)), self.gen_addr(instr)),
             k => todo!("{:?}", k),
         }
     }
@@ -222,7 +263,7 @@ pub fn op_size(instr: &iced_x86::Instruction, n: u32) -> usize {
     use iced_x86::OpKind::*;
     match instr.op_kind(n) {
         Register => reg_size(instr.op_register(n)),
-        Memory => mem_size(instr),
+        k if is_memory_op(k) => mem_size(instr),
         Immediate16 => 16,
         Immediate8to16 => 16,
         Immediate8to32 => 32,
@@ -236,7 +277,7 @@ impl<'a> CodeGen<'a> {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => set_reg(instr.op_register(n), expr),
-            Memory => {
+            k if is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 let size = mem_size(instr);
                 set_mem(type_for_size(size), addr, expr)

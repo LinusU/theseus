@@ -1,4 +1,4 @@
-use crate::codegen::{CodeGen, get_mem, instr_name, mem_size, op_size};
+use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, mem_size, op_size};
 
 fn reg_to_index(register: iced_x86::Register) -> usize {
     use iced_x86::Register::*;
@@ -58,27 +58,31 @@ impl<'a> CodeGen<'a> {
 
     fn fpu_get_op(&self, instr: &iced_x86::Instruction, n: u32) -> String {
         use iced_x86::OpKind::*;
-        match instr.op_kind(n) {
-            Memory => self.fpu_get_mem(instr),
-            Register => self.fpu_get_reg(reg_to_index(instr.op_register(n))),
-            k => todo!("{k:?}"),
+        let kind = instr.op_kind(n);
+        if is_memory_op(kind) {
+            self.fpu_get_mem(instr)
+        } else if kind == Register {
+            self.fpu_get_reg(reg_to_index(instr.op_register(n)))
+        } else {
+            todo!("{kind:?}")
         }
     }
 
     fn fpu_set_op(&self, instr: &iced_x86::Instruction, n: u32, expr: String) -> String {
         use iced_x86::OpKind::*;
-        match instr.op_kind(n) {
-            Memory => {
-                let size = mem_size(instr);
-                let expr = if size != 64 && size != 80 {
-                    format!("{expr} as f{size}")
-                } else {
-                    expr
-                };
-                self.fpu_set_mem(instr, expr)
-            }
-            Register => self.fpu_set_reg(reg_to_index(instr.op_register(n)), expr),
-            k => todo!("{k:?}"),
+        let kind = instr.op_kind(n);
+        if is_memory_op(kind) {
+            let size = mem_size(instr);
+            let expr = if size != 64 && size != 80 {
+                format!("{expr} as f{size}")
+            } else {
+                expr
+            };
+            self.fpu_set_mem(instr, expr)
+        } else if kind == Register {
+            self.fpu_set_reg(reg_to_index(instr.op_register(n)), expr)
+        } else {
+            todo!("{kind:?}")
         }
     }
 

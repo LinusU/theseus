@@ -32,7 +32,7 @@ impl<'a> CodeGen<'a> {
                     self.get_op(instr, n)
                 }
             }
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 4]".into(), addr)
             }
@@ -44,7 +44,7 @@ impl<'a> CodeGen<'a> {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => format!("low_qword({})", xmm_reg(instr.op_register(n))),
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 2]".into(), addr)
             }
@@ -63,7 +63,7 @@ impl<'a> CodeGen<'a> {
                     self.get_op(instr, n)
                 }
             }
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("u32".into(), addr)
             }
@@ -78,7 +78,7 @@ impl<'a> CodeGen<'a> {
         match instr.op_kind(n) {
             Immediate8 => format!("{:#x}u64", instr.immediate8()),
             Register => format!("low_qword({})", xmm_reg(instr.op_register(n))),
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 2]".into(), addr)
             }
@@ -97,7 +97,7 @@ impl<'a> CodeGen<'a> {
                     self.set_op(instr, n, expr)
                 }
             }
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::set_mem("[u32; 4]".into(), addr, expr)
             }
@@ -261,34 +261,30 @@ impl<'a> CodeGen<'a> {
             // high/low qwords. MOVSD replaces the low 64 bits.
             Movss | Movntss => {
                 let src = self.xmm_get_32(instr, 1);
-                use iced_x86::OpKind::*;
-                match instr.op_kind(0) {
-                    Register => {
-                        let dst = self.xmm_get(instr, 0);
-                        let reg = instr.op_register(0);
-                        self.line(format!("{} = movss({}, {});", xmm_reg(reg), dst, src));
-                    }
-                    Memory => {
-                        let addr = self.gen_addr(instr);
-                        self.line(codegen::set_mem("u32".into(), addr, src));
-                    }
-                    _ => unreachable!(),
+                let kind = instr.op_kind(0);
+                if kind == iced_x86::OpKind::Register {
+                    let dst = self.xmm_get(instr, 0);
+                    let reg = instr.op_register(0);
+                    self.line(format!("{} = movss({}, {});", xmm_reg(reg), dst, src));
+                } else if codegen::is_memory_op(kind) {
+                    let addr = self.gen_addr(instr);
+                    self.line(codegen::set_mem("u32".into(), addr, src));
+                } else {
+                    unreachable!()
                 }
             }
             Movsd => {
                 let src = self.xmm_get_64(instr, 1);
-                use iced_x86::OpKind::*;
-                match instr.op_kind(0) {
-                    Register => {
-                        let dst = self.xmm_get(instr, 0);
-                        let reg = instr.op_register(0);
-                        self.line(format!("{} = movsd({}, {});", xmm_reg(reg), dst, src));
-                    }
-                    Memory => {
-                        let addr = self.gen_addr(instr);
-                        self.line(codegen::set_mem("[u32; 2]".into(), addr, src));
-                    }
-                    _ => unreachable!(),
+                let kind = instr.op_kind(0);
+                if kind == iced_x86::OpKind::Register {
+                    let dst = self.xmm_get(instr, 0);
+                    let reg = instr.op_register(0);
+                    self.line(format!("{} = movsd({}, {});", xmm_reg(reg), dst, src));
+                } else if codegen::is_memory_op(kind) {
+                    let addr = self.gen_addr(instr);
+                    self.line(codegen::set_mem("[u32; 2]".into(), addr, src));
+                } else {
+                    unreachable!()
                 }
             }
             Movhlps | Movlhps => {
@@ -568,7 +564,7 @@ impl<'a> CodeGen<'a> {
                 let src = self.xmm_get(instr, 1);
                 let sel = self.get_op(instr, 2);
                 let expr = format!("pextrw_xmm({src}, {sel})");
-                if matches!(instr.op_kind(0), iced_x86::OpKind::Memory) {
+                if codegen::is_memory_op(instr.op_kind(0)) {
                     self.line(self.set_op(instr, 0, format!("({expr} as u16)")));
                 } else {
                     self.line(self.set_op(instr, 0, expr));
@@ -612,28 +608,27 @@ impl<'a> CodeGen<'a> {
             Movlps | Movhps => {
                 use iced_x86::OpKind::*;
                 let func = instr_name(instr);
-                match (instr.op_kind(0), instr.op_kind(1)) {
-                    (Register, Memory) => {
-                        let src = codegen::get_mem("[u32; 2]".into(), self.gen_addr(instr));
-                        let dst = self.xmm_get(instr, 0);
-                        let reg = instr.op_register(0);
-                        self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
-                    }
-                    (Memory, Register) => {
-                        let qword = if func == "movlps" {
-                            "low_qword"
-                        } else {
-                            "high_qword"
-                        };
-                        let addr = self.gen_addr(instr);
-                        let src = self.xmm_get(instr, 1);
-                        self.line(codegen::set_mem(
-                            "[u32; 2]".into(),
-                            addr,
-                            format!("{qword}({src})"),
-                        ));
-                    }
-                    _ => unreachable!(),
+                let (op0, op1) = (instr.op_kind(0), instr.op_kind(1));
+                if op0 == Register && codegen::is_memory_op(op1) {
+                    let src = codegen::get_mem("[u32; 2]".into(), self.gen_addr(instr));
+                    let dst = self.xmm_get(instr, 0);
+                    let reg = instr.op_register(0);
+                    self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
+                } else if codegen::is_memory_op(op0) && op1 == Register {
+                    let qword = if func == "movlps" {
+                        "low_qword"
+                    } else {
+                        "high_qword"
+                    };
+                    let addr = self.gen_addr(instr);
+                    let src = self.xmm_get(instr, 1);
+                    self.line(codegen::set_mem(
+                        "[u32; 2]".into(),
+                        addr,
+                        format!("{qword}({src})"),
+                    ));
+                } else {
+                    unreachable!()
                 }
             }
 

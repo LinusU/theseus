@@ -1,12 +1,14 @@
-use crate::codegen::{CodeGen, instr_name};
+use crate::codegen::{CodeGen, instr_name, memory_kind_base};
 
 impl<'a> CodeGen<'a> {
     pub fn codegen_string(&mut self, instr: &iced_x86::Instruction) -> bool {
         use iced_x86::Mnemonic::*;
         // The `movsd` and `cmpsd` mnemonics are shared between string
-        // instructions and SSE2 instructions. String forms have no explicit
-        // operands; SSE2 forms operate on XMM registers or 64-bit memory.
-        if (instr.mnemonic() == Movsd || instr.mnemonic() == Cmpsd) && instr.op_count() > 0 {
+        // instructions and SSE2 instructions. String forms use the implicit
+        // `DS:(E)SI`/`ES:(E)DI` memory operand kinds (`MemorySeg*`/`MemoryES*`).
+        if (instr.mnemonic() == Movsd || instr.mnemonic() == Cmpsd)
+            && memory_kind_base(instr.op0_kind()).is_none()
+        {
             return false;
         }
         match instr.mnemonic() {

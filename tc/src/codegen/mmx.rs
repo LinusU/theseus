@@ -25,7 +25,7 @@ impl<'a> CodeGen<'a> {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => mmx_reg(instr.op_register(n)),
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 let size = codegen::mem_size(instr);
                 codegen::get_mem(codegen::type_for_size(size), addr)
@@ -50,7 +50,7 @@ impl<'a> CodeGen<'a> {
         use iced_x86::OpKind::*;
         match instr.op_kind(n) {
             Register => format!("{} = {};", mmx_reg(instr.op_register(n)), expr),
-            Memory => {
+            k if codegen::is_memory_op(k) => {
                 let addr = self.gen_addr(instr);
                 codegen::set_mem("u64".into(), addr, expr)
             }

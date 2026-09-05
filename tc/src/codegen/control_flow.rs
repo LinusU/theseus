@@ -1,6 +1,6 @@
 use crate::{
     Instr,
-    codegen::{CodeGen, get_reg, instr_name},
+    codegen::{CodeGen, get_reg, instr_name, is_memory_op},
     gather::IP,
 };
 
@@ -35,7 +35,7 @@ impl<'a> CodeGen<'a> {
                 seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
                 cont = self.resolve_jmp(ip);
             }
-            iced_x86::OpKind::Memory => {
+            k if is_memory_op(k) => {
                 // If it's like `jmp [someaddr]` where someaddr is in the IAT, resolve it directly.
                 // (Note that `call [someaddr@IAT]` is generated as a direct function call.)
                 if let Some(func) = &instr.hint {
