@@ -7,6 +7,7 @@ pub mod bitmap_format;
 pub mod ddraw;
 pub mod dinput;
 mod dllexport;
+pub mod dmusic;
 pub mod dplayx;
 pub mod dsound;
 pub mod ebueula;

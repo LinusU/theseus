@@ -14,7 +14,7 @@ const E_NOTIMPL: u32 = 0x8000_4001;
 const E_FAIL: u32 = 0x8000_4005;
 
 /// The canonical `IUnknown` IID (`00000000-0000-0000-C000-000000000046`).
-const IID_IUnknown: GUID = GUID::new(
+pub(crate) const IID_IUnknown: GUID = GUID::new(
     0x0000_0000,
     0x0000,
     0x0000,
@@ -22,7 +22,7 @@ const IID_IUnknown: GUID = GUID::new(
 );
 
 /// Legacy null `IUnknown` shortcut used elsewhere in the COM helpers.
-const IID_NullUnknown: GUID = GUID::new(0, 0, 0, [0; 8]);
+pub(crate) const IID_NullUnknown: GUID = GUID::new(0, 0, 0, [0; 8]);
 
 pub const IID_IDirectPlayLobby3: GUID = GUID::new(
     0x2db7_2490,
@@ -44,11 +44,11 @@ pub const CLSID_DirectPlayLobby: GUID = GUID::new(
     [0xa7, 0x87, 0x00, 0x00, 0xf8, 0x03, 0xab, 0xfc],
 );
 
-fn read_guid(ctx: &Context, addr: u32) -> Option<GUID> {
+pub(crate) fn read_guid(ctx: &Context, addr: u32) -> Option<GUID> {
     Ptr::<GUID>::new(addr).read(&ctx.memory)
 }
 
-fn init_vtable(
+pub(crate) fn init_vtable(
     ctx: &mut Context,
     heap: &mut Heap,
     base: u32,
@@ -65,7 +65,7 @@ fn init_vtable(
     (addr, blocks)
 }
 
-fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
+pub(crate) fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
     if blocks.is_empty() {
         return;
     }

@@ -1,6 +1,6 @@
 use runtime::Context;
 
-use crate::{Ptr, ddraw::GUID, dplayx};
+use crate::{Ptr, ddraw::GUID, dmusic, dplayx};
 
 #[win32_derive::dllexport]
 pub fn CoInitialize(_ctx: &mut Context, _pvReserved: u32) -> u32 /* HRESULT */ {
@@ -25,6 +25,12 @@ pub fn CoCreateInstance(
         if let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory) {
             if clsid == dplayx::CLSID_DirectPlayLobby {
                 return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
+            }
+            if clsid == dmusic::CLSID_DirectMusicPerformance {
+                return dmusic::performance::create(ctx, _riid, ppv.addr);
+            }
+            if clsid == dmusic::CLSID_DirectMusicLoader {
+                return dmusic::loader::create(ctx, _riid, ppv.addr);
             }
         }
     }
