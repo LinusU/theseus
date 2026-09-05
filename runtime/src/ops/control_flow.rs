@@ -217,7 +217,11 @@ impl Context {
     pub fn retf32(&mut self, n: u16) -> Cont {
         let ip = self.pop32();
         let cs = self.pop32();
-        self.cpu.regs.esp += n as u32;
+        if self.cpu.real_mode {
+            self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
+        } else {
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
+        }
         self.cpu.regs.set_cs(cs as u16);
         self.indirect(ip)
     }
@@ -327,6 +331,23 @@ mod tests {
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.esp, 0x10000);
+    }
+
+    #[test]
+    fn real_mode_retf32_preserves_esp_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ss = 0x100;
+        ctx.cpu.regs.esp = 0xabcd_fff6;
+        ctx.memory.write::<u32>(segofs(0x100, 0xfff6), 0x1234);
+        ctx.memory.write::<u32>(segofs(0x100, 0xfffa), 0);
+        ctx.blocks = &BLOCKS;
+
+        let next = ctx.retf32(4);
+
+        let expected: ContFn = from;
+        assert!(std::ptr::fn_addr_eq(next.0, expected));
+        assert_eq!(ctx.cpu.regs.esp, 0xabcd_0002);
     }
 
     #[test]
