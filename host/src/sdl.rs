@@ -28,6 +28,12 @@ pub struct MainThread {
     buttons: std::cell::Cell<host::MouseButton>,
 }
 
+struct ClickInject {
+    clicks: Vec<(u32, u32)>,
+    at_ms: u32,
+    gap: u32,
+}
+
 pub struct Host {
     pub main_thread: SingleThreader<MainThread>,
 }
@@ -432,7 +438,7 @@ impl Window {
             let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if every == 0 {
                 surface.dump(path);
-            } else if frame % every == 0 {
+            } else if frame.is_multiple_of(every) {
                 surface.dump(&format!("{path}.{frame:05}.ppm"));
             }
         }
@@ -591,7 +597,7 @@ impl Host {
             use std::sync::atomic::Ordering::Relaxed;
             let phase = PHASE.load(Relaxed) as usize;
             let key = phase / 2;
-            let down = phase % 2 == 0;
+            let down = phase.is_multiple_of(2);
             if key < vkeys.len() {
                 let at = at_ms + key as u32 * 300 + if down { 0 } else { 100 };
                 if self.time() >= at {
@@ -611,10 +617,9 @@ impl Host {
         // positions, THESEUS_INJECT_CLICK_MS is the delay before the first move,
         // and THESEUS_INJECT_CLICK_GAP (default 500ms) is the pause between clicks.
         // For each click the host emits move, left down, and left up 50ms apart.
-        static CLICK_INJECT: std::sync::OnceLock<Option<(Vec<(u32, u32)>, u32, u32)>> =
-            std::sync::OnceLock::new();
+        static CLICK_INJECT: std::sync::OnceLock<Option<ClickInject>> = std::sync::OnceLock::new();
         static CLICK_PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-        if let Some((clicks, at_ms, gap)) = CLICK_INJECT.get_or_init(|| {
+        if let Some(ClickInject { clicks, at_ms, gap }) = CLICK_INJECT.get_or_init(|| {
             let s = std::env::var("THESEUS_INJECT_CLICK").ok()?;
             let clicks: Vec<(u32, u32)> = s
                 .split(';')
@@ -636,7 +641,7 @@ impl Host {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(500);
-            Some((clicks, at_ms, gap))
+            Some(ClickInject { clicks, at_ms, gap })
         }) {
             use std::sync::atomic::Ordering::Relaxed;
             let total = clicks.len() as u32 * 3;
