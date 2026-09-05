@@ -2525,6 +2525,50 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_system_register_stores_and_arpl() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            (
+                &[0x63, 0xc8][..],
+                "arpl(arpl_dst, (ctx.cpu.regs.ecx) as u16, &mut ctx.cpu.flags)",
+            ), // arpl ax, cx
+            (&[0x63, 0xc8], "ctx.cpu.regs.set_ax(res);"), // arpl ax, cx writes the low word
+            (
+                &[0x63, 0x09],
+                "ctx.memory.write::<u16>(ctx.cpu.regs.ecx, res);",
+            ), // arpl word ptr [ecx], cx
+            (&[0x0f, 0x00, 0xc0], "ctx.cpu.regs.eax = 0;"), // sldt eax
+            (&[0x0f, 0x00, 0xc8], "ctx.cpu.regs.eax = 0;"), // str eax
+            (
+                &[0x0f, 0x00, 0x01],
+                "ctx.memory.write::<u16>(ctx.cpu.regs.ecx, 0);",
+            ), // sldt [ecx]
+            (&[0x0f, 0x01, 0xe0], "ctx.cpu.regs.eax = 0;"), // smsw eax
+            (&[0x0f, 0x01, 0x01], "ctx.sgdt(ctx.cpu.regs.ecx);"), // sgdt [ecx]
+            (&[0x0f, 0x01, 0x09], "ctx.sidt(ctx.cpu.regs.ecx);"), // sidt [ecx]
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_ins_outs() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

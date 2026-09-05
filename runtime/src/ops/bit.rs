@@ -27,6 +27,16 @@ pub fn btc<I: Int>(x: I, bit: u32, flags: &mut Flags) -> I {
     x ^ (I::one() << (bit as usize & (I::bits() - 1)))
 }
 
+/// ARPL compares the RPL (low two bits) of two segment selectors. When the
+/// destination's RPL is lower than the source's, the destination is raised
+/// to match and ZF is set; otherwise ZF is cleared and the destination is
+/// unchanged (returned as None).
+pub fn arpl(dest: u16, src: u16, flags: &mut Flags) -> Option<u16> {
+    let needs_adjust = dest & 3 < src & 3;
+    flags.set(Flags::ZF, needs_adjust);
+    needs_adjust.then(|| dest & !3 | src & 3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,6 +50,15 @@ mod tests {
         assert!(flags.contains(Flags::CF));
         assert_eq!(btc(0b0001_0000u8, 4, &mut flags), 0);
         assert!(flags.contains(Flags::CF));
+    }
+
+    #[test]
+    fn arpl_adjusts_the_destination_rpl() {
+        let mut flags = Flags::default();
+        assert_eq!(arpl(0x0008, 0x001b, &mut flags), Some(0x000b));
+        assert!(flags.contains(Flags::ZF));
+        assert_eq!(arpl(0x001b, 0x0008, &mut flags), None);
+        assert!(!flags.contains(Flags::ZF));
     }
 
     #[test]

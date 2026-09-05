@@ -352,6 +352,53 @@ impl<'a> CodeGen<'a> {
 
             Xlatb => self.line("ctx.xlat();"),
 
+            // ARPL compares and adjusts the RPL fields of two selectors; it
+            // needs no descriptor-table model. iced reports a register
+            // operand as the full 32-bit register, but only its low word
+            // participates.
+            Arpl => {
+                self.line(format!(
+                    "let arpl_dst = ({}) as u16;",
+                    self.get_op(instr, 0)
+                ));
+                let write = match instr.op0_kind() {
+                    iced_x86::OpKind::Register => {
+                        let set = match instr.op_register(0) {
+                            iced_x86::Register::EAX | iced_x86::Register::AX => "set_ax",
+                            iced_x86::Register::ECX | iced_x86::Register::CX => "set_cx",
+                            iced_x86::Register::EDX | iced_x86::Register::DX => "set_dx",
+                            iced_x86::Register::EBX | iced_x86::Register::BX => "set_bx",
+                            iced_x86::Register::ESP | iced_x86::Register::SP => "set_sp",
+                            iced_x86::Register::EBP | iced_x86::Register::BP => "set_bp",
+                            iced_x86::Register::ESI | iced_x86::Register::SI => "set_si",
+                            iced_x86::Register::EDI | iced_x86::Register::DI => "set_di",
+                            r => todo!("{r:?}"),
+                        };
+                        format!("ctx.cpu.regs.{set}(res);")
+                    }
+                    iced_x86::OpKind::Memory => {
+                        format!("ctx.memory.write::<u16>({}, res);", self.gen_addr(instr))
+                    }
+                    k => todo!("{k:?}"),
+                };
+                self.line(format!(
+                    "if let Some(res) = arpl(arpl_dst, ({}) as u16, &mut ctx.cpu.flags) {{ {write} }}",
+                    self.get_op(instr, 1),
+                ));
+            }
+            // This machine has no LDT or task and is not in protected mode,
+            // so the system registers store as zero.
+            Sldt | Str | Smsw => self.line(self.set_op(instr, 0, "0".into())),
+            // SGDT/SIDT store the 6-byte descriptor-table register, which is
+            // null on this machine.
+            Sgdt | Sidt => {
+                self.line(format!(
+                    "ctx.{}({});",
+                    instr_name(instr),
+                    self.gen_addr(instr)
+                ));
+            }
+
             _ => return false,
         }
         true

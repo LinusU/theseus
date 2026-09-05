@@ -313,6 +313,17 @@ impl Context {
         self.cpu.regs.set_al(value);
     }
 
+    /// SGDT and SIDT store the descriptor-table register. This machine has
+    /// no GDT or IDT, so both store a null limit and base.
+    pub fn sgdt(&mut self, addr: u32) {
+        self.memory.write::<u16>(addr, 0);
+        self.memory.write::<u32>(addr.wrapping_add(2), 0);
+    }
+
+    pub fn sidt(&mut self, addr: u32) {
+        self.sgdt(addr);
+    }
+
     /// MASKMOVQ stores each byte of `data` to the implicit DS:(E)DI
     /// destination only where the matching `mask` byte's high bit is set.
     pub fn maskmovq(&mut self, data: u64, mask: u64) {
@@ -341,6 +352,22 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn sgdt_and_sidt_store_a_null_descriptor_table() {
+        let mut ctx = context();
+        ctx.memory.write::<u64>(0x100, u64::MAX);
+        ctx.memory.write::<u64>(0x108, u64::MAX);
+
+        ctx.sgdt(0x100);
+        ctx.sidt(0x108);
+
+        assert_eq!(ctx.memory.read::<u16>(0x100), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x102), 0);
+        assert_eq!(ctx.memory.read::<u8>(0x106), 0xff);
+        assert_eq!(ctx.memory.read::<u16>(0x108), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x10a), 0);
     }
 
     #[test]
