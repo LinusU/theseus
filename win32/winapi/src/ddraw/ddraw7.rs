@@ -1060,7 +1060,10 @@ pub mod IDirectDrawSurface7 {
         for addr in attached {
             let desc = {
                 let surfaces = state().surf.borrow();
-                let surface = surfaces.get(&addr).unwrap().borrow();
+                let Some(surface) = surfaces.get(&addr) else {
+                    continue;
+                };
+                let surface = surface.borrow();
                 DDSURFACEDESC2 {
                     dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
                     dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
