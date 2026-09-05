@@ -91,3 +91,59 @@ MM2_INPUT=scratch/mm2/MIDTOWN2.decrypted.exe out/mm2/translate.sh
 cargo build --profile fast -p mm2
 THESEUS_MISSING_ADDRS=out/mm2/missing.txt cargo run --profile fast -p mm2 -- game
 ```
+
+## macOS run/debug workflow
+
+The translated program currently launches, navigates the menus, loads the
+London level, and runs a Blitz race with the software Direct3D rasterizer.
+The decrypted PE input is not committed, so the checked-in workflow relies on
+the local generated snapshot under `out/mm2/`; rerun `translate.sh` only when
+a decrypted image is available through `MM2_INPUT`.
+
+Headless runs drive the game with synthesized input and frame dumps:
+
+```text
+RUST_LOG=warn THESEUS_HEADLESS=1 \
+THESEUS_FRAME_DUMP=/tmp/mm2.ppm \
+THESEUS_INJECT_AT_MS=5000 \
+THESEUS_INJECT_VKEY=0x0d,0x0d,0x28,0x28,0x28,0x28,0x0d \
+THESEUS_INJECT_CLICK="540,450;530,440" \
+THESEUS_INJECT_CLICK_MS=15000 THESEUS_INJECT_CLICK_GAP=2000 \
+THESEUS_INJECT_HOLD=0x26@45000 \
+timeout 150 ./target/fast/mm2 game
+```
+
+This sequence reaches `SELECT DRIVER` (Enter, Enter), switches the city list
+to London (four Down presses), starts a Blitz race (Enter), clicks through
+`SELECT VEHICLE` and `GO DRIVE`, then holds the accelerator (Up arrow) from
+45s on. Without injection the game idles on the main menu.
+
+Debug environment knobs, all optional:
+
+- `THESEUS_HEADLESS=1` — run without an SDL window.
+- `THESEUS_FRAME_DUMP=<path>` — write the presented frame as a PPM on every
+  flip; `THESEUS_FRAME_DUMP_EVERY=<n>` writes `path.NNNNN.ppm` every n frames
+  instead.
+- `THESEUS_FLIP_DUMP=<path>` / `THESEUS_FLIP_DUMP_AT=<n>` — dump the raw
+  back-buffer pixels at the nth flip.
+- `THESEUS_SRC_DUMP=<path>` / `THESEUS_SRC_DUMP_AT=<n>` — dump the nth
+  640x480 blit source.
+- `THESEUS_TEX_DUMP=<dir>` — write each bound 16bpp texture once as a PPM.
+- `THESEUS_NO_ZTEST=1` — disable the z-test for depth debugging.
+- `THESEUS_INJECT_VKEY` / `THESEUS_INJECT_AT_MS` — comma-separated hex VK
+  codes tapped 300ms apart starting at the given millisecond.
+- `THESEUS_INJECT_CLICK` / `THESEUS_INJECT_CLICK_MS` /
+  `THESEUS_INJECT_CLICK_GAP` — `;`-separated `x,y` left-clicks (move, down,
+  up 50ms apart) with a configurable gap.
+- `THESEUS_INJECT_HOLD` — `;`-separated `vkey@down_ms[+up_ms]` entries that
+  hold keys for gameplay input.
+- `THESEUS_MISSING_ADDRS=<path>` — append dynamically reached but
+  untranslated addresses for the next `--entry-points-file` pass.
+- `RUST_LOG` — standard env-filter logging; the draw-call and rasterizer
+  diagnostics live at `debug`, honest problems at `warn`/`error`.
+
+Known non-blocking noise: missing `.CHK` checksum caches (including the
+game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced), absent
+`aud\aud22`/`aud\dmusic` content, `nodeGetBitmap` art misses, LOD warnings,
+the `london` room-count version warning, and benign `SelectObject` diagnostics
+for game-internal handles.
