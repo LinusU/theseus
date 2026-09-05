@@ -167,6 +167,70 @@ pub fn divss(dst: [u32; 4], src: u32) -> [u32; 4] {
     ]
 }
 
+fn scalar_unary(a: u32, op: impl Fn(f32) -> f32) -> u32 {
+    op(f32::from_bits(a)).to_bits()
+}
+
+pub fn sqrtss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [scalar_unary(src, |a| a.sqrt()), dst[1], dst[2], dst[3]]
+}
+
+pub fn rsqrtss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [
+        scalar_unary(src, |a| 1.0 / a.sqrt()),
+        dst[1],
+        dst[2],
+        dst[3],
+    ]
+}
+
+pub fn rcpss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [scalar_unary(src, |a| 1.0 / a), dst[1], dst[2], dst[3]]
+}
+
+pub fn minss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    let a = f32::from_bits(dst[0]);
+    let b = f32::from_bits(src);
+    let res = if a.is_nan() {
+        b
+    } else if b.is_nan() {
+        a
+    } else {
+        a.min(b)
+    };
+    [res.to_bits(), dst[1], dst[2], dst[3]]
+}
+
+pub fn maxss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    let a = f32::from_bits(dst[0]);
+    let b = f32::from_bits(src);
+    let res = if a.is_nan() {
+        b
+    } else if b.is_nan() {
+        a
+    } else {
+        a.max(b)
+    };
+    [res.to_bits(), dst[1], dst[2], dst[3]]
+}
+
+pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
+    let a = f32::from_bits(dst[0]);
+    let b = f32::from_bits(src);
+    let result = match predicate {
+        0 => a == b,
+        1 => a < b,
+        2 => a <= b,
+        3 => a.is_nan() || b.is_nan(),
+        4 => a != b,
+        5 => !(a < b),
+        6 => !(a <= b),
+        7 => !a.is_nan() && !b.is_nan(),
+        _ => false,
+    };
+    [if result { 0xffff_ffff } else { 0 }, dst[1], dst[2], dst[3]]
+}
+
 pub fn cmpps(a: [u32; 4], b: [u32; 4], predicate: u8) -> [u32; 4] {
     std::array::from_fn(|i| {
         let a = f32::from_bits(a[i]);
