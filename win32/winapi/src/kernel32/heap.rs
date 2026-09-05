@@ -5,7 +5,6 @@ use crate::{
     dllexport::win32flags,
     heap::Heap,
     kernel32::{self, HANDLE, lock},
-    stub,
 };
 
 win32flags! {
@@ -46,8 +45,13 @@ pub fn HeapCreate(
 }
 
 #[win32_derive::dllexport]
-pub fn HeapDestroy(_ctx: &mut Context, _hHeap: HANDLE) -> bool {
-    stub!(true) // success
+pub fn HeapDestroy(_ctx: &mut Context, hHeap: HANDLE) -> bool {
+    let mut state = kernel32::lock();
+    if state.heaps.remove(&hHeap).is_none() {
+        log::warn!("HeapDestroy({hHeap:x}): no such heap");
+        return false;
+    }
+    true
 }
 
 #[win32_derive::dllexport]
@@ -81,35 +85,56 @@ pub fn HeapFree(
     true
 }
 
+const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x10;
+
 #[win32_derive::dllexport]
 pub fn HeapReAlloc(
-    _ctx: &mut Context,
-    _hHeap: HANDLE,
+    ctx: &mut Context,
+    hHeap: HANDLE,
     dwFlags: u32, /* HEAP_FLAGS */
-    _lpMem: Ptr<()>,
-    _dwBytes: u32,
+    lpMem: Ptr<()>,
+    dwBytes: u32,
 ) -> u32 {
-    if dwFlags != 0 {
+    let known = HEAP_FLAGS::NO_SERIALIZE.bits()
+        | HEAP_FLAGS::GENERATE_EXCEPTIONS.bits()
+        | HEAP_FLAGS::ZERO_MEMORY.bits()
+        | HEAP_REALLOC_IN_PLACE_ONLY;
+    if dwFlags & !known != 0 {
         log::warn!("HeapReAlloc flags: {:x}", dwFlags);
     }
-    stub!(0)
-    /*
-    let memory = sys.memory();
-    let heap = match memory.heaps.get(&hHeap) {
-        None => {
-            log::error!("HeapSize({hHeap:x}): no such heap");
-            return 0;
-        }
-        Some(heap) => heap,
+    let state = kernel32::lock();
+    let Some(heap) = state.heaps.get(&hHeap) else {
+        log::error!("HeapReAlloc({hHeap:x}): no such heap");
+        return 0;
     };
-    let mem = memory.mem();
-    let old_size = heap.size(mem, lpMem);
-    let new_addr = heap.alloc(mem, dwBytes);
-    let copy_size = old_size.min(dwBytes);
-    mem.copy(lpMem, new_addr, copy_size);
-    heap.free(mem, lpMem);
+    // A null lpMem behaves like HeapAlloc.
+    if lpMem.addr == 0 {
+        return heap.alloc(&mut ctx.memory, dwBytes);
+    }
+    if dwBytes == 0 {
+        heap.free(&mut ctx.memory, lpMem.addr);
+        return 0;
+    }
+    let old_size = heap.size(&mut ctx.memory, lpMem.addr);
+    if dwBytes <= old_size {
+        // Shrinking always succeeds in place.
+        return lpMem.addr;
+    }
+    if dwFlags & HEAP_REALLOC_IN_PLACE_ONLY != 0 {
+        // The free-list allocator cannot extend a live block in place.
+        return 0;
+    }
+    let new_addr = heap.alloc(&mut ctx.memory, dwBytes);
+    ctx.memory.bytes.copy_within(
+        lpMem.addr as usize..lpMem.addr as usize + old_size as usize,
+        new_addr as usize,
+    );
+    if dwFlags & HEAP_FLAGS::ZERO_MEMORY.bits() != 0 {
+        let grown = new_addr + old_size;
+        ctx.memory[grown..][..(dwBytes - old_size) as usize].fill(0);
+    }
+    heap.free(&mut ctx.memory, lpMem.addr);
     new_addr
-    */
 }
 
 win32flags! {
@@ -161,4 +186,57 @@ pub fn GlobalUnlock(_ctx: &mut Context, _hMem: u32) -> bool {
 #[win32_derive::dllexport]
 pub fn GlobalHandle(_ctx: &mut Context, pMem: u32) -> u32 {
     pMem
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x400_000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn heap_realloc_grows_and_preserves() {
+        kernel32::init_state(0x400000, 0..0);
+        let mut ctx = context();
+        let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
+        let hheap = heap.addr;
+        lock().heaps.insert(hheap, heap);
+
+        let mem = HeapAlloc(&mut ctx, hheap, HEAP_FLAGS::empty(), 8);
+        ctx.memory[mem..][..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        // Growing relocates but keeps the old contents.
+        let grown = HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(mem), 32);
+        assert_ne!(grown, 0);
+        assert_eq!(&ctx.memory[grown..][..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        // Shrinking keeps the same address.
+        let shrunk = HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(grown), 4);
+        assert_eq!(shrunk, grown);
+
+        // HEAP_REALLOC_IN_PLACE_ONLY fails rather than moving the block.
+        let in_place = HeapReAlloc(
+            &mut ctx,
+            hheap,
+            HEAP_REALLOC_IN_PLACE_ONLY,
+            Ptr::new(grown),
+            0x8000,
+        );
+        assert_eq!(in_place, 0);
+
+        // Destroying the heap removes it from the state.
+        assert!(HeapDestroy(&mut ctx, hheap));
+        assert!(!HeapDestroy(&mut ctx, hheap));
+    }
 }
