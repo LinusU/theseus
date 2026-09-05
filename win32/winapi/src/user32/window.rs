@@ -363,8 +363,8 @@ pub fn DefWindowProcA(
 
 #[win32_derive::dllexport]
 pub fn DefWindowProcW(
-    _ctx: &mut Context,
-    _hWnd: HWND,
+    ctx: &mut Context,
+    hWnd: HWND,
     msg: Result<WM, u32>,
     _wParam: u32,
     _lParam: u32,
@@ -377,11 +377,40 @@ pub fn DefWindowProcW(
         }
     };
 
-    let window = state().window.borrow();
-    let mut window = window.as_ref().unwrap().borrow_mut();
-
-    if let WM::PAINT = msg {
-        window.dirty = false;
+    match msg {
+        WM::PAINT => {
+            if let Some(window) = state().window.borrow().as_ref() {
+                window.borrow_mut().dirty = false;
+            }
+        }
+        WM::ERASEBKGND => {
+            let window = state().window.borrow();
+            let Some(window) = window.as_ref() else {
+                return 0;
+            };
+            let mut window = window.borrow_mut();
+            if window.hwnd != hWnd {
+                return 0;
+            }
+            let wndclass = state().wndclass.borrow();
+            let Some(wndclass) = wndclass.as_ref() else {
+                return 0;
+            };
+            let Some(color) = wndclass.background.as_ref().and_then(|b| b.0) else {
+                return 0;
+            };
+            let pixels = window.ensure_pixels(ctx);
+            let pixel_count = (window.width * window.height) as usize;
+            use zerocopy::FromBytes;
+            let pixels = <[[u8; 4]]>::mut_from_bytes_with_elems(
+                &mut ctx.memory[pixels..][..pixel_count * 4],
+                pixel_count,
+            )
+            .unwrap();
+            pixels.fill(color.to_pixel());
+            return 1;
+        }
+        _ => {}
     }
     0
 }
@@ -542,27 +571,17 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
     let Some(window) = window.as_ref() else {
         return HDC::null();
     };
-    let mut window = window.borrow_mut();
+    let window = window.borrow();
     if window.hwnd != hWnd {
         return HDC::null();
     }
 
-    let (has_brush, background) = {
+    let has_brush = {
         let wndclass = state().wndclass.borrow();
-        let brush = wndclass.as_ref().and_then(|w| w.background.as_ref());
-        (brush.is_some(), brush.and_then(|b| b.0))
-    };
-    if let Some(color) = background {
-        // TODO: send WM_ERASEBKGND, let DefWindowProc handle it
-        let pixels = window.ensure_pixels(ctx);
-        let pixel_count = (window.width * (window.height)) as usize;
-        use zerocopy::FromBytes;
-        let pixels = <[[u8; 4]]>::mut_from_bytes_with_elems(
-            &mut ctx.memory[pixels..][..pixel_count * 4],
-            pixel_count,
-        )
-        .unwrap();
-        pixels.fill(color.to_pixel());
+        wndclass
+            .as_ref()
+            .and_then(|w| w.background.as_ref())
+            .is_some()
     };
     let rcPaint = window.rect();
     drop(window);
@@ -571,12 +590,24 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
     if hdc.is_null() {
         return hdc;
     }
+
+    let erased = if has_brush {
+        let ret = user32::SendMessageW(ctx, hWnd, WM::ERASEBKGND as u32, hdc.to_raw(), 0);
+        if ret == 0 {
+            DefWindowProcW(ctx, hWnd, Ok(WM::ERASEBKGND), hdc.to_raw(), 0) != 0
+        } else {
+            true
+        }
+    } else {
+        false
+    };
+
     if lpPaint
         .write(
             &mut ctx.memory,
             PAINTSTRUCT {
                 hdc,
-                fErase: !has_brush as u32,
+                fErase: !erased as u32,
                 rcPaint,
                 reserved: [0; 10],
             },
