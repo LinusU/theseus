@@ -1580,6 +1580,47 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_sse1_shuffles() {
+        let mut state = crate::State::default();
+        state.module = crate::Module::Windows(crate::WindowsModule::default());
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // shufps xmm0, xmm1, 0x1b (1110 11 01 = dest3=src1[3], dest2=src1[2], dest1=dest0[3], dest0=dest0[0])
+            (
+                &[0x0f, 0xc6, 0xc1, 0x1b][..],
+                "ctx.cpu.xmm.xmm0 = shufps(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1, 0x1b);",
+            ),
+            // unpcklps xmm0, [eax]
+            (
+                &[0x0f, 0x14, 0x00],
+                "ctx.cpu.xmm.xmm0 = unpcklps(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // unpckhps xmm0, xmm1
+            (
+                &[0x0f, 0x15, 0xc1],
+                "ctx.cpu.xmm.xmm0 = unpckhps(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_bsf_xadd_cmov() {
         let mut state = crate::State::default();
         state.module = crate::Module::Windows(crate::WindowsModule::default());

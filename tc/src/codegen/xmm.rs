@@ -116,6 +116,32 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // Packed single-precision lane shuffles.
+            Shufps => {
+                let imm = format!("{:#x}", instr.immediate8());
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "shufps({}, {}, {imm})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+            Unpckhps | Unpcklps => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             _ => return false,
         }
         true
