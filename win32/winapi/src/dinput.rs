@@ -87,6 +87,49 @@ const DIPROP_BUFFERSIZE: u32 = 1;
 /// Offset of DIPROPDWORD::dwData, past the DIPROPHEADER.
 const DIPROPDWORD_DWDATA: u32 = 16;
 
+/// DIDEVCAPS layout sizes: the original header ends after dwPOVs (24
+/// bytes); DX5 added five force-feedback fields, which we report as zero.
+const DIDEVCAPS_MIN_SIZE: usize = 24;
+const DIDEVCAPS_SIZE: usize = 44;
+
+/// DIDEVICEINSTANCEA layout sizes: the original header ends after
+/// tszProductName (560 bytes); DX5 added the FF-driver GUID and the HID
+/// usage page/usage pair, which we report as zero.
+const DIDEVICEINSTANCE_MIN_SIZE: usize = 560;
+const DIDEVICEINSTANCE_SIZE: usize = 580;
+const MAX_PATH: usize = 260;
+
+/// DIDEVTYPE_* device type codes used by the DX5-era headers.
+const DIDEVTYPE_MOUSE: u32 = 2;
+const DIDEVTYPE_KEYBOARD: u32 = 3;
+/// DIDEVTYPEMOUSE_/DIDEVTYPEKEYBOARD_ subtype codes.
+const DIDEVTYPEMOUSE_TRADITIONAL: u32 = 1;
+const DIDEVTYPEKEYBOARD_PCENH: u32 = 4;
+
+/// DIDC_* capability flags.
+const DIDC_ATTACHED: u32 = 0x00000001;
+const DIDC_POLLEDDEVICE: u32 = 0x00000002;
+const DIDC_EMULATED: u32 = 0x00000004;
+const DIDC_POLLEDDATAFORMAT: u32 = 0x00000008;
+
+/// HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND); the requested object does
+/// not exist on this device.
+const DIERR_OBJECTNOTFOUND: u32 = make_dierror(0x02);
+
+fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
+    let mut bytes = [0u8; 16];
+    bytes[..4].copy_from_slice(&guid.0.0.to_le_bytes());
+    bytes[4..6].copy_from_slice(&guid.0.1.to_le_bytes());
+    bytes[6..8].copy_from_slice(&guid.0.2.to_le_bytes());
+    bytes[8..].copy_from_slice(&guid.0.3);
+    ctx.memory[addr..][..16].copy_from_slice(&bytes);
+}
+
+fn write_cstr(ctx: &mut Context, addr: u32, s: &[u8]) {
+    ctx.memory[addr..][..s.len()].copy_from_slice(s);
+    ctx.memory[addr + s.len() as u32] = 0;
+}
+
 /// Which physical device a created IDirectInputDevice stands for.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -314,8 +357,40 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetCapabilities(_ctx: &mut Context, _this: u32, _lpCaps: u32) -> u32 {
-        todo!()
+    pub fn GetCapabilities(ctx: &mut Context, this: u32, lpCaps: u32) -> u32 {
+        if lpCaps == 0 {
+            return DIERR_INVALIDPARAM;
+        }
+        let size = ctx.memory.read::<u32>(lpCaps) as usize;
+        if !(DIDEVCAPS_MIN_SIZE..=DIDEVCAPS_SIZE).contains(&size)
+            || lpCaps as usize + size > ctx.memory.bytes.len()
+        {
+            return DIERR_INVALIDPARAM;
+        }
+        let (kind, _) = device(this);
+        let (flags, devtype, axes, buttons) = match kind {
+            DeviceKind::Keyboard => (
+                DIDC_ATTACHED | DIDC_EMULATED | DIDC_POLLEDDEVICE | DIDC_POLLEDDATAFORMAT,
+                DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8),
+                0,
+                0,
+            ),
+            DeviceKind::Mouse => (
+                DIDC_ATTACHED | DIDC_EMULATED,
+                DIDEVTYPE_MOUSE | (DIDEVTYPEMOUSE_TRADITIONAL << 8),
+                3,
+                DIMOUSESTATE_SIZE as u32 - 12,
+            ),
+        };
+        for (i, field) in [size as u32, flags, devtype, axes, buttons, 0]
+            .into_iter()
+            .enumerate()
+        {
+            ctx.memory.write::<u32>(lpCaps + i as u32 * 4, field);
+        }
+        // Any DX5 force-feedback tail fields report zero.
+        ctx.memory[lpCaps + 24..][..size - 24].fill(0);
+        DI_OK
     }
 
     #[win32_derive::dllexport]
@@ -502,12 +577,45 @@ pub mod IDirectInputDevice {
         _dwObj: u32,
         _dwHow: u32,
     ) -> u32 {
-        todo!()
+        // The emulated devices expose their state buffers but do not model
+        // individually named objects, so any lookup misses.
+        DIERR_OBJECTNOTFOUND
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDeviceInfo(_ctx: &mut Context, _this: u32, _pdidi: u32) -> u32 {
-        todo!()
+    pub fn GetDeviceInfo(ctx: &mut Context, this: u32, pdidi: u32) -> u32 {
+        if pdidi == 0 {
+            return DIERR_INVALIDPARAM;
+        }
+        let size = ctx.memory.read::<u32>(pdidi) as usize;
+        if !(DIDEVICEINSTANCE_MIN_SIZE..=DIDEVICEINSTANCE_SIZE).contains(&size)
+            || pdidi as usize + size > ctx.memory.bytes.len()
+        {
+            return DIERR_INVALIDPARAM;
+        }
+        let (kind, _) = device(this);
+        let (guid, devtype, instance, product): (&GUID, u32, &[u8], &[u8]) = match kind {
+            DeviceKind::Keyboard => (
+                &GUID_SysKeyboard,
+                DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8),
+                b"Keyboard",
+                b"System Keyboard",
+            ),
+            DeviceKind::Mouse => (
+                &GUID_SysMouse,
+                DIDEVTYPE_MOUSE | (DIDEVTYPEMOUSE_TRADITIONAL << 8),
+                b"Mouse",
+                b"System Mouse",
+            ),
+        };
+        ctx.memory[pdidi..][..size].fill(0);
+        ctx.memory.write::<u32>(pdidi, size as u32);
+        write_guid(ctx, pdidi + 4, guid);
+        write_guid(ctx, pdidi + 20, guid);
+        ctx.memory.write::<u32>(pdidi + 36, devtype);
+        write_cstr(ctx, pdidi + 40, instance);
+        write_cstr(ctx, pdidi + 40 + MAX_PATH as u32, product);
+        DI_OK
     }
 
     #[win32_derive::dllexport]
@@ -639,6 +747,60 @@ mod tests {
         );
         assert_eq!(
             IDirectInput::GetDeviceStatus(&mut ctx, 0x2000, 0),
+            DIERR_INVALIDPARAM
+        );
+    }
+
+    #[test]
+    fn get_capabilities_reports_keyboard_layout() {
+        let mut ctx = context();
+        // An unknown device pointer reads as an unacquired keyboard.
+        ctx.memory.write::<u32>(0x1000, DIDEVCAPS_SIZE as u32);
+
+        assert_eq!(
+            IDirectInputDevice::GetCapabilities(&mut ctx, 0x2000, 0x1000),
+            DI_OK
+        );
+        assert_eq!(
+            ctx.memory.read::<u32>(0x1000 + 4),
+            DIDC_ATTACHED | DIDC_EMULATED | DIDC_POLLEDDEVICE | DIDC_POLLEDDATAFORMAT
+        );
+        assert_eq!(
+            ctx.memory.read::<u32>(0x1000 + 8),
+            DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8)
+        );
+        // The DX5 force-feedback tail is zeroed.
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 40), 0);
+
+        ctx.memory.write::<u32>(0x1000, 12);
+        assert_eq!(
+            IDirectInputDevice::GetCapabilities(&mut ctx, 0x2000, 0x1000),
+            DIERR_INVALIDPARAM
+        );
+    }
+
+    #[test]
+    fn get_device_info_writes_device_instance() {
+        let mut ctx = context();
+        ctx.memory
+            .write::<u32>(0x1000, DIDEVICEINSTANCE_SIZE as u32);
+
+        assert_eq!(
+            IDirectInputDevice::GetDeviceInfo(&mut ctx, 0x2000, 0x1000),
+            DI_OK
+        );
+        assert_eq!(
+            ctx.memory.read::<u32>(0x1000 + 36),
+            DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8)
+        );
+        assert_eq!(&ctx.memory[0x1000 + 40..][..9], b"Keyboard\0");
+        assert_eq!(&ctx.memory[0x1000 + 300..][..16], b"System Keyboard\0");
+        // guidFFDriver and the usage fields remain zero.
+        assert_eq!(&ctx.memory[0x1000 + 560..][..20], &[0u8; 20]);
+
+        ctx.memory.write::<u32>(0x1000, 100);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceInfo(&mut ctx, 0x2000, 0x1000),
             DIERR_INVALIDPARAM
         );
     }
