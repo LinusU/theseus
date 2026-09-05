@@ -669,6 +669,52 @@ impl Host {
             }
         }
 
+        // Debug aid: hold keys down for a span so scripted runs can exercise
+        // gameplay controls like a held accelerator, which taps cannot reach.
+        // THESEUS_INJECT_HOLD is a ';'-separated list of "vkey@down_ms[+up_ms]"
+        // entries: the key goes down at down_ms and, when up_ms is present,
+        // comes back up at up_ms; without it the key stays held.
+        static HOLD_INJECT: std::sync::OnceLock<Option<Vec<(u32, u8, bool)>>> =
+            std::sync::OnceLock::new();
+        static HOLD_PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        if let Some(events) = HOLD_INJECT.get_or_init(|| {
+            let s = std::env::var("THESEUS_INJECT_HOLD").ok()?;
+            let mut events = Vec::new();
+            for part in s.split(';') {
+                let (key, span) = part.trim().split_once('@')?;
+                let vkey = u8::from_str_radix(key.trim().trim_start_matches("0x"), 16).ok()?;
+                inject_vkey(vkey)?;
+                let (down, up) = match span.split_once('+') {
+                    Some((down, up)) => (down.trim().parse().ok()?, Some(up.trim().parse().ok()?)),
+                    None => (span.trim().parse().ok()?, None),
+                };
+                events.push((down, vkey, true));
+                if let Some(up) = up {
+                    events.push((up, vkey, false));
+                }
+            }
+            if events.is_empty() {
+                return None;
+            }
+            events.sort_by_key(|&(at, _, _)| at);
+            Some(events)
+        }) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let phase = HOLD_PHASE.load(Relaxed) as usize;
+            if phase < events.len() {
+                let (at, vkey, down) = events[phase];
+                if self.time() >= at {
+                    HOLD_PHASE.store((phase + 1) as u16, Relaxed);
+                    let msg = inject_vkey(vkey).unwrap();
+                    return Some(if down {
+                        host::Message::KeyDown(msg)
+                    } else {
+                        host::Message::KeyUp(msg)
+                    });
+                }
+            }
+        }
+
         self.main_thread.get().poll()
     }
     pub fn wait(&self) -> host::Message {
