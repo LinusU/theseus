@@ -135,6 +135,8 @@ impl<'a> CodeGen<'a> {
                 | Pabsb
                 | Pabsw
                 | Pabsd
+                | Phaddw
+                | Phaddd
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
@@ -206,7 +208,7 @@ impl<'a> CodeGen<'a> {
             | Packssdw | Pcmpeqb | Pcmpeqw | Pcmpeqd | Pcmpgtb | Pcmpgtw | Pcmpgtd | Punpckhbw
             | Punpckhwd | Punpckhdq | Psubb | Psubd | Psubsb | Psubsw | Psubusb | Psubw | Pavgb
             | Pavgw | Pminsw | Pminub | Pmaxsw | Pmaxub | Psadbw | Pmulhw | Pmulhuw | Pmuludq
-            | Pavgusb | Pmulhrw => {
+            | Pavgusb | Pmulhrw | Phaddw | Phaddd => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,

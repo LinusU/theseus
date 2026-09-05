@@ -632,6 +632,32 @@ pub fn pabsd(x: u64) -> u64 {
     x.map(|v| v.wrapping_abs() as u32).pack()
 }
 
+/// PHADDW (SSSE3) adds adjacent 16-bit signed words horizontally.
+/// The result words come from the dest (first two pairs) and src (last two pairs).
+pub fn phaddw(dest: u64, src: u64) -> u64 {
+    let d: [i16; 4] = dest.unpack();
+    let s: [i16; 4] = src.unpack();
+    [
+        (d[0].wrapping_add(d[1])) as u16,
+        (d[2].wrapping_add(d[3])) as u16,
+        (s[0].wrapping_add(s[1])) as u16,
+        (s[2].wrapping_add(s[3])) as u16,
+    ]
+    .pack()
+}
+
+/// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally.
+/// The result dwords come from the dest (first pair) and src (second pair).
+pub fn phaddd(dest: u64, src: u64) -> u64 {
+    let d: [i32; 2] = dest.unpack();
+    let s: [i32; 2] = src.unpack();
+    [
+        d[0].wrapping_add(d[1]) as u32,
+        s[0].wrapping_add(s[1]) as u32,
+    ]
+    .pack()
+}
+
 /// PF2ID (3DNow!) converts two packed single-precision floats to two
 /// 32-bit signed integers using round-to-zero with saturation.
 pub fn pf2id(x: u64) -> u64 {
@@ -919,9 +945,10 @@ mod tests {
         pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, pavgb, pavgusb, pavgw,
         pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge, pfcmpgt,
         pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1, pfrsqrt, pfsub,
-        pfsubr, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrw,
-        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq,
-        psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pfsubr, phaddd, phaddw, pi2fd, pi2fw, pinsrw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub,
+        pmovmskb, pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad,
+        psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq,
+        punpcklwd,
     };
 
     #[test]
@@ -1090,6 +1117,20 @@ mod tests {
         assert_eq!(pabsw(0x8000_ffff_0001_fffe), 0x8000_0001_0001_0002);
         // 0x80000000 (-2147483648) stays 0x80000000 for i32::MIN.
         assert_eq!(pabsd(0x8000_0000_ffff_ffff), 0x8000_0000_0000_0001);
+    }
+
+    #[test]
+    fn phaddw_and_phaddd_add_adjacent_lanes() {
+        // Words: 1+2=3, 3+4=7, 0x0002 (2)+0xfffd (-3)=0xffff (-1),
+        //        0x8000 (i16::MIN) + 0x0001 = 0x8001 (-32767).
+        let a = 0x0004_0003_0002_0001u64;
+        let b = 0x0001_8000_fffd_0002u64;
+        assert_eq!(phaddw(a, b), 0x8001_ffff_0007_0003);
+
+        // Dwords: [1, 2] -> 3; [0x80000000 (i32::MIN), 1] -> 0x80000001.
+        let c = 0x0000_0002_0000_0001u64;
+        let d = 0x0000_0001_8000_0000u64;
+        assert_eq!(phaddd(c, d), 0x8000_0001_0000_0003);
     }
 
     #[test]

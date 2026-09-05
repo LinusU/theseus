@@ -418,6 +418,34 @@ pub fn pabsd_xmm(a: [u32; 4]) -> [u32; 4] {
     std::array::from_fn(|i| (a[i] as i32).wrapping_abs() as u32)
 }
 
+/// PHADDW (SSSE3) adds adjacent 16-bit signed words horizontally. The first
+/// four result words come from dest; the last four come from src.
+pub fn phaddw_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    let d = to_words(dest);
+    let s = to_words(src);
+    from_words([
+        (d[0] as i16).wrapping_add(d[1] as i16) as u16,
+        (d[2] as i16).wrapping_add(d[3] as i16) as u16,
+        (d[4] as i16).wrapping_add(d[5] as i16) as u16,
+        (d[6] as i16).wrapping_add(d[7] as i16) as u16,
+        (s[0] as i16).wrapping_add(s[1] as i16) as u16,
+        (s[2] as i16).wrapping_add(s[3] as i16) as u16,
+        (s[4] as i16).wrapping_add(s[5] as i16) as u16,
+        (s[6] as i16).wrapping_add(s[7] as i16) as u16,
+    ])
+}
+
+/// PHADDD (SSSE3) adds adjacent 32-bit signed dwords horizontally. The first
+/// two result dwords come from dest; the last two come from src.
+pub fn phaddd_xmm(dest: [u32; 4], src: [u32; 4]) -> [u32; 4] {
+    [
+        (dest[0] as i32).wrapping_add(dest[1] as i32) as u32,
+        (dest[2] as i32).wrapping_add(dest[3] as i32) as u32,
+        (src[0] as i32).wrapping_add(src[1] as i32) as u32,
+        (src[2] as i32).wrapping_add(src[3] as i32) as u32,
+    ]
+}
+
 pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let a = to_bytes(a);
     let b = to_bytes(b);
@@ -1261,6 +1289,26 @@ mod tests {
 
         let d = [0x8000_0000, 0xffff_ffff, 0, 0];
         assert_eq!(pabsd_xmm(d), [0x8000_0000, 0x0000_0001, 0, 0]); // i32::MIN stays
+    }
+
+    #[test]
+    fn phaddw_and_phaddd_xmm_add_adjacent_lanes() {
+        // Dwords: dest[0]=1, dest[1]=2 -> 3; dest[2]=3, dest[3]=4 -> 7.
+        //         src[0]=0x80000000 (i32::MIN), src[1]=1 -> 0x80000001;
+        //         src[2]=0xfffffffe (-2), src[3]=0xffffffff (-1) -> -3 (0xfffffffd).
+        let dest = [0x0000_0002, 0x0000_0001, 0x0000_0004, 0x0000_0003];
+        let src = [0x0000_0001, 0x8000_0000, 0xffff_ffff, 0xffff_fffe];
+        assert_eq!(phaddd_xmm(dest, src), [3, 7, 0x8000_0001, 0xffff_fffd]);
+
+        // Words for phaddw_xmm: each u32 holds two words.
+        let wa = [0x0002_0001, 0x0004_0003, 0x0006_0005, 0x0008_0007];
+        let wb = [0xfffd_0002, 0x0001_8000, 0x0000_0000, 0x0000_0000];
+        // dest pairs: (1,2)->3, (3,4)->7, (5,6)->11, (7,8)->15
+        // src pairs: (2,-3)->0xffff, (1,-32768)->0x8001, (0,0)->0, (0,0)->0
+        assert_eq!(
+            phaddw_xmm(wa, wb),
+            [0x0007_0003, 0x000f_000b, 0x8001_ffff, 0x0000_0000]
+        );
     }
 
     #[test]
