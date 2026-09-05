@@ -468,6 +468,124 @@ pub fn pxor_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     bitop_ps(a, b, |a, b| a ^ b)
 }
 
+pub fn pcmpeqb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = if a[i] == b[i] { 0xff } else { 0 };
+    }
+    from_bytes(out)
+}
+
+pub fn pcmpeqw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = if a[i] == b[i] { 0xffff } else { 0 };
+    }
+    from_words(out)
+}
+
+pub fn pcmpeqd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| if a[i] == b[i] { 0xffff_ffff } else { 0 })
+}
+
+pub fn pcmpgtb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = if (a[i] as i8) > (b[i] as i8) { 0xff } else { 0 };
+    }
+    from_bytes(out)
+}
+
+pub fn pcmpgtw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = if (a[i] as i16) > (b[i] as i16) {
+            0xffff
+        } else {
+            0
+        };
+    }
+    from_words(out)
+}
+
+pub fn pcmpgtd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| {
+        if (a[i] as i32) > (b[i] as i32) {
+            0xffff_ffff
+        } else {
+            0
+        }
+    })
+}
+
+pub fn pavgb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = ((a[i] as u16 + b[i] as u16 + 1) >> 1) as u8;
+    }
+    from_bytes(out)
+}
+
+pub fn pavgw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = ((a[i] as u32 + b[i] as u32 + 1) >> 1) as u16;
+    }
+    from_words(out)
+}
+
+pub fn pmaxub_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].max(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn pminub_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].min(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn pmaxsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = (a[i] as i16).max(b[i] as i16) as u16;
+    }
+    from_words(out)
+}
+
+pub fn pminsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = (a[i] as i16).min(b[i] as i16) as u16;
+    }
+    from_words(out)
+}
+
 pub fn pshufhw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
     let w = to_words(src);
     let mut out = w;

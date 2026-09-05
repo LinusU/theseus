@@ -98,10 +98,37 @@ impl<'a> CodeGen<'a> {
                 | Psubw
                 | Psubd
                 | Psubq
+                | Paddsb
+                | Paddsw
+                | Paddusb
+                | Paddusw
+                | Psubsb
+                | Psubsw
+                | Psubusb
+                | Psubusw
                 | Pand
                 | Pandn
                 | Por
                 | Pxor
+                | Pcmpeqb
+                | Pcmpeqw
+                | Pcmpeqd
+                | Pcmpgtb
+                | Pcmpgtw
+                | Pcmpgtd
+                | Pavgb
+                | Pavgw
+                | Pminub
+                | Pminsw
+                | Pmaxub
+                | Pmaxsw
+                | Packsswb
+                | Packssdw
+                | Packuswb
+                | Pmulhw
+                | Pmulhuw
+                | Pmuludq
+                | Psadbw
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;
