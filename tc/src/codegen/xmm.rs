@@ -225,6 +225,21 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // Scalar int32/float conversions. CVTSI2SS converts a 32-bit signed
+            // int to a float in the low lane; CVTSS2SI/CVTTSS2SI convert the low
+            // float to a 32-bit signed int (round-to-nearest vs. truncate).
+            Cvtsi2ss => {
+                let src = self.get_op(instr, 1);
+                let dst = self.xmm_get(instr, 0);
+                let reg = instr.op_register(0);
+                self.line(format!("{} = cvtsi2ss({}, {});", xmm_reg(reg), dst, src));
+            }
+            Cvtss2si | Cvttss2si => {
+                let func = instr_name(instr);
+                let src = self.xmm_get_32(instr, 1);
+                self.line(self.set_op(instr, 0, format!("{func}({src})")));
+            }
+
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.

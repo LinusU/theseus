@@ -214,6 +214,18 @@ pub fn maxss(dst: [u32; 4], src: u32) -> [u32; 4] {
     [res.to_bits(), dst[1], dst[2], dst[3]]
 }
 
+pub fn cvtsi2ss(dst: [u32; 4], src: u32) -> [u32; 4] {
+    [((src as i32) as f32).to_bits(), dst[1], dst[2], dst[3]]
+}
+
+pub fn cvtss2si(src: u32) -> u32 {
+    (f32::from_bits(src).round() as i32) as u32
+}
+
+pub fn cvttss2si(src: u32) -> u32 {
+    (f32::from_bits(src) as i32) as u32
+}
+
 pub fn cmpss(dst: [u32; 4], src: u32, predicate: u8) -> [u32; 4] {
     let a = f32::from_bits(dst[0]);
     let b = f32::from_bits(src);
