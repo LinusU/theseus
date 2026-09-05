@@ -118,8 +118,8 @@ pub type HBITMAP = HANDLE;
 
 #[cfg(test)]
 mod tests {
-    use super::StretchBlt;
-    use crate::gdi32;
+    use super::{SetDIBitsToDevice, StretchBlt};
+    use crate::{Ptr, gdi32};
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -141,6 +141,39 @@ mod tests {
         let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3FFC);
         let hdc = gdi32::lock().new_memory_dc(bitmap);
         assert!(!StretchBlt(&mut ctx, hdc, 0, 0, 1, 1, hdc, 0, 0, 1, 1, 0xcc0020));
+    }
+
+    fn dib_info32(ctx: &mut Context, addr: u32) {
+        let header: [u8; 40] = [
+            0x28, 0x00, 0x00, 0x00, // biSize = 40
+            0x01, 0x00, 0x00, 0x00, // biWidth = 1
+            0x01, 0x00, 0x00, 0x00, // biHeight = 1
+            0x01, 0x00, // biPlanes = 1
+            0x20, 0x00, // biBitCount = 32
+            0x00, 0x00, 0x00, 0x00, // biCompression = 0
+            0x00, 0x00, 0x00, 0x00, // biSizeImage = 0
+            0x00, 0x00, 0x00, 0x00, // biXPelsPerMeter = 0
+            0x00, 0x00, 0x00, 0x00, // biYPelsPerMeter = 0
+            0x00, 0x00, 0x00, 0x00, // biClrUsed = 0
+            0x00, 0x00, 0x00, 0x00, // biClrImportant = 0
+        ];
+        ctx.memory.bytes[addr as usize..addr as usize + 40].copy_from_slice(&header);
+    }
+
+    #[test]
+    fn set_di_bits_rejects_out_of_bounds_source() {
+        let mut ctx = context();
+        // Destination: 2x2 bitmap with plenty of room.
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(2, 2, 0x1000));
+        // DIB header at 0x100 describes a 1x1 32bpp bottom-up bitmap.
+        dib_info32(&mut ctx, 0x100);
+        // Source bits at 0x3FFD need 4 bytes, extending one byte past 0x4000.
+        let lpvBits = Ptr::new(0x3FFD);
+        let lpbmi = Ptr::new(0x100);
+        assert_eq!(
+            SetDIBitsToDevice(&mut ctx, hdc, 0, 0, 1, 1, 0, 0, 0, 1, lpvBits, lpbmi, 0),
+            0
+        );
     }
 }
 
@@ -173,32 +206,45 @@ pub fn SetDIBitsToDevice(
 ) -> u32 {
     let (bmp_src, _) = Bitmap::parse(&ctx.memory[lpbmi.addr..]);
 
-    assert_eq!(StartScan, 0);
-    assert_eq!(ColorUse, 0); // DIB_RGB_COLORS
-    assert_eq!(cLines, h); // why would these ever be different?
+    if StartScan != 0 || ColorUse != 0 || cLines != h {
+        return 0;
+    }
+    if bmp_src.width == 0 || bmp_src.height == 0 {
+        return 0;
+    }
 
     let state = gdi32::lock();
     let Some(dc_dst) = state.dcs.get(hdc) else {
         return 0;
     };
     let bmp_dst = &dc_dst.bitmap.1;
-    assert!(bmp_dst.is_simple());
+    if !bmp_dst.is_simple() {
+        return 0;
+    }
 
-    let [pixels_src, pixels_dst] = ctx
-        .memory
-        .bytes
-        .get_disjoint_mut([
-            lpvBits.addr as usize..(lpvBits.addr + (h * bmp_src.stride())) as usize,
-            bmp_dst.pixels_range(),
-        ])
-        .unwrap();
+    if xSrc + w > bmp_src.width
+        || ySrc + h > bmp_src.height
+        || xDest + w > bmp_dst.width
+        || yDest + h > bmp_dst.height
+    {
+        return 0;
+    }
+
+    let src_end = lpvBits.addr as u64 + (h as u64 * bmp_src.stride() as u64);
+    let Ok([pixels_src, pixels_dst]) = ctx.memory.bytes.get_disjoint_mut([
+        lpvBits.addr as usize..src_end as usize,
+        bmp_dst.pixels_range(),
+    ]) else {
+        return 0;
+    };
 
     // for i in (0..pixels_src.len()).step_by(bmp_src.stride() as usize) {
     //     log::info!("{:x?}", &pixels_src[i..][..bmp_src.stride() as usize]);
     // }
 
     for y in 0..h {
-        let dst = &mut pixels_dst[((yDest + y) * bmp_dst.stride() + xDest * 4) as usize..];
+        let dst = &mut pixels_dst[((yDest + y) * bmp_dst.stride() + xDest * 4) as usize..]
+            [..w as usize * 4];
         let y_src = ySrc + y;
         bmp_src.read_pixels(
             pixels_src,
