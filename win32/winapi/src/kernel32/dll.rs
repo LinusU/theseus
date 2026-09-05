@@ -129,11 +129,7 @@ pub fn GetModuleFileNameA(
     // The module's path isn't recorded, but its name is the first token of
     // the command line the process was launched with.
     let cmdline = ctx.memory.read_str(lock().command_line.command_line_8);
-    let name = cmdline
-        .split(|ch| ch == ' ')
-        .next()
-        .unwrap_or(cmdline)
-        .to_owned();
+    let name = cmdline.split(' ').next().unwrap_or(cmdline).to_owned();
     if nSize == 0 || lpFilename.addr == 0 {
         return 0;
     }

@@ -142,7 +142,7 @@ pub fn GetExitCodeProcess(ctx: &mut Context, hProcess: HANDLE, lpExitCode: Ptr<u
 }
 
 #[allow(unused)]
-fn peb_mut<'a>(ctx: &'a mut Context) -> &'a mut PEB {
+fn peb_mut(ctx: &mut Context) -> &mut PEB {
     let peb_addr = teb(ctx).Peb;
     let (peb, _) = PEB::mut_from_prefix(&mut ctx.memory[peb_addr..]).unwrap();
     peb

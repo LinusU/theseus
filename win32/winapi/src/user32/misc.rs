@@ -442,7 +442,7 @@ fn wsprintf_impl(ctx: &mut Context, fmt: &[u16], mut arg_addr: u32, wide: bool) 
             } else {
                 b' ' as u16
             };
-            let padding = std::iter::repeat(pad).take(width - formatted.len());
+            let padding = std::iter::repeat_n(pad, width - formatted.len());
             if left {
                 out.extend(formatted);
                 out.extend(padding);

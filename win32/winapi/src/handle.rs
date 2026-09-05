@@ -71,9 +71,9 @@ impl crate::dllexport::FromABIParam for HANDLE {
     }
 }
 
-impl Into<crate::dllexport::ABIReturn> for HANDLE {
-    fn into(self) -> crate::dllexport::ABIReturn {
-        self.0.into()
+impl From<HANDLE> for crate::dllexport::ABIReturn {
+    fn from(val: HANDLE) -> crate::dllexport::ABIReturn {
+        val.0.into()
     }
 }
 

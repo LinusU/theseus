@@ -19,6 +19,8 @@ pub use types::DD;
 
 use crate::{heap::Heap, kernel32};
 
+/// # Safety
+/// Must be called once before any DirectDraw interface methods are invoked.
 pub unsafe fn init_vtables(ctx: &mut Context) {
     if unsafe { IDirectDraw::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
@@ -251,5 +253,5 @@ unsafe impl Sync for StaticState {}
 static STATE: StaticState = StaticState(OnceCell::new());
 
 pub fn state() -> &'static State {
-    STATE.0.get_or_init(|| Default::default())
+    STATE.0.get_or_init(State::default)
 }

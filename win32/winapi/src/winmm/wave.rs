@@ -123,7 +123,7 @@ fn thread_proc(
         }
 
         if let Some(block) = queued_blocks.front() {
-            let queued_bytes = stream.queued_bytes() as u32;
+            let queued_bytes = stream.queued_bytes();
             let consumed = total_pending - queued_bytes;
             if consumed >= block.len {
                 let QueuedBlock { addr, len } = *block;
@@ -189,7 +189,7 @@ pub fn waveOutOpen(
 
     let stream = host::host().create_audio_stream(host::AudioSpec {
         channels: fmt.nChannels as u32,
-        sample_rate: fmt.nSamplesPerSec as u32,
+        sample_rate: fmt.nSamplesPerSec,
     });
     stream.resume();
 
@@ -197,7 +197,7 @@ pub fn waveOutOpen(
     state().wave = Some(State { sender });
 
     if matches!(callback, CALLBACK::FUNCTION | CALLBACK::TASK) {
-        kernel32::lock().create_thread(ctx, format!("winmm thread"), move |ctx| {
+        kernel32::lock().create_thread(ctx, "winmm thread".to_string(), move |ctx| {
             thread_proc(ctx, stream, receiver, dwCallback, dwInstance)
         });
     }

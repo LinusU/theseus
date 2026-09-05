@@ -32,9 +32,9 @@ pub const DDCKEY_DESTBLT: u32 = 0x0002;
 pub const DDCKEY_SRCOVERLAY: u32 = 0x0004;
 pub const DDCKEY_SRCBLT: u32 = 0x0008;
 
-impl Into<ABIReturn> for DD {
-    fn into(self) -> ABIReturn {
-        (self as u32).into()
+impl From<DD> for ABIReturn {
+    fn from(val: DD) -> ABIReturn {
+        (val as u32).into()
     }
 }
 

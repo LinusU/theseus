@@ -75,13 +75,13 @@ pub struct TEB {
 }
 
 #[allow(unused)]
-pub fn teb<'a>(ctx: &'a mut Context) -> &'a TEB {
+pub fn teb(ctx: &mut Context) -> &TEB {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
     teb_ptr.aligned_ref(&ctx.memory)
 }
 
 #[allow(unused)]
-pub fn teb_mut<'a>(ctx: &'a mut Context) -> &'a mut TEB {
+pub fn teb_mut(ctx: &mut Context) -> &mut TEB {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
     teb_ptr.aligned_mut(&mut ctx.memory)
 }

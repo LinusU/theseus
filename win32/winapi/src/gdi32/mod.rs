@@ -41,9 +41,9 @@ impl FromABIParam for COLORREF {
     }
 }
 
-impl Into<ABIReturn> for COLORREF {
-    fn into(self) -> ABIReturn {
-        ABIReturn::from(self.0)
+impl From<COLORREF> for ABIReturn {
+    fn from(val: COLORREF) -> ABIReturn {
+        ABIReturn::from(val.0)
     }
 }
 

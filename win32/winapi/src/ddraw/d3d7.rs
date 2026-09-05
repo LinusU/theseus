@@ -2300,11 +2300,11 @@ fn rasterize(
 
         // Mip sub-levels that the game actually filled (pixels present).
         // D3DTSS_MIPFILTER = 18; an explicit D3DTFP_NONE(1) disables mips.
-        let tex_mips = if tex_surf.is_some()
+        let tex_mips = if let Some(tex) = &tex_surf
             && *device.texture_stage_states.get(&(0, 18)).unwrap_or(&0) != 1
         {
             let mut levels = Vec::new();
-            for att in &tex_surf.as_ref().unwrap().borrow().attachments {
+            for att in &tex.borrow().attachments {
                 let l = att.borrow();
                 if !l.caps.dwCaps.contains(DDSCAPS::MIPMAP) {
                     continue;

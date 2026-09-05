@@ -258,32 +258,33 @@ pub mod IDirectDraw7 {
                     {
                         continue;
                     }
-                    let mut desc = DDSURFACEDESC2::default();
-                    desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
-                    desc.dwFlags = DDSD::WIDTH
-                        | DDSD::HEIGHT
-                        | DDSD::PIXELFORMAT
-                        | DDSD::PITCH
-                        | DDSD::REFRESHRATE;
-                    desc.dwWidth = width;
-                    desc.dwHeight = height;
-                    desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
-                    desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle = refresh;
-
                     let (flags, r, g, b) = match bpp {
                         8 => (0x40 | 0x20, 0, 0, 0),
                         16 => (0x40, 0xF800, 0x07E0, 0x001F),
                         _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF),
                     };
-                    desc.ddpfPixelFormat = DDPIXELFORMAT {
-                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                        dwFlags: flags,
-                        dwFourCC: 0,
-                        dwRGBBitCount: bpp,
-                        dwRBitMask: r,
-                        dwGBitMask: g,
-                        dwBBitMask: b,
-                        dwRGBAlphaBitMask: 0,
+                    let desc = DDSURFACEDESC2 {
+                        dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+                        dwFlags: DDSD::WIDTH
+                            | DDSD::HEIGHT
+                            | DDSD::PIXELFORMAT
+                            | DDSD::PITCH
+                            | DDSD::REFRESHRATE,
+                        dwWidth: width,
+                        dwHeight: height,
+                        lPitch_dwLinearSize: width * bpp.div_ceil(8),
+                        dwMipMapCount_dwRefreshRate_dwSrcVBHandle: refresh,
+                        ddpfPixelFormat: DDPIXELFORMAT {
+                            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                            dwFlags: flags,
+                            dwFourCC: 0,
+                            dwRGBBitCount: bpp,
+                            dwRBitMask: r,
+                            dwGBitMask: g,
+                            dwBBitMask: b,
+                            dwRGBAlphaBitMask: 0,
+                        },
+                        ..Default::default()
                     };
 
                     let desc_addr = kernel32::lock()
@@ -473,23 +474,28 @@ pub mod IDirectDraw7 {
             16 => (0x40, 0xF800, 0x07E0, 0x001F),
             _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000),
         };
-        let mut desc = DDSURFACEDESC2::default();
-        desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
-        desc.dwFlags =
-            DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH | DDSD::REFRESHRATE;
-        desc.dwWidth = width;
-        desc.dwHeight = height;
-        desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
-        desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle = 60;
-        desc.ddpfPixelFormat = DDPIXELFORMAT {
-            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-            dwFlags: flags,
-            dwFourCC: 0,
-            dwRGBBitCount: bpp,
-            dwRBitMask: r,
-            dwGBitMask: g,
-            dwBBitMask: b,
-            dwRGBAlphaBitMask: 0,
+        let desc = DDSURFACEDESC2 {
+            dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            dwFlags: DDSD::WIDTH
+                | DDSD::HEIGHT
+                | DDSD::PIXELFORMAT
+                | DDSD::PITCH
+                | DDSD::REFRESHRATE,
+            dwWidth: width,
+            dwHeight: height,
+            lPitch_dwLinearSize: width * bpp.div_ceil(8),
+            dwMipMapCount_dwRefreshRate_dwSrcVBHandle: 60,
+            ddpfPixelFormat: DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: flags,
+                dwFourCC: 0,
+                dwRGBBitCount: bpp,
+                dwRBitMask: r,
+                dwGBitMask: g,
+                dwBBitMask: b,
+                dwRGBAlphaBitMask: 0,
+            },
+            ..Default::default()
         };
         ctx.memory.write(lpDDSurfaceDesc2, desc);
         DD::OK

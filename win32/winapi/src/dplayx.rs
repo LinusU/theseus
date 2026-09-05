@@ -123,6 +123,8 @@ pub mod IDirectPlayLobby3A {
 
     pub static mut VTABLE: u32 = 0;
 
+    /// # Safety
+    /// Must be called once before any DirectPlay interface methods are invoked.
     pub unsafe fn init_vtables(ctx: &mut Context) {
         if unsafe { VTABLE } == 0 {
             let mut kernel32 = kernel32::lock();
@@ -283,17 +285,13 @@ pub mod IDirectPlayLobby3A {
         _ctx: &mut Context,
         _this: u32,
         _dwLobbyID: u32,
-        lpConnectionSettings: u32,
+        _lpConnectionSettings: u32,
         lpdwSize: u32,
     ) -> u32 {
         if lpdwSize == 0 {
             return E_POINTER;
         }
-        if lpConnectionSettings != 0 {
-            _ctx.memory.write::<u32>(lpdwSize, 0);
-        } else {
-            _ctx.memory.write::<u32>(lpdwSize, 0);
-        }
+        _ctx.memory.write::<u32>(lpdwSize, 0);
         E_FAIL
     }
 

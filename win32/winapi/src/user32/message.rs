@@ -70,24 +70,24 @@ fn mouse_button_to_wm(is_down: bool, message: &host::MouseMessage) -> WM {
     // Can't use a match here because MouseButton is a bitfield, not an enum.
     if message.button == host::MouseButton::Left {
         if is_down {
-            return WM::LBUTTONDOWN;
+            WM::LBUTTONDOWN
         } else {
-            return WM::LBUTTONUP;
+            WM::LBUTTONUP
         }
     } else if message.button == host::MouseButton::Right {
         if is_down {
-            return WM::RBUTTONDOWN;
+            WM::RBUTTONDOWN
         } else {
-            return WM::RBUTTONUP;
+            WM::RBUTTONUP
         }
     } else if message.button == host::MouseButton::Middle {
         if is_down {
-            return WM::MBUTTONDOWN;
+            WM::MBUTTONDOWN
         } else {
-            return WM::MBUTTONUP;
+            WM::MBUTTONUP
         }
     } else {
-        return WM::MOUSEMOVE;
+        WM::MOUSEMOVE
     }
 }
 
@@ -318,7 +318,7 @@ pub fn DispatchMessageA(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
-    let wndproc = state().wndclass.borrow().as_ref().unwrap().wndproc.clone();
+    let wndproc = state().wndclass.borrow().as_ref().unwrap().wndproc;
     let msg = lpMsg.read(&ctx.memory).unwrap();
     // WNDPROC
     ctx.call32_x86(

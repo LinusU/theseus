@@ -47,10 +47,9 @@ impl Window {
 
     pub fn ensure_pixels(&mut self, ctx: &mut Context) -> u32 {
         *self.pixels.get_or_insert_with(|| {
-            let addr = kernel32::lock()
+            kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, self.width * self.height * 4);
-            addr
+                .alloc(&mut ctx.memory, self.width * self.height * 4)
         })
     }
 
@@ -362,11 +361,8 @@ pub fn DefWindowProcW(
     let window = state().window.borrow();
     let mut window = window.as_ref().unwrap().borrow_mut();
 
-    match msg {
-        WM::PAINT => {
-            window.dirty = false;
-        }
-        _ => {}
+    if let WM::PAINT = msg {
+        window.dirty = false;
     }
     0
 }

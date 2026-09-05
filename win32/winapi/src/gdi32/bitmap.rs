@@ -80,7 +80,7 @@ pub fn StretchBlt(
             [..wDst as usize * 4];
         let y_src = ySrc + y;
         bmp_src.read_pixels(
-            &pixels_src,
+            pixels_src,
             if bmp_src.is_bottom_up {
                 hSrc - y_src - 1
             } else {

@@ -299,7 +299,7 @@ pub fn IsBadReadPtr(ctx: &mut Context, lp: Ptr<()>, ucb: u32) -> bool {
     start < 0x1000
         || start
             .checked_add(ucb as usize)
-            .map_or(true, |end| end > ctx.memory.bytes.len())
+            .is_none_or(|end| end > ctx.memory.bytes.len())
 }
 
 #[win32_derive::dllexport]
@@ -397,7 +397,7 @@ pub fn RtlUnwind(
 #[win32_derive::dllexport]
 pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> u32 /* WSTR */ {
     let buf = &ctx.memory[lpString2.addr..];
-    let Some(len) = buf.chunks_exact(2).position(|c| c == &[0, 0]) else {
+    let Some(len) = buf.chunks_exact(2).position(|c| c == [0, 0]) else {
         log::error!("lstrcpyW: unterminated source string");
         return 0;
     };
@@ -422,7 +422,7 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
 #[win32_derive::dllexport]
 pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
     let buf = &ctx.memory[lpString.addr..];
-    let Some(len) = buf.chunks_exact(2).position(|c| c == &[0, 0]) else {
+    let Some(len) = buf.chunks_exact(2).position(|c| c == [0, 0]) else {
         log::error!("lstrlenW: unterminated string");
         return 0;
     };

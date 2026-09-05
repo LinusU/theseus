@@ -21,22 +21,22 @@ pub fn CoCreateInstance(
 ) -> u32 /* HRESULT */ {
     const REGDB_E_CLASSNOTREG: u32 = 0x8004_0154;
 
-    if _rclsid != 0 {
-        if let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory) {
-            if clsid == dplayx::CLSID_DirectPlayLobby {
-                return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
-            }
-            if clsid == dmusic::CLSID_DirectMusicPerformance {
-                return dmusic::performance::create(ctx, _riid, ppv.addr);
-            }
-            if clsid == dmusic::CLSID_DirectMusicLoader {
-                return dmusic::loader::create(ctx, _riid, ppv.addr);
-            }
-            if clsid == dmusic::CLSID_DirectMusicComposer {
-                return dmusic::composer::create(ctx, _riid, ppv.addr);
-            }
-            log::debug!("CoCreateInstance: unregistered class {clsid:?}");
+    if _rclsid != 0
+        && let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory)
+    {
+        if clsid == dplayx::CLSID_DirectPlayLobby {
+            return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
         }
+        if clsid == dmusic::CLSID_DirectMusicPerformance {
+            return dmusic::performance::create(ctx, _riid, ppv.addr);
+        }
+        if clsid == dmusic::CLSID_DirectMusicLoader {
+            return dmusic::loader::create(ctx, _riid, ppv.addr);
+        }
+        if clsid == dmusic::CLSID_DirectMusicComposer {
+            return dmusic::composer::create(ctx, _riid, ppv.addr);
+        }
+        log::debug!("CoCreateInstance: unregistered class {clsid:?}");
     }
 
     // There is no COM class registry or interface model; report the class as
