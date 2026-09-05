@@ -208,12 +208,26 @@ pub fn signal_event(hEvent: HANDLE, pulse: bool) -> bool {
 #[win32_derive::dllexport]
 pub fn SetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     let kernel32 = lock();
-    let Object::Event(event) = kernel32.objects.get(hEvent).unwrap() else {
-        panic!()
+    let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
+        return false;
     };
     *event.signaled.lock().unwrap() = true;
-    // TODO: the number of threads notified are different between manual reset and auto reset events!
-    assert!(!event.manual_reset);
-    event.cond.notify_one();
+    // A manual-reset event stays signaled until ResetEvent, so wake every
+    // waiter; an auto-reset event is consumed by the first thread that wakes.
+    if event.manual_reset {
+        event.cond.notify_all();
+    } else {
+        event.cond.notify_one();
+    }
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn ResetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
+    let kernel32 = lock();
+    let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
+        return false;
+    };
+    *event.signaled.lock().unwrap() = false;
     true
 }
