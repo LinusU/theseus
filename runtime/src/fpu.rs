@@ -559,8 +559,10 @@ mod tests {
     #[test]
     fn fsave_and_frstor_round_trip_state() {
         let mut memory = crate::Memory::leak_new(0x2000);
-        let mut fpu = FPU::default();
-        fpu.control = 0x027f;
+        let mut fpu = FPU {
+            control: 0x027f,
+            ..Default::default()
+        };
         fpu.push(1.25);
         fpu.push(-2.5);
         fpu.set_cmp(std::cmp::Ordering::Less);
@@ -580,8 +582,10 @@ mod tests {
     #[test]
     fn fxsave_and_fxrstor_round_trip_state() {
         let mut memory = crate::Memory::leak_new(0x2000);
-        let mut fpu = FPU::default();
-        fpu.control = 0x027f;
+        let mut fpu = FPU {
+            control: 0x027f,
+            ..Default::default()
+        };
         fpu.push(1.25);
         fpu.push(-2.5);
         fpu.set_cmp(std::cmp::Ordering::Less);
@@ -667,8 +671,10 @@ mod tests {
     #[test]
     fn real_mode_fsave_uses_the_14_byte_environment() {
         let mut memory = crate::Memory::leak_new(0x2000);
-        let mut fpu = FPU::default();
-        fpu.control = 0x027f;
+        let mut fpu = FPU {
+            control: 0x027f,
+            ..Default::default()
+        };
         fpu.push(1.25);
         fpu.push(-2.5);
         fpu.set_cmp(std::cmp::Ordering::Less);
@@ -699,8 +705,10 @@ mod tests {
     #[test]
     fn fsave_masks_exceptions_after_saving_control_word() {
         let mut memory = crate::Memory::leak_new(0x2000);
-        let mut fpu = FPU::default();
-        fpu.control = 0;
+        let mut fpu = FPU {
+            control: 0,
+            ..Default::default()
+        };
 
         fpu.store_env(&mut memory, 0x1000);
 
