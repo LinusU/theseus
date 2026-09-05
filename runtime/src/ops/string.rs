@@ -20,6 +20,21 @@ trait StringInt: Int + MemRead + MemWrite {
     fn set_eax(&self, regs: &mut Regs);
 }
 
+fn advance_index(index: &mut u32, step: u32, real_mode: bool, backward: bool) {
+    if real_mode {
+        let index16 = if backward {
+            (*index as u16).wrapping_sub(step as u16)
+        } else {
+            (*index as u16).wrapping_add(step as u16)
+        };
+        *index = (*index & 0xffff_0000) | index16 as u32;
+    } else if backward {
+        *index = index.wrapping_sub(step);
+    } else {
+        *index = index.wrapping_add(step);
+    }
+}
+
 impl StringInt for u8 {
     fn from_eax(u: u32) -> Self {
         u as u8
@@ -73,11 +88,12 @@ impl Context {
             .read::<S>(self.addr(self.cpu.regs.ds, self.cpu.regs.esi))
             .set_eax(&mut self.cpu.regs);
         let step = std::mem::size_of::<S>() as u32;
-        if self.cpu.flags.contains(Flags::DF) {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_sub(step);
-        } else {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_add(step);
-        }
+        advance_index(
+            &mut self.cpu.regs.esi,
+            step,
+            self.cpu.real_mode,
+            self.cpu.flags.contains(Flags::DF),
+        );
     }
 
     pub fn lodsb(&mut self) {
@@ -96,11 +112,12 @@ impl Context {
             S::from_eax(self.cpu.regs.eax),
         );
         let step = std::mem::size_of::<S>() as u32;
-        if self.cpu.flags.contains(Flags::DF) {
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_sub(step);
-        } else {
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_add(step);
-        }
+        advance_index(
+            &mut self.cpu.regs.edi,
+            step,
+            self.cpu.real_mode,
+            self.cpu.flags.contains(Flags::DF),
+        );
     }
 
     pub fn stosb(&mut self) {
@@ -119,11 +136,12 @@ impl Context {
             .read::<S>(self.addr(self.cpu.regs.es, self.cpu.regs.edi));
         let _ = sub::<S>(S::from_eax(self.cpu.regs.eax), mem, &mut self.cpu.flags);
         let step = std::mem::size_of::<S>() as u32;
-        if self.cpu.flags.contains(Flags::DF) {
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_sub(step);
-        } else {
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_add(step);
-        }
+        advance_index(
+            &mut self.cpu.regs.edi,
+            step,
+            self.cpu.real_mode,
+            self.cpu.flags.contains(Flags::DF),
+        );
     }
 
     pub fn scasb(&mut self) {
@@ -145,13 +163,9 @@ impl Context {
             .read::<S>(self.addr(self.cpu.regs.es, self.cpu.regs.edi));
         let _ = sub::<S>(src, dst, &mut self.cpu.flags);
         let step = std::mem::size_of::<S>() as u32;
-        if self.cpu.flags.contains(Flags::DF) {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_sub(step);
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_sub(step);
-        } else {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_add(step);
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_add(step);
-        }
+        let backward = self.cpu.flags.contains(Flags::DF);
+        advance_index(&mut self.cpu.regs.esi, step, self.cpu.real_mode, backward);
+        advance_index(&mut self.cpu.regs.edi, step, self.cpu.real_mode, backward);
     }
 
     pub fn cmpsb(&mut self) {
@@ -170,13 +184,9 @@ impl Context {
         let dst_addr = self.addr(self.cpu.regs.es, self.cpu.regs.edi);
         self.memory.write::<S>(dst_addr, val);
         let step = std::mem::size_of::<S>() as u32;
-        if self.cpu.flags.contains(Flags::DF) {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_sub(step);
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_sub(step);
-        } else {
-            self.cpu.regs.esi = self.cpu.regs.esi.wrapping_add(step);
-            self.cpu.regs.edi = self.cpu.regs.edi.wrapping_add(step);
-        }
+        let backward = self.cpu.flags.contains(Flags::DF);
+        advance_index(&mut self.cpu.regs.esi, step, self.cpu.real_mode, backward);
+        advance_index(&mut self.cpu.regs.edi, step, self.cpu.real_mode, backward);
     }
 
     pub fn movsb(&mut self) {
@@ -187,5 +197,37 @@ impl Context {
     }
     pub fn movsd(&mut self) {
         self.movs::<u32>()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BlockCache, CPU, Memory, segofs};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x20_000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn real_mode_lods_wraps_si_without_changing_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ds = 0x1000;
+        ctx.cpu.regs.esi = 0xabcd_ffff;
+        ctx.memory.write::<u8>(segofs(0x1000, 0xffff), 0x42);
+
+        ctx.lodsb();
+
+        assert_eq!(ctx.cpu.regs.get_al(), 0x42);
+        assert_eq!(ctx.cpu.regs.esi, 0xabcd_0000);
     }
 }
