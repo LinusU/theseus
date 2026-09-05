@@ -266,7 +266,12 @@ impl Bitmap {
 
     pub fn read_pixels(&self, pixels: &[u8], y: u32, x1: u32, x2: u32, dst: &mut [u8]) {
         // Degenerate or truncated bitmaps may not have a full row available.
-        if pixels.len() < (y + 1) as usize * self.stride() as usize {
+        if x2 > self.width || pixels.len() < (y + 1) as usize * self.stride() as usize {
+            return;
+        }
+        let row_pixels = (x2 - x1) as usize;
+        let row_bytes = row_pixels * 4;
+        if dst.len() < row_bytes {
             return;
         }
         let palette = |index: usize| {
@@ -321,10 +326,15 @@ impl Bitmap {
             24 => {
                 let src = &pixels[(y * self.stride()) as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
-                    let [b, g, r] = src[srci as usize * 3..][..3] else {
-                        panic!()
+                    let color = if let Some([b, g, r]) = src
+                        .get(srci as usize * 3..)
+                        .and_then(|s| s.get(..3))
+                        .and_then(|s| <[u8; 3]>::try_from(s).ok())
+                    {
+                        COLORREF::from_rgb(r, g, b)
+                    } else {
+                        COLORREF::default()
                     };
-                    let color = COLORREF::from_rgb(r, g, b);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
@@ -376,5 +386,58 @@ mod tests {
         let (bmp, _) = Bitmap::parse(&core_header(24));
         assert_eq!(bmp.width, 0);
         assert_eq!(bmp.height, 0);
+    }
+
+    #[test]
+    fn read_pixels_rejects_out_of_range_x2() {
+        let bmp = Bitmap::new_simple(1, 1, 0);
+        let pixels = [0xff, 0x00, 0x00, 0xff];
+        let mut dst = [0u8; 8];
+        // x2=2 exceeds width=1; should return without panic.
+        bmp.read_pixels(&pixels, 0, 0, 2, &mut dst);
+        assert_eq!(dst, [0u8; 8]);
+    }
+
+    #[test]
+    fn read_pixels_rejects_short_dst() {
+        let bmp = Bitmap::new_simple(1, 1, 0);
+        let pixels = [0xff, 0x00, 0x00, 0xff];
+        let mut dst = [0u8; 2];
+        // dst is shorter than one 32bpp pixel; should return without panic.
+        bmp.read_pixels(&pixels, 0, 0, 1, &mut dst);
+        assert_eq!(dst, [0u8; 2]);
+    }
+
+    #[test]
+    fn read_pixels_24bpp_decodes_a_valid_pixel() {
+        let bmp = Bitmap {
+            width: 1,
+            height: 1,
+            is_bottom_up: true,
+            bit_count: 24,
+            palette: Box::new([]),
+            pixels: 0,
+        };
+        // 24bpp BGR, stride padded to 4 bytes.
+        let pixels = [0x00, 0x00, 0xff, 0x00];
+        let mut dst = [0u8; 4];
+        bmp.read_pixels(&pixels, 0, 0, 1, &mut dst);
+        assert_eq!(dst, [0xff, 0x00, 0x00, 0xff]);
+    }
+
+    #[test]
+    fn read_pixels_24bpp_rejects_x2_past_width() {
+        let bmp = Bitmap {
+            width: 1,
+            height: 1,
+            is_bottom_up: true,
+            bit_count: 24,
+            palette: Box::new([]),
+            pixels: 0,
+        };
+        let pixels = [0x00, 0x00, 0xff, 0x00];
+        let mut dst = [0u8; 8];
+        bmp.read_pixels(&pixels, 0, 0, 2, &mut dst);
+        assert_eq!(dst, [0u8; 8]);
     }
 }
