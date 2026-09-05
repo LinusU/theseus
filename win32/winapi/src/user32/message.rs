@@ -349,7 +349,9 @@ impl MessageQueue {
             }
         }
 
-        let msg = self.msg_from_message(msg);
+        let Some(msg) = self.msg_from_message(msg) else {
+            return;
+        };
         if *LOG_MESSAGES {
             log::info!("{:#x?}", msg);
         }
@@ -362,29 +364,34 @@ impl MessageQueue {
         }
     }
 
-    fn msg_from_message(&self, message: host::Message) -> MSG {
+    fn msg_from_message(&self, message: host::Message) -> Option<MSG> {
         use host::Message::*;
-        let hwnd = self.window.as_ref().unwrap().borrow().hwnd;
-        match message {
+        // WM_QUIT is a thread message like PostQuitMessage's, not a window
+        // message, and must still be recorded before a window exists.
+        #[cfg(not(target_family = "wasm"))]
+        if matches!(message, Quit) {
+            return Some(MSG {
+                hwnd: HWND::null(),
+                message: WM::QUIT as u32,
+                wParam: 0,
+                lParam: 0,
+                time: host::host().time(),
+                pt: POINT::default(),
+            });
+        }
+        // Other host events can arrive before the window exists; there is no
+        // hwnd to deliver them to, but their input-state update above still
+        // ran.
+        let hwnd = self.window.as_ref()?.borrow().hwnd;
+        Some(match message {
             MouseDown(mouse) => mouse_msg(mouse_button_to_wm(true, &mouse), hwnd, &mouse),
             MouseUp(mouse) => mouse_msg(mouse_button_to_wm(false, &mouse), hwnd, &mouse),
             MouseMove(mouse) => mouse_msg(WM::MOUSEMOVE, hwnd, &mouse),
             KeyDown(key) => key_msg(hwnd, &key, true),
             KeyUp(key) => key_msg(hwnd, &key, false),
             #[cfg(not(target_family = "wasm"))]
-            Paint => unreachable!(),
-            #[cfg(not(target_family = "wasm"))]
-            Quit => {
-                MSG {
-                    hwnd,
-                    message: WM::QUIT as u32,
-                    wParam: 0, // todo
-                    lParam: 0, // todo
-                    time: 0,   // todo
-                    pt: POINT::default(),
-                }
-            }
-        }
+            Paint | Quit => unreachable!(),
+        })
     }
 }
 
