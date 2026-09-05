@@ -90,6 +90,18 @@ impl<'a> CodeGen<'a> {
                 | Punpcklbw
                 | Punpcklwd
                 | Punpckldq
+                | Paddb
+                | Paddw
+                | Paddd
+                | Paddq
+                | Psubb
+                | Psubw
+                | Psubd
+                | Psubq
+                | Pand
+                | Pandn
+                | Por
+                | Pxor
         ) && !is_mmx_reg(instr.op_register(0))
         {
             return false;

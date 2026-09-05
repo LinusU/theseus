@@ -420,6 +420,22 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("{func}({src}, {imm})")));
             }
 
+            // Packed integer add/sub and bitwise logic. These mnemonics are also
+            // used by MMX, so the 128-bit XMM variants use an _xmm suffix.
+            Paddb | Paddw | Paddd | Paddq | Psubb | Psubw | Psubd | Psubq | Pand | Pandn | Por
+            | Pxor => {
+                let func = format!("{}_xmm", instr_name(instr));
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             // Scalar ordered/unordered compare that updates EFLAGS. The helper
             // preserves DF/IF/etc while setting/clearing CF/ZF/PF/OF/SF/AF.
             Comiss | Ucomiss => {

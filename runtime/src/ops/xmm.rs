@@ -384,6 +384,90 @@ pub fn pshuflw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
     from_words(out)
 }
 
+pub fn paddb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].wrapping_add(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn paddw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = a[i].wrapping_add(b[i]);
+    }
+    from_words(out)
+}
+
+pub fn paddd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| a[i].wrapping_add(b[i]))
+}
+
+pub fn paddq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_qwords(a);
+    let b = to_qwords(b);
+    let mut out = [0u64; 2];
+    for i in 0..2 {
+        out[i] = a[i].wrapping_add(b[i]);
+    }
+    from_qwords(out)
+}
+
+pub fn psubb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].wrapping_sub(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn psubw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = a[i].wrapping_sub(b[i]);
+    }
+    from_words(out)
+}
+
+pub fn psubd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    std::array::from_fn(|i| a[i].wrapping_sub(b[i]))
+}
+
+pub fn psubq_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_qwords(a);
+    let b = to_qwords(b);
+    let mut out = [0u64; 2];
+    for i in 0..2 {
+        out[i] = a[i].wrapping_sub(b[i]);
+    }
+    from_qwords(out)
+}
+
+pub fn pand_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a & b)
+}
+
+pub fn pandn_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| !a & b)
+}
+
+pub fn por_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a | b)
+}
+
+pub fn pxor_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    bitop_ps(a, b, |a, b| a ^ b)
+}
+
 pub fn pshufhw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
     let w = to_words(src);
     let mut out = w;
