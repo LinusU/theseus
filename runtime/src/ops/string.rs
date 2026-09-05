@@ -64,9 +64,17 @@ impl StringInt for u32 {
 
 impl Context {
     pub fn rep(&mut self, rep: Rep, func: impl Fn(&mut Context)) {
-        while self.cpu.regs.ecx > 0 {
+        while if self.cpu.real_mode {
+            self.cpu.regs.get_cx() != 0
+        } else {
+            self.cpu.regs.ecx != 0
+        } {
             func(self);
-            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+            if self.cpu.real_mode {
+                self.cpu.regs.set_cx(self.cpu.regs.get_cx().wrapping_sub(1));
+            } else {
+                self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+            }
             match rep {
                 Rep::REPE if !self.cpu.flags.contains(Flags::ZF) => break,
                 Rep::REPNE if self.cpu.flags.contains(Flags::ZF) => break,
@@ -229,5 +237,16 @@ mod tests {
 
         assert_eq!(ctx.cpu.regs.get_al(), 0x42);
         assert_eq!(ctx.cpu.regs.esi, 0xabcd_0000);
+    }
+
+    #[test]
+    fn real_mode_rep_uses_cx_without_changing_high_bits() {
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.ecx = 0x0001_0001;
+
+        ctx.rep(Rep::REP, |_| {});
+
+        assert_eq!(ctx.cpu.regs.ecx, 0x0001_0000);
     }
 }
