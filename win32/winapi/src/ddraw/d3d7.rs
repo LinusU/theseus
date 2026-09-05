@@ -284,13 +284,14 @@ fn texture_formats() -> Vec<DDPIXELFORMAT> {
         dwRGBAlphaBitMask: a,
     };
     vec![
-        rgb(16, 0xF800, 0x07E0, 0x001F, 0, 0),                // R5G6B5
-        rgb(16, 0x7C00, 0x03E0, 0x001F, 0, 0),                // X1R5G5B5
-        rgb(16, 0x0F00, 0x00F0, 0x000F, 0xF000, 0),           // A4R4G4B4
-        rgb(16, 0x7C00, 0x03E0, 0x001F, 0x8000, 0),           // A1R5G5B5
-        rgb(32, 0xFF0000, 0x00FF00, 0x0000FF, 0xFF000000, 0), // A8R8G8B8
-        rgb(32, 0xFF0000, 0x00FF00, 0x0000FF, 0, 0),          // X8R8G8B8
-        rgb(8, 0, 0, 0, 0, 0x20),                             // palettized
+        rgb(16, 0xF800, 0x07E0, 0x001F, 0, 0),      // R5G6B5
+        rgb(16, 0x7C00, 0x03E0, 0x001F, 0, 0),      // X1R5G5B5
+        rgb(16, 0x0F00, 0x00F0, 0x000F, 0xF000, 0), // A4R4G4B4
+        rgb(16, 0x7C00, 0x03E0, 0x001F, 0x8000, 0), // A1R5G5B5
+        // 32-bit surfaces store RGBA bytes, so R is the low byte here.
+        rgb(32, 0x00FF, 0xFF00, 0xFF0000, 0xFF000000, 0), // A8R8G8B8
+        rgb(32, 0x00FF, 0xFF00, 0xFF0000, 0, 0),          // X8R8G8B8
+        rgb(8, 0, 0, 0, 0, 0x20),                         // palettized
     ]
 }
 

@@ -369,7 +369,7 @@ pub mod IDirectDraw7 {
         let (flags, r, g, b) = match bpp {
             8 => (0x40 | 0x20, 0, 0, 0),
             16 => (0x40, 0xF800, 0x07E0, 0x001F),
-            _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF),
+            _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000),
         };
         let mut desc = DDSURFACEDESC2::default();
         desc.dwSize = std::mem::size_of::<DDSURFACEDESC2>() as u32;
@@ -554,6 +554,27 @@ const IID_IDIRECTDRAWSURFACE7: GUID = GUID::new(
     0x11d2,
     [0xb9, 0x2f, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b],
 );
+
+/// The `DDPIXELFORMAT` matching a surface's byte depth. The 32-bit masks
+/// match `ddraw::get_pixel_format` — surface memory is RGBA byte order, so
+/// R sits in the low byte.
+fn surface_pixel_format(bpp: u32) -> DDPIXELFORMAT {
+    let (flags, count, r, g, b, a) = match bpp {
+        1 => (0x40 | 0x20, 8, 0, 0, 0, 0), // DDPF_RGB | DDPF_PALETTEINDEXED8
+        2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
+        _ => (0x40, 32, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
+    };
+    DDPIXELFORMAT {
+        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+        dwFlags: flags,
+        dwFourCC: 0,
+        dwRGBBitCount: count,
+        dwRBitMask: r,
+        dwGBitMask: g,
+        dwBBitMask: b,
+        dwRGBAlphaBitMask: a,
+    }
+}
 
 pub mod IDirectDrawSurface7 {
     use super::*;
@@ -865,27 +886,13 @@ pub mod IDirectDrawSurface7 {
             let desc = {
                 let surfaces = state().surf.borrow();
                 let surface = surfaces.get(&addr).unwrap().borrow();
-                let (flags, count, r, g, b, a) = match surface.bytes_per_pixel {
-                    1 => (0x40 | 0x20, 8, 0, 0, 0, 0),
-                    2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
-                    _ => (0x40, 32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
-                };
                 DDSURFACEDESC2 {
                     dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
                     dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
                     dwHeight: surface.height,
                     dwWidth: surface.width,
                     lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
-                    ddpfPixelFormat: DDPIXELFORMAT {
-                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                        dwFlags: flags,
-                        dwFourCC: 0,
-                        dwRGBBitCount: count,
-                        dwRBitMask: r,
-                        dwGBitMask: g,
-                        dwBBitMask: b,
-                        dwRGBAlphaBitMask: a,
-                    },
+                    ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
                     ..Default::default()
                 }
             };
@@ -1038,24 +1045,8 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        let (flags, count, r, g, b, a) = match surface.borrow().bytes_per_pixel {
-            1 => (0x40 | 0x20, 8, 0, 0, 0, 0), // DDPF_RGB | DDPF_PALETTEINDEXED8
-            2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
-            _ => (0x40, 32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
-        };
-        ctx.memory.write(
-            lpDDPixelFormat,
-            DDPIXELFORMAT {
-                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                dwFlags: flags,
-                dwFourCC: 0,
-                dwRGBBitCount: count,
-                dwRBitMask: r,
-                dwGBitMask: g,
-                dwBBitMask: b,
-                dwRGBAlphaBitMask: a,
-            },
-        );
+        let pixel_format = surface_pixel_format(surface.borrow().bytes_per_pixel);
+        ctx.memory.write(lpDDPixelFormat, pixel_format);
         DD::OK
     }
 
@@ -1121,6 +1112,7 @@ pub mod IDirectDrawSurface7 {
                 dwHeight: surface.height,
                 lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
                 lpSurface: pixels,
+                ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
                 ..Default::default()
             },
         );
