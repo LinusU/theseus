@@ -3,6 +3,8 @@ bitflags::bitflags! {
     pub struct Flags: u32 {
         /// carry
         const CF = 1 << 0;
+        /// auxiliary carry
+        const AF = 1 << 4;
         /// parity
         const PF = 1 << 2;
         /// zero
