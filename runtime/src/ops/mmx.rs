@@ -154,6 +154,28 @@ pub fn paddw(x: u64, y: u64) -> u64 {
     .pack()
 }
 
+pub fn paddb(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    [
+        x[0].wrapping_add(y[0]),
+        x[1].wrapping_add(y[1]),
+        x[2].wrapping_add(y[2]),
+        x[3].wrapping_add(y[3]),
+        x[4].wrapping_add(y[4]),
+        x[5].wrapping_add(y[5]),
+        x[6].wrapping_add(y[6]),
+        x[7].wrapping_add(y[7]),
+    ]
+    .pack()
+}
+
+pub fn paddd(x: u64, y: u64) -> u64 {
+    let x: [u32; 2] = x.unpack();
+    let y: [u32; 2] = y.unpack();
+    [x[0].wrapping_add(y[0]), x[1].wrapping_add(y[1])].pack()
+}
+
 pub fn paddusb(x: u64, y: u64) -> u64 {
     let x: [u8; 8] = x.unpack();
     let y: [u8; 8] = y.unpack();
@@ -255,7 +277,19 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{paddw, psraw};
+    use super::{paddb, paddd, paddw, psraw};
+
+    #[test]
+    fn paddb_and_paddd_wrap_each_lane_independently() {
+        assert_eq!(
+            paddb(0x00ff_00ff_00ff_00ff, 0x0101_0101_0101_0101),
+            0x0100_0100_0100_0100
+        );
+        assert_eq!(
+            paddd(0xffff_fffe_0000_0001, 0x0000_0002_0000_0003),
+            0x0000_0000_0000_0004
+        );
+    }
 
     #[test]
     fn paddw_wraps_each_word_independently() {

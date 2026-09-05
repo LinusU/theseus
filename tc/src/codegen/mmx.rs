@@ -84,8 +84,8 @@ impl<'a> CodeGen<'a> {
             }
 
             // Binary operations, all implemented with same name as mnemonic.
-            Paddsb | Paddsw | Paddusb | Paddw | Pmullw | Psrlw | Packuswb | Psubusb | Psubw
-            | Psraw => {
+            Paddb | Paddd | Paddsb | Paddsw | Paddusb | Paddw | Pmullw | Psrlw | Packuswb
+            | Psubusb | Psubw | Psraw => {
                 let func = instr_name(instr);
                 self.line(self.mmx_set(
                     instr,
