@@ -179,7 +179,7 @@ pub fn GetStockObject(_ctx: &mut Context, i: GetStockObjectArg) -> HGDIOBJ {
 #[win32_derive::dllexport]
 pub fn SelectObject(ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
     if h.is_null_or_invalid() {
-        log::warn!("SelectObject: ignoring null select, likely from a prior stub");
+        log::debug!("SelectObject: ignoring null select, likely from a prior stub");
         return HGDIOBJ::null();
     }
     let caller = {
@@ -196,7 +196,10 @@ pub fn SelectObject(ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
         return HGDIOBJ::null();
     };
     let Some(object) = state.objects.get(h) else {
-        log::warn!("SelectObject: unknown object {h:?} (caller {caller:#x})");
+        // MM2 passes game-internal (non-GDI) pointers here from its UI text
+        // path; failing with NULL matches real Windows behavior, so this is
+        // per-frame noise rather than an emulation gap.
+        log::debug!("SelectObject: unknown object {h:?} (caller {caller:#x})");
         return HGDIOBJ::null();
     };
     match object {
