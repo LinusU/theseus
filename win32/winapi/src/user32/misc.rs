@@ -242,7 +242,8 @@ pub fn GetMenuItemRect(
 
 #[win32_derive::dllexport]
 pub fn KillTimer(_ctx: &mut Context, _hWnd: HWND, _uIDEvent: u32) -> bool {
-    todo!()
+    // SetTimer always fails in this model, so no timers can exist to kill.
+    false
 }
 
 #[win32_derive::dllexport]
