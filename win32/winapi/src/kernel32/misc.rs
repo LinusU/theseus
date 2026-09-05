@@ -3,10 +3,7 @@ use runtime::Context;
 use crate::{
     Ptr,
     kernel32::{lock, teb, teb_mut},
-    stub,
 };
-
-const ERROR_FILE_NOT_FOUND: u32 = 2;
 
 #[win32_derive::dllexport]
 pub fn GetLastError(ctx: &mut Context) -> u32 {
@@ -426,7 +423,10 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{GetComputerNameA, SYSTEM_INFO, lstrcpyW, lstrlenW, processor_feature_present};
+    use super::{
+        GetComputerNameA, GetPrivateProfileStringW, SYSTEM_INFO, lstrcpyW, lstrlenW,
+        processor_feature_present,
+    };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -501,28 +501,222 @@ mod tests {
         assert_eq!(lstrlenW(&mut ctx, Ptr::new(0x3ff0)), 0);
         assert_eq!(lstrcpyW(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
     }
+
+    fn wstr(ctx: &mut Context, addr: u32, s: &str) {
+        for (i, c) in s.encode_utf16().chain(std::iter::once(0)).enumerate() {
+            ctx.memory.write::<u16>(addr + i as u32 * 2, c);
+        }
+    }
+
+    #[test]
+    fn private_profile_string_copies_default_and_reports_length() {
+        let mut ctx = context();
+        wstr(&mut ctx, 0x1000, "App");
+        wstr(&mut ctx, 0x1100, "Key");
+        wstr(&mut ctx, 0x1200, "fallback");
+        wstr(&mut ctx, 0x1300, "no\\such\\file.ini");
+
+        // Missing file: the default is copied and its length returned.
+        let got = GetPrivateProfileStringW(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x1100),
+            Ptr::new(0x1200),
+            Ptr::new(0x2000),
+            32,
+            Ptr::new(0x1300),
+        );
+        assert_eq!(got, 8);
+        assert_eq!(&ctx.memory[0x2000..0x2012], b"f\0a\0l\0l\0b\0a\0c\0k\0\0\0");
+
+        // A too-small buffer truncates to nSize - 1 and stays NUL-terminated.
+        ctx.memory[0x2000..0x2010].fill(0xff);
+        let got = GetPrivateProfileStringW(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x1100),
+            Ptr::new(0x1200),
+            Ptr::new(0x2000),
+            4,
+            Ptr::new(0x1300),
+        );
+        assert_eq!(got, 3);
+        assert_eq!(&ctx.memory[0x2000..0x2008], b"f\0a\0l\0\0\0");
+    }
+}
+
+/// Read a NUL-terminated UTF-16 string from guest memory.
+fn read_wstr(ctx: &Context, addr: u32) -> String {
+    if addr == 0 {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    let mut ofs = addr;
+    while (ofs as usize) < ctx.memory.bytes.len() {
+        let c = ctx.memory.read::<u16>(ofs);
+        if c == 0 {
+            break;
+        }
+        buf.push(c);
+        ofs += 2;
+    }
+    String::from_utf16_lossy(&buf)
+}
+
+/// Parse a .ini file into (section, key, value) rows. Keys and section names
+/// compare case-insensitively per the profile API.
+fn read_ini(path: &str) -> Option<Vec<(String, String, String)>> {
+    let bytes = host::fs::read(crate::kernel32::resolve_path(path)).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut rows = Vec::new();
+    let mut section = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            section = name.trim().to_owned();
+        } else if !section.is_empty()
+            && !line.starts_with(';')
+            && !line.starts_with('#')
+            && let Some((key, value)) = line.split_once('=')
+        {
+            rows.push((
+                section.clone(),
+                key.trim().to_owned(),
+                value.trim().to_owned(),
+            ));
+        }
+    }
+    Some(rows)
+}
+
+/// Write a UTF-16 string into a caller buffer with the profile-API contract:
+/// truncated to `nSize - 1`, NUL-terminated, returns the count excluding NUL.
+fn write_wstr(ctx: &mut Context, addr: u32, value: &str, nSize: u32) -> u32 {
+    if nSize == 0 || addr == 0 {
+        return 0;
+    }
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let copy = (nSize as usize - 1).min(units.len());
+    let end = addr as usize + (copy + 1) * 2;
+    if end > ctx.memory.bytes.len() {
+        return 0;
+    }
+    for (i, c) in units[..copy].iter().enumerate() {
+        ctx.memory.write::<u16>(addr + i as u32 * 2, *c);
+    }
+    ctx.memory.write::<u16>(addr + copy as u32 * 2, 0);
+    copy as u32
+}
+
+/// Write a NUL-separated multi-string, returning chars copied excluding the
+/// final extra NUL (nSize - 2 on overflow, per the API contract).
+fn write_wstr_multi(ctx: &mut Context, addr: u32, entries: &[String], nSize: u32) -> u32 {
+    if nSize < 2 || addr == 0 {
+        return 0;
+    }
+    let mut out: Vec<u16> = Vec::new();
+    for entry in entries {
+        out.extend(entry.encode_utf16());
+        out.push(0);
+    }
+    out.push(0);
+    if out.len() <= nSize as usize {
+        for (i, c) in out.iter().enumerate() {
+            ctx.memory.write::<u16>(addr + i as u32 * 2, *c);
+        }
+        return (out.len() - 1) as u32;
+    }
+    let copy = nSize as usize - 2;
+    for (i, c) in out[..copy].iter().enumerate() {
+        ctx.memory.write::<u16>(addr + i as u32 * 2, *c);
+    }
+    ctx.memory.write::<u16>(addr + copy as u32 * 2, 0);
+    ctx.memory.write::<u16>(addr + (copy + 1) as u32 * 2, 0);
+    copy as u32
+}
+
+/// atoi-style leading-integer parse, matching the profile-API coercion.
+fn atoi(s: &str) -> Option<i32> {
+    let s = s.trim_start();
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(rest) => (-1i64, rest),
+        None => (1, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let digits: String = digits.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok().map(|v| (v * sign) as i32)
 }
 
 #[win32_derive::dllexport]
 pub fn GetPrivateProfileIntW(
-    _ctx: &mut Context,
-    _lpAppName: Ptr<u16>,
-    _lpKeyName: Ptr<u16>,
+    ctx: &mut Context,
+    lpAppName: Ptr<u16>,
+    lpKeyName: Ptr<u16>,
     nDefault: i32,
-    _lpFileName: Ptr<u16>,
+    lpFileName: Ptr<u16>,
 ) -> i32 {
-    stub!(nDefault)
+    let section = read_wstr(ctx, lpAppName.addr);
+    let key = read_wstr(ctx, lpKeyName.addr);
+    let path = read_wstr(ctx, lpFileName.addr);
+    read_ini(&path)
+        .and_then(|rows| {
+            rows.iter().find_map(|(s, k, v)| {
+                (s.eq_ignore_ascii_case(&section) && k.eq_ignore_ascii_case(&key))
+                    .then(|| v.clone())
+            })
+        })
+        .and_then(|v| atoi(&v))
+        .unwrap_or(nDefault)
 }
 
 #[win32_derive::dllexport]
 pub fn GetPrivateProfileStringW(
-    _ctx: &mut Context,
-    _lpAppName: Ptr<u16>,
-    _lpKeyName: Ptr<u16>,
-    _lpDefault: Ptr<u16>,
-    _lpReturnedString: Ptr<u16>,
-    _nSize: u32,
-    _lpFileName: Ptr<u16>,
+    ctx: &mut Context,
+    lpAppName: Ptr<u16>,
+    lpKeyName: Ptr<u16>,
+    lpDefault: Ptr<u16>,
+    lpReturnedString: Ptr<u16>,
+    nSize: u32,
+    lpFileName: Ptr<u16>,
 ) -> u32 {
-    stub!(ERROR_FILE_NOT_FOUND)
+    let section = read_wstr(ctx, lpAppName.addr);
+    let key = read_wstr(ctx, lpKeyName.addr);
+    let path = read_wstr(ctx, lpFileName.addr);
+
+    // A null app or key name enumerates section or key names as a
+    // multi-string instead of a single value.
+    if lpAppName.addr == 0 || lpKeyName.addr == 0 {
+        let rows = read_ini(&path).unwrap_or_default();
+        let entries: Vec<String> = if lpAppName.addr == 0 {
+            let mut seen: Vec<String> = Vec::new();
+            for (s, _, _) in &rows {
+                if !seen.iter().any(|e| e.eq_ignore_ascii_case(s)) {
+                    seen.push(s.clone());
+                }
+            }
+            seen
+        } else {
+            rows.iter()
+                .filter(|(s, _, _)| s.eq_ignore_ascii_case(&section))
+                .map(|(_, k, _)| k.clone())
+                .collect()
+        };
+        return write_wstr_multi(ctx, lpReturnedString.addr, &entries, nSize);
+    }
+
+    let value = read_ini(&path).and_then(|rows| {
+        rows.iter().find_map(|(s, k, v)| {
+            (s.eq_ignore_ascii_case(&section) && k.eq_ignore_ascii_case(&key)).then(|| v.clone())
+        })
+    });
+    let value = value.unwrap_or_else(|| {
+        if lpDefault.addr != 0 {
+            read_wstr(ctx, lpDefault.addr)
+        } else {
+            String::new()
+        }
+    });
+    write_wstr(ctx, lpReturnedString.addr, &value, nSize)
 }
