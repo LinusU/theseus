@@ -586,6 +586,123 @@ pub fn pminsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     from_words(out)
 }
 
+pub fn paddusb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].saturating_add(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn paddusw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = a[i].saturating_add(b[i]);
+    }
+    from_words(out)
+}
+
+pub fn paddsb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = (a[i] as i8).saturating_add(b[i] as i8) as u8;
+    }
+    from_bytes(out)
+}
+
+pub fn paddsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = (a[i] as i16).saturating_add(b[i] as i16) as u16;
+    }
+    from_words(out)
+}
+
+pub fn psubusb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = a[i].saturating_sub(b[i]);
+    }
+    from_bytes(out)
+}
+
+pub fn psubusw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = a[i].saturating_sub(b[i]);
+    }
+    from_words(out)
+}
+
+pub fn psubsb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_bytes(a);
+    let b = to_bytes(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = (a[i] as i8).saturating_sub(b[i] as i8) as u8;
+    }
+    from_bytes(out)
+}
+
+pub fn psubsw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        out[i] = (a[i] as i16).saturating_sub(b[i] as i16) as u16;
+    }
+    from_words(out)
+}
+
+pub fn packsswb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        let src = if i < 8 { a[i] as i16 } else { b[i - 8] as i16 };
+        out[i] = src.clamp(i8::MIN as i16, i8::MAX as i16) as u8;
+    }
+    from_bytes(out)
+}
+
+pub fn packssdw_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u16; 8];
+    for i in 0..8 {
+        let src = if i < 4 { a[i] as i32 } else { b[i - 4] as i32 };
+        out[i] = src.clamp(i16::MIN as i32, i16::MAX as i32) as u16;
+    }
+    from_words(out)
+}
+
+pub fn packuswb_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let a = to_words(a);
+    let b = to_words(b);
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        let src = if i < 8 { a[i] as i16 } else { b[i - 8] as i16 };
+        out[i] = if src < 0 {
+            0
+        } else if src > 255 {
+            255
+        } else {
+            src as u8
+        };
+    }
+    from_bytes(out)
+}
+
 pub fn pshufhw_xmm(src: [u32; 4], imm: u8) -> [u32; 4] {
     let w = to_words(src);
     let mut out = w;
