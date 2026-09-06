@@ -325,7 +325,11 @@ impl<'a> CodeGen<'a> {
         if let Some(block) = self.blocks.get(&addr) {
             format!("Cont({})", block.name())
         } else {
-            log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
+            if self.module.code_memory().contains(&addr) {
+                log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
+            } else {
+                log::debug!("{from:08x} -> static jmp to out-of-module block {addr:08x}");
+            }
             self.unknown.insert(addr);
             format!("Cont(unk_{addr:x})")
         }
