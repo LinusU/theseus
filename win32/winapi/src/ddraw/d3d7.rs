@@ -2636,13 +2636,40 @@ fn rasterize(
 
     // Expand the draw into an index stream (or implicit vertex ordinals),
     // then decompose it into independent triangles per D3DPRIMITIVETYPE.
+    // The index buffer is a raw guest pointer: skip the draw when its range
+    // falls outside emulated memory rather than panicking the host.
     let verts: Vec<u32> = if lpwIndices != 0 && dwIndexCount >= 3 {
+        let Some(index_bytes) = dwIndexCount.checked_mul(2) else {
+            return;
+        };
+        if !crate::ddraw::ddraw::guest_range(ctx, lpwIndices, index_bytes) {
+            log::debug!(
+                "rasterize: skip prim={dptPrimitiveType} - index buffer {lpwIndices:#x}+{index_bytes:#x} out of range"
+            );
+            return;
+        }
         (0..dwIndexCount)
             .map(|i| ctx.memory.read::<u16>(lpwIndices + i * 2) as u32)
             .collect()
     } else {
         (0..dwVertexCount).collect()
     };
+    // Vertex fetches are driven by the index stream, so bound the checked
+    // range by the largest index actually used rather than the declared
+    // vertex count; a null or out-of-range lpvVertices skips the draw.
+    let vert_bytes = verts
+        .iter()
+        .max()
+        .map_or(0u64, |max| (*max as u64 + 1) * vsize as u64);
+    let Ok(vert_bytes) = u32::try_from(vert_bytes) else {
+        return;
+    };
+    if vert_bytes != 0 && !crate::ddraw::ddraw::guest_range(ctx, lpvVertices, vert_bytes) {
+        log::debug!(
+            "rasterize: skip prim={dptPrimitiveType} - vertex buffer {lpvVertices:#x}+{vert_bytes:#x} out of range"
+        );
+        return;
+    }
     let mut triangles: Vec<[u32; 3]> = Vec::new();
     let mut pixels_written = 0u32;
     let mut last_color = 0u16;
