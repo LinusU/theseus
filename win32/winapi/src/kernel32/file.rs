@@ -362,7 +362,16 @@ pub fn SetFilePointer(
         lDistanceToMove as i64
     };
     let from = match dwMoveMethod {
-        MoveMethod::FILE_BEGIN => SeekFrom::Start(distance as u64),
+        MoveMethod::FILE_BEGIN => {
+            // A negative start position is ERROR_NEGATIVE_SEEK and the file
+            // pointer stays put; casting it to u64 would wrap to a huge
+            // offset instead.
+            if distance < 0 {
+                crate::kernel32::teb_mut(ctx).LastErrorValue = 131;
+                return INVALID_SET_FILE_POINTER;
+            }
+            SeekFrom::Start(distance as u64)
+        }
         MoveMethod::FILE_CURRENT => SeekFrom::Current(distance),
         MoveMethod::FILE_END => SeekFrom::End(distance),
     };
@@ -645,8 +654,26 @@ pub fn FindClose(_ctx: &mut Context, hFindFile: crate::HANDLE) -> bool {
 mod tests {
     use super::{
         DRIVE_FIXED, DRIVE_NO_ROOT_DIR, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-        INVALID_FILE_ATTRIBUTES, drive_type, file_attributes, wildcard_match,
+        INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER, MoveMethod, SetFilePointer, drive_type,
+        file_attributes, wildcard_match,
     };
+    use crate::Ptr;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        crate::kernel32::ensure_test_state();
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        ctx.cpu.regs.fs_base = 0x2000;
+        ctx
+    }
 
     #[test]
     fn wildcards() {
@@ -685,6 +712,27 @@ mod tests {
         assert_eq!(drive_type(Some("C:/")), DRIVE_FIXED);
         assert_eq!(drive_type(Some("D:/")), DRIVE_NO_ROOT_DIR);
         assert_eq!(drive_type(Some("not-a-root")), DRIVE_NO_ROOT_DIR);
+    }
+
+    #[test]
+    fn set_file_pointer_rejects_a_negative_begin_position() {
+        let mut ctx = context();
+        // The early return runs before the handle lookup, so a bogus handle
+        // still exercises the ERROR_NEGATIVE_SEEK path.
+        assert_eq!(
+            SetFilePointer(
+                &mut ctx,
+                crate::HANDLE::from_raw(0xdead_beef),
+                -5,
+                Ptr::new(0),
+                MoveMethod::FILE_BEGIN,
+            ),
+            INVALID_SET_FILE_POINTER
+        );
+        let teb = crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
+            .aligned_ref(&ctx.memory)
+            .unwrap();
+        assert_eq!(teb.LastErrorValue, 131); // ERROR_NEGATIVE_SEEK
     }
 
     #[test]
