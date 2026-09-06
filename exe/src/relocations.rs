@@ -14,17 +14,23 @@ struct IMAGE_BASE_RELOCATION {
 
 /// Iterates IMAGE_BASE_RELOCATION+body blocks.
 fn block_iter(mut buf: &[u8]) -> impl Iterator<Item = (u32, &[u8])> {
+    const HEADER_SIZE: usize = std::mem::size_of::<IMAGE_BASE_RELOCATION>();
+
     std::iter::from_fn(move || {
-        if buf.is_empty() {
+        if buf.len() < HEADER_SIZE {
             return None;
         }
-        let reloc = <IMAGE_BASE_RELOCATION>::read_from_prefix(buf).unwrap().0;
+        let (reloc, _) = <IMAGE_BASE_RELOCATION>::read_from_prefix(buf).ok()?;
         if reloc.VirtualAddress == 0 {
             // fmod.dll has a block with addr=0, size=8 (header size), and then trailing garbage after that
             return None;
         }
-        let body = &buf[std::mem::size_of::<IMAGE_BASE_RELOCATION>()..reloc.SizeOfBlock as usize];
-        buf = &buf[reloc.SizeOfBlock as usize..];
+        let size = reloc.SizeOfBlock as usize;
+        if size < HEADER_SIZE || size > buf.len() {
+            return None;
+        }
+        let body = &buf[HEADER_SIZE..size];
+        buf = &buf[size..];
         Some((reloc.VirtualAddress, body))
     })
 }
@@ -59,7 +65,11 @@ pub fn apply_relocs(
                     let new = old.wrapping_add(offset);
                     write(addr, new);
                 }
-                _ => panic!("unhandled relocation type {etype}"),
+                _ => {
+                    // Malformed or unsupported relocation entries are skipped; the
+                    // loader here is a best-effort helper and cannot stop translation.
+                    log::warn!("unhandled relocation type {etype}");
+                }
             }
         }
     }

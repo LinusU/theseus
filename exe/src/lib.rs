@@ -192,4 +192,56 @@ mod tests {
         assert_eq!(dir.fns(&image).count(), 0);
         assert_eq!(dir.names(&image).count(), 1);
     }
+
+    #[test]
+    fn apply_relocs_tolerates_malformed_blocks_and_unknown_types() {
+        use crate::relocations::apply_relocs;
+
+        // A block whose SizeOfBlock claims more bytes than the buffer holds.
+        let mut relocs = vec![0u8; 8];
+        relocs[0..4].copy_from_slice(&0x1000u32.to_le_bytes());
+        relocs[4..8].copy_from_slice(&0xFFFFu32.to_le_bytes());
+
+        let mut writes = vec![];
+        apply_relocs(
+            0,
+            0x10000,
+            &relocs,
+            |_addr| 0,
+            |addr, val| writes.push((addr, val)),
+        );
+        assert!(writes.is_empty());
+
+        // A block with an unknown relocation type and a valid type-3 entry.
+        let mut relocs = vec![0u8; 8 + 4];
+        relocs[0..4].copy_from_slice(&0x1000u32.to_le_bytes()); // VirtualAddress
+        relocs[4..8].copy_from_slice(&12u32.to_le_bytes()); // SizeOfBlock (header + 2 entries)
+        relocs[8..10].copy_from_slice(&0xF002u16.to_le_bytes()); // unknown type, offset 2
+        relocs[10..12].copy_from_slice(&0x3003u16.to_le_bytes()); // type 3, offset 3
+
+        use std::cell::RefCell;
+
+        let image = RefCell::new([0u8; 8]);
+        image.borrow_mut()[3..7].copy_from_slice(&0x1234u32.to_le_bytes());
+        apply_relocs(
+            0x1000,
+            0x2000,
+            &relocs,
+            |addr| {
+                let img = image.borrow();
+                let start = (addr - 0x1000) as usize;
+                u32::from_le_bytes(img[start..start + 4].try_into().unwrap_or([0; 4]))
+            },
+            |addr, val| {
+                let start = (addr - 0x1000) as usize;
+                image.borrow_mut()[start..start + 4].copy_from_slice(&val.to_le_bytes());
+            },
+        );
+
+        // The unknown type is ignored; the type-3 entry adds the 0x1000 base offset.
+        assert_eq!(
+            u32::from_le_bytes(image.borrow()[3..7].try_into().unwrap()),
+            0x2234
+        );
+    }
 }
