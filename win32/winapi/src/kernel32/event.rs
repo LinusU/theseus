@@ -93,9 +93,12 @@ pub fn CreateEventA(
     bInitialState: bool,
     lpName: Ptr<u8>,
 ) -> HANDLE {
-    // A NULL lpName creates an unnamed event.
+    // A NULL lpName creates an unnamed event, but a low non-null pointer
+    // is an invalid name and fails the call.
     let name = if lpName.addr == 0 {
         String::new()
+    } else if lpName.addr < 0x1000 {
+        return HANDLE::null();
     } else {
         ctx.memory.read_str(lpName.addr).to_string()
     };
@@ -262,4 +265,31 @@ pub fn ResetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     };
     *event.signaled.lock().unwrap_or_else(|e| e.into_inner()) = false;
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn create_event_rejects_low_name_pointer() {
+        let mut ctx = context();
+        // A null name is a legal unnamed event.
+        assert!(!CreateEventA(&mut ctx, Ptr::new(0), false, false, Ptr::new(0)).is_null());
+        // A low non-null name is an invalid pointer and fails the call.
+        assert!(CreateEventA(&mut ctx, Ptr::new(0), false, false, Ptr::new(0x500)).is_null());
+    }
 }

@@ -363,7 +363,7 @@ pub fn VirtualFree(
 
 #[win32_derive::dllexport]
 pub fn OutputDebugStringA(ctx: &mut Context, lpOutputString: Ptr<u8>) {
-    if lpOutputString.addr != 0 {
+    if lpOutputString.addr >= 0x1000 {
         log::debug!(
             "OutputDebugStringA: {}",
             ctx.memory.read_str(lpOutputString.addr)
