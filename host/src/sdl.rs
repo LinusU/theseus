@@ -558,7 +558,8 @@ impl Host {
     #[allow(unused)] // todo
     pub fn print(&self, text: &[u8]) {
         use std::io::Write;
-        std::io::stdout().write_all(text).unwrap();
+        // A broken pipe or closed stdout shouldn't kill the emulator.
+        let _ = std::io::stdout().write_all(text);
     }
 }
 
@@ -842,6 +843,7 @@ impl Host {
 
     pub fn console_write(&self, text: &[u8]) {
         use std::io::Write;
-        std::io::stdout().write_all(text).unwrap();
+        // A broken pipe or closed stdout shouldn't kill the emulator.
+        let _ = std::io::stdout().write_all(text);
     }
 }
