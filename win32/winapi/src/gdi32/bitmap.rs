@@ -55,8 +55,12 @@ pub fn StretchBlt(
             // BLACKNESS / WHITENESS / DSTINVERT
             return rop_fill(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
         }
-        // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT
-        0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 => {}
+        0x00f0_0021 | 0x005a_0049 => {
+            // PATCOPY / PATINVERT: fill the destination with the DC brush.
+            return rop_fill_pattern(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
+        }
+        // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT / MERGECOPY
+        0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 | 0x00c0_00ca => {}
         _ => return false,
     }
 
@@ -70,6 +74,7 @@ pub fn StretchBlt(
         return false;
     };
     let bmp_dst = &dc_dst.bitmap.1;
+    let brush = dc_dst.brush.1.0.map(|c| c.to_pixel());
     if !bmp_dst.is_simple() {
         return false;
     }
@@ -122,6 +127,20 @@ pub fn StretchBlt(
             };
             if rop == 0x00cc_0020 {
                 bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, dst);
+            } else if rop == 0x00c0_00ca {
+                // MERGECOPY: (source & brush), overwriting the destination.
+                row_buf.fill(0);
+                bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, &mut row_buf);
+                if let Some(pat) = brush {
+                    for chunk in row_buf.chunks_exact_mut(4) {
+                        for i in 0..4 {
+                            chunk[i] &= pat[i];
+                        }
+                    }
+                } else {
+                    row_buf.fill(0);
+                }
+                dst.copy_from_slice(&row_buf);
             } else {
                 row_buf.fill(0);
                 bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, &mut row_buf);
@@ -163,13 +182,30 @@ pub fn StretchBlt(
         for i in 0..width {
             let sx = xSrc as i64 + (x_skip + i) * wSrc as i64 / wDest as i64;
             let mut px = [0u8; 4];
-            if (0..bmp_src.width as i64).contains(&sx) {
+            let in_source = (0..bmp_src.width as i64).contains(&sx);
+            if in_source {
                 bmp_src.read_pixels(pixels_src, row, sx as u32, sx as u32 + 1, &mut px);
             } else if rop == 0x00cc_0020 {
                 continue;
             }
-            // A combining rop treats an out-of-source sample as black.
-            apply_rop(&mut dst[i as usize * 4..][..4], &px, rop);
+            if rop == 0x00c0_00ca {
+                // MERGECOPY: source (or black if missing) ANDed with the brush.
+                if let Some(pat) = brush {
+                    if in_source {
+                        for j in 0..4 {
+                            px[j] &= pat[j];
+                        }
+                    } else {
+                        px = [0; 4];
+                    }
+                } else {
+                    px = [0; 4];
+                }
+                dst[i as usize * 4..i as usize * 4 + 4].copy_from_slice(&px);
+            } else {
+                // A combining rop treats an out-of-source sample as black.
+                apply_rop(&mut dst[i as usize * 4..][..4], &px, rop);
+            }
         }
     }
 
@@ -227,6 +263,68 @@ fn rop_fill(
             0x0000_0042 => dst.fill(0),
             0x00ff_0062 => dst.fill(0xff),
             _ => dst.iter_mut().for_each(|b| *b = !*b),
+        }
+    }
+    true
+}
+
+/// Pattern-style raster ops (PATCOPY, PATINVERT) use the destination DC's
+/// selected brush and ignore the source DC.
+fn rop_fill_pattern(
+    ctx: &mut Context,
+    hdc: HDC,
+    x_dest: i32,
+    y_dest: i32,
+    w: i32,
+    h: i32,
+    rop: u32,
+) -> bool {
+    let state = gdi32::lock();
+    let Some(dc) = state.dcs.get(hdc) else {
+        return false;
+    };
+    let bmp = &dc.bitmap.1;
+    if !bmp.is_simple() {
+        return false;
+    }
+    let x_skip = (-(x_dest as i64)).max(0);
+    let y_skip = (-(y_dest as i64)).max(0);
+    let w = (w as i64 - x_skip).min(bmp.width as i64 - x_dest as i64 - x_skip);
+    let h = (h as i64 - y_skip).min(bmp.height as i64 - y_dest as i64 - y_skip);
+    if w <= 0 || h <= 0 {
+        // A fully clipped fill is well-formed but draws nothing.
+        return true;
+    }
+    let Some(pixels) = ctx.memory.bytes.get_mut(bmp.pixels_range()) else {
+        return false;
+    };
+    let x = (x_dest as i64 + x_skip) as u32;
+    let y = (y_dest as i64 + y_skip) as u32;
+
+    let pat = dc
+        .brush
+        .1
+        .0
+        .map(|c| c.to_pixel())
+        .unwrap_or([0, 0, 0, 0xff]);
+
+    for row in 0..h as u32 {
+        let dst = &mut pixels[((y + row) * bmp.stride() + x * 4) as usize..][..w as usize * 4];
+        match rop {
+            0x00f0_0021 => {
+                // PATCOPY: fill with the brush color.
+                for chunk in dst.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&pat);
+                }
+            }
+            _ => {
+                // PATINVERT: XOR the destination with the brush color.
+                for chunk in dst.chunks_exact_mut(4) {
+                    for i in 0..4 {
+                        chunk[i] ^= pat[i];
+                    }
+                }
+            }
         }
     }
     true
@@ -406,6 +504,75 @@ mod tests {
             &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0x330008
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_ff00);
+    }
+
+    #[test]
+    fn stretch_blt_supports_the_pattern_rops() {
+        let mut ctx = context();
+        let src_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x2000));
+        let dst_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x3000));
+
+        // Select a red brush into the destination DC.
+        let mut state = gdi32::lock();
+        let dc = state.dcs.get_mut(dst_dc).unwrap();
+        dc.brush.1.0 = Some(gdi32::COLORREF(0x0000ff));
+        drop(state);
+
+        // PATCOPY fills with the brush color (red, [r=0xff,g=0,b=0,a=0xff]).
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            crate::HANDLE::null(),
+            0,
+            0,
+            1,
+            1,
+            0x00f0_0021,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_00ff);
+
+        // PATINVERT XORs the destination with the brush.
+        // 0xffffffff ^ red = [0x00,0xff,0xff,0x00] in BGRA => 0x00ffff00.
+        ctx.memory.write::<u32>(0x3000, 0xffff_ffff);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            crate::HANDLE::null(),
+            0,
+            0,
+            1,
+            1,
+            0x005a_0049,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x00ff_ff00);
+
+        // MERGECOPY: source (white) ANDed with the red brush overwrites dest.
+        ctx.memory.write::<u32>(0x2000, 0xffff_ffff);
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            src_dc,
+            0,
+            0,
+            1,
+            1,
+            0x00c0_00ca,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_00ff);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
