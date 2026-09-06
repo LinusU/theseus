@@ -48,8 +48,15 @@ pub fn StretchBlt(
     hSrc: i32,
     rop: u32, /* ROP_CODE */
 ) -> bool {
-    if rop != 0xcc0020 {
-        return false;
+    // Rops that read no source pixels never consult hdcSrc, which may be
+    // null for them.
+    match rop {
+        0x0000_0042 | 0x00ff_0062 | 0x0055_0009 => {
+            // BLACKNESS / WHITENESS / DSTINVERT
+            return rop_fill(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
+        }
+        0x00cc_0020 => {} // SRCCOPY
+        _ => return false,
     }
 
     let state = gdi32::lock();
@@ -119,6 +126,44 @@ pub fn StretchBlt(
     true
 }
 
+/// The fill-style raster ops (BLACKNESS, WHITENESS, DSTINVERT) ignore the
+/// source DC; the destination rect is bounds-checked the same way the copy
+/// path checks it.
+fn rop_fill(
+    ctx: &mut Context,
+    hdc: HDC,
+    x_dest: i32,
+    y_dest: i32,
+    w: i32,
+    h: i32,
+    rop: u32,
+) -> bool {
+    let state = gdi32::lock();
+    let Some(dc) = state.dcs.get(hdc) else {
+        return false;
+    };
+    let bmp = &dc.bitmap.1;
+    if !bmp.is_simple() {
+        return false;
+    }
+    let (x, y, w, h) = (x_dest as u32, y_dest as u32, w as u32, h as u32);
+    if x as u64 + w as u64 > bmp.width as u64 || y as u64 + h as u64 > bmp.height as u64 {
+        return false;
+    }
+    let Some(pixels) = ctx.memory.bytes.get_mut(bmp.pixels_range()) else {
+        return false;
+    };
+    for row in 0..h {
+        let dst = &mut pixels[((y + row) * bmp.stride() + x * 4) as usize..][..w as usize * 4];
+        match rop {
+            0x0000_0042 => dst.fill(0),
+            0x00ff_0062 => dst.fill(0xff),
+            _ => dst.iter_mut().for_each(|b| *b = !*b),
+        }
+    }
+    true
+}
+
 pub type HBITMAP = HANDLE;
 
 #[cfg(test)]
@@ -173,6 +218,61 @@ mod tests {
             &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 2, 1, 1, 0xcc0020
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0x101);
+    }
+
+    #[test]
+    fn stretch_blt_supports_the_no_source_rops() {
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(2, 1, 0x3000));
+        ctx.memory.write::<u32>(0x3000, 0x11223344);
+        // BLACKNESS fills without consulting the (null) source DC.
+        assert!(StretchBlt(
+            &mut ctx,
+            hdc,
+            0,
+            0,
+            2,
+            1,
+            crate::HANDLE::null(),
+            0,
+            0,
+            2,
+            1,
+            0x42
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0);
+        // WHITENESS fills with 0xff, and DSTINVERT flips it back to zero.
+        assert!(StretchBlt(
+            &mut ctx,
+            hdc,
+            0,
+            0,
+            2,
+            1,
+            crate::HANDLE::null(),
+            0,
+            0,
+            2,
+            1,
+            0xff0062
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xffff_ffff);
+        assert!(StretchBlt(
+            &mut ctx,
+            hdc,
+            0,
+            0,
+            2,
+            1,
+            crate::HANDLE::null(),
+            0,
+            0,
+            2,
+            1,
+            0x550009
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
