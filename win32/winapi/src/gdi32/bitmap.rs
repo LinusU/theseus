@@ -60,9 +60,9 @@ pub fn StretchBlt(
             return rop_fill_pattern(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
         }
         // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT / MERGECOPY /
-        // MERGEPAINT / PATPAINT / NOTSRCERASE
+        // MERGEPAINT / PATPAINT / NOTSRCERASE / SRCERASE
         0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 | 0x00c0_00ca
-        | 0x00bb_0226 | 0x00fb_0a09 | 0x0011_00a6 => {}
+        | 0x00bb_0226 | 0x00fb_0a09 | 0x0011_00a6 | 0x0044_0328 => {}
         _ => return false,
     }
 
@@ -250,6 +250,7 @@ fn apply_rop(dst: &mut [u8], src: &[u8], rop: u32) {
         *d = match rop {
             0x0033_0008 => !s,      // NOTSRCCOPY
             0x0011_00a6 => *d & !s, // NOTSRCERASE
+            0x0044_0328 => !*d & s, // SRCERASE
             0x0066_0046 => *d ^ s,  // SRCINVERT
             0x0088_00c6 => *d & s,  // SRCAND
             _ => *d | s,            // SRCPAINT
@@ -555,6 +556,24 @@ mod tests {
             0x0011_00a6,
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0x0f00_0f00);
+        // SRCERASE masks the inverted destination with the source.
+        // ~0x0f0f0f0f & 0x00ff00ff = 0x00f000f0.
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            src_dc,
+            0,
+            0,
+            1,
+            1,
+            0x0044_0328,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x00f0_00f0);
     }
 
     #[test]
