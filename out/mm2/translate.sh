@@ -2,10 +2,10 @@
 set -e
 
 cd "$(git rev-parse --show-toplevel)"
-input="${MM2_INPUT:-$PWD/scratch/mm2/MIDTOWN2.decrypted.exe}"
+input="${MM2_INPUT:-$PWD/game/Midtown2.exe}"
 if [[ ! -f "$input" ]]; then
-    printf 'missing decrypted MM2 input: %s\n' "$input" >&2
-    printf 'prepare a decrypted PE image from the runtime-loaded MIDTOWN2.ICD, then set MM2_INPUT\n' >&2
+    printf 'missing MM2 PE input: %s\n' "$input" >&2
+    printf 'acquire the cracked installation or set MM2_INPUT to another usable PE image\n' >&2
     exit 1
 fi
 args=(
