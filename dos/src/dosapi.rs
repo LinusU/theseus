@@ -227,8 +227,15 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("load_program", func, cmd, params_addr);
 
             match func {
-                0 => todo!("load+run exe {cmd}"),
-                1 => todo!("load exe {cmd}"),
+                // Load-and-execute / load-only require a child process
+                // context this runtime does not implement; refuse the call
+                // with a DOS error rather than panicking the host.
+                0 | 1 => {
+                    log::warn!("DOS exec subfunction {func} for {cmd:?} is not supported");
+                    ctx.cpu.regs.set_ax(5); // access denied
+                    ctx.cpu.flags.insert(runtime::Flags::CF);
+                    return None;
+                }
                 3 => {
                     // overlay load
                     let seg = ctx.memory.read::<u16>(params_addr);
