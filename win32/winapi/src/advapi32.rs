@@ -8,6 +8,7 @@ pub type HKEY = u32;
 const ERROR_SUCCESS: u32 = 0;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_MORE_DATA: u32 = 234;
 
 const REG_CREATED_NEW_KEY: u32 = 1;
@@ -70,7 +71,9 @@ where
     T: zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
 {
     if addr != 0 {
-        ctx.memory.write(addr, value);
+        // An out-of-range out-pointer loses the result rather than
+        // panicking the host.
+        let _ = crate::Ptr::<T>::new(addr).write(&mut ctx.memory, value);
     }
 }
 
@@ -93,6 +96,9 @@ pub fn GetUserNameA(
     let name = b"user";
     let size = pcbBuffer.read(&ctx.memory).unwrap_or(0);
     if (size as usize) < name.len() + 1 {
+        return false;
+    }
+    if !crate::ddraw::guest_range(ctx, lpBuffer.addr, name.len() as u32 + 1) {
         return false;
     }
     ctx.memory[lpBuffer.addr..][..name.len()].copy_from_slice(name);
@@ -194,7 +200,9 @@ fn reg_query_value(
     let room = if lpcb_data == 0 {
         0
     } else {
-        ctx.memory.read::<u32>(lpcb_data) as usize
+        crate::Ptr::<u32>::new(lpcb_data)
+            .read(&ctx.memory)
+            .unwrap_or(0) as usize
     };
     if lp_data == 0 {
         // A size query reports the needed byte count.
@@ -205,7 +213,14 @@ fn reg_query_value(
         write_out(ctx, lpcb_data, data.len() as u32);
         return ERROR_MORE_DATA;
     }
-    ctx.memory[lp_data..][..data.len()].copy_from_slice(data);
+    let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lp_data as usize..lp_data as usize + data.len())
+    else {
+        return ERROR_INVALID_PARAMETER;
+    };
+    dst.copy_from_slice(data);
     write_out(ctx, lpcb_data, data.len() as u32);
     ERROR_SUCCESS
 }
@@ -270,8 +285,72 @@ pub fn RegSetValueExW(
     let data = if lpData == 0 {
         Vec::new()
     } else {
-        ctx.memory[lpData..][..cbData as usize].to_vec()
+        let Some(bytes) = ctx
+            .memory
+            .bytes
+            .get(lpData as usize..lpData as usize + cbData as usize)
+        else {
+            return ERROR_INVALID_PARAMETER;
+        };
+        bytes.to_vec()
     };
     reg.values.insert((path, name), (dwType, data));
     ERROR_SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn registry_apis_reject_out_of_range_guest_pointers() {
+        let mut ctx = context();
+        // HKEY_CLASSES_ROOT is a predefined base that is always open.
+        const HKCR: HKEY = 0x8000_0000;
+
+        // A claimed-large buffer whose address cannot hold the name fails
+        // rather than panicking.
+        ctx.memory.write::<u32>(0x2000, 64);
+        assert!(!GetUserNameA(
+            &mut ctx,
+            crate::Ptr::new(0xffff_fff0),
+            crate::Ptr::new(0x2000)
+        ));
+        assert!(!GetUserNameA(
+            &mut ctx,
+            crate::Ptr::new(0x3ffe),
+            crate::Ptr::new(0x2000)
+        ));
+
+        // A value set through a good pointer can be queried; a bad data
+        // pointer and a bad size pointer return errors instead of panicking.
+        ctx.memory[0x3000..][..4].copy_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(
+            RegSetValueExW(&mut ctx, HKCR, 0, 0, 1, 0x3000, 4),
+            ERROR_SUCCESS
+        );
+        ctx.memory.write::<u32>(0x2000, 64);
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0, 0, 0xffff_fff0, 0xffff_fff0, 0x2000),
+            ERROR_INVALID_PARAMETER
+        );
+        // Setting through a bad data pointer is an explicit error.
+        assert_eq!(
+            RegSetValueExW(&mut ctx, HKCR, 0, 0, 1, 0xffff_fff0, 8),
+            ERROR_INVALID_PARAMETER
+        );
+    }
 }
