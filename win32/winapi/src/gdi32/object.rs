@@ -158,7 +158,11 @@ pub enum GetStockObjectArg {
 }
 
 #[win32_derive::dllexport]
-pub fn GetStockObject(_ctx: &mut Context, i: GetStockObjectArg) -> HGDIOBJ {
+pub fn GetStockObject(_ctx: &mut Context, i: u32) -> HGDIOBJ {
+    let Ok(i) = GetStockObjectArg::try_from(i) else {
+        log::warn!("GetStockObject({i}): unknown stock object type");
+        return HGDIOBJ::null();
+    };
     use GetStockObjectArg::*;
     let rgb = |r, g, b| Some(COLORREF::from_rgb(r, g, b));
     let object = match i {
@@ -282,15 +286,15 @@ mod tests {
             DC_PEN,
             DEFAULT_PALETTE,
         ] {
-            assert!(!GetStockObject(&mut ctx, i).is_null());
+            assert!(!GetStockObject(&mut ctx, i as u32).is_null());
         }
     }
 
     #[test]
     fn null_stock_objects_are_hollow() {
         let mut ctx = context();
-        let null_brush = GetStockObject(&mut ctx, GetStockObjectArg::NULL_BRUSH);
-        let null_pen = GetStockObject(&mut ctx, GetStockObjectArg::NULL_PEN);
+        let null_brush = GetStockObject(&mut ctx, GetStockObjectArg::NULL_BRUSH as u32);
+        let null_pen = GetStockObject(&mut ctx, GetStockObjectArg::NULL_PEN as u32);
 
         let state = gdi32::lock();
         let Object::Brush(brush) = state.objects.get(null_brush).unwrap() else {
