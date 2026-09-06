@@ -33,15 +33,24 @@ pub fn __getmainargs(
     };
     let exe = cmdline.split(' ').next().unwrap_or("");
     let kernel32 = lock();
-    let name = kernel32
-        .process_heap
-        .alloc(&mut ctx.memory, exe.len() as u32 + 1);
+    // The command line is guest data; an unallocatable argv reports the
+    // documented nonzero failure rather than panicking the host.
+    let Some(name_len) = exe.len().checked_add(1).and_then(|n| u32::try_from(n).ok()) else {
+        return -1;
+    };
+    let Some(name) = kernel32.process_heap.try_alloc(&mut ctx.memory, name_len) else {
+        return -1;
+    };
     ctx.memory[name..][..exe.len()].copy_from_slice(exe.as_bytes());
     ctx.memory[name + exe.len() as u32] = 0;
-    let argv_buf = kernel32.process_heap.alloc(&mut ctx.memory, 8);
+    let Some(argv_buf) = kernel32.process_heap.try_alloc(&mut ctx.memory, 8) else {
+        return -1;
+    };
     ctx.memory.write::<u32>(argv_buf, name);
     ctx.memory.write::<u32>(argv_buf + 4, 0);
-    let envp_buf = kernel32.process_heap.alloc(&mut ctx.memory, 4);
+    let Some(envp_buf) = kernel32.process_heap.try_alloc(&mut ctx.memory, 4) else {
+        return -1;
+    };
     ctx.memory.write::<u32>(envp_buf, 0);
     // A caller that passes out-of-range out-pointers gets a truncated result
     // rather than a host panic.
@@ -67,7 +76,9 @@ const _O_TEXT: u32 = 0x4000;
 #[win32_derive::dllexport(cdecl)]
 pub fn __p__commode(ctx: &mut Context) -> u32 {
     *COMMODE.get_or_init(|| {
-        let addr = lock().process_heap.alloc(&mut ctx.memory, 4);
+        let Some(addr) = lock().process_heap.try_alloc(&mut ctx.memory, 4) else {
+            return 0;
+        };
         ctx.memory.write::<u32>(addr, 0);
         addr
     })
@@ -76,7 +87,9 @@ pub fn __p__commode(ctx: &mut Context) -> u32 {
 #[win32_derive::dllexport(cdecl)]
 pub fn __p__fmode(ctx: &mut Context) -> u32 {
     *FMODE.get_or_init(|| {
-        let addr = lock().process_heap.alloc(&mut ctx.memory, 4);
+        let Some(addr) = lock().process_heap.try_alloc(&mut ctx.memory, 4) else {
+            return 0;
+        };
         ctx.memory.write::<u32>(addr, _O_TEXT);
         addr
     })
