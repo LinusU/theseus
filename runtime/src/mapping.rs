@@ -50,15 +50,18 @@ impl Mappings {
 
     /// Allocate a guest-visible mapping, bounded by `limit` (typically the size
     /// of emulated memory). Returns `None` when no gap can hold the mapping
-    /// rather than handing out an address that cannot be backed.
+    /// rather than handing out an address that cannot be backed. The base is
+    /// always page-aligned: Windows hands out aligned addresses for
+    /// VirtualAlloc-family allocations, and a prior unaligned reservation
+    /// (e.g. the 4-byte IAT) must not skew the next base.
     pub fn try_alloc(&mut self, desc: String, size: u32, limit: u32) -> Option<u32> {
         let size = round_to_page(size);
         let mut prev_end = 0u64;
         for (i, mapping) in self.mappings.iter().enumerate() {
-            let end = prev_end + size as u64;
-            if (mapping.addr as u64).saturating_sub(prev_end) >= size as u64 && end <= limit as u64
-            {
-                let addr = prev_end as u32;
+            let start = prev_end.next_multiple_of(0x1000);
+            let end = start + size as u64;
+            if (mapping.addr as u64).saturating_sub(start) >= size as u64 && end <= limit as u64 {
+                let addr = u32::try_from(start).ok()?;
                 self.mappings.insert(
                     i,
                     Mapping {
@@ -72,11 +75,12 @@ impl Mappings {
             }
             prev_end = mapping.addr as u64 + mapping.size as u64;
         }
-        let end = prev_end.checked_add(size as u64)?;
+        let start = prev_end.next_multiple_of(0x1000);
+        let end = start.checked_add(size as u64)?;
         if end > limit as u64 {
             return None;
         }
-        let addr = u32::try_from(prev_end).ok()?;
+        let addr = u32::try_from(start).ok()?;
         self.mappings.push(Mapping {
             desc,
             addr,
@@ -213,6 +217,17 @@ mod tests {
         assert_eq!(
             mappings.vec().iter().map(|m| m.addr).collect::<Vec<_>>(),
             [0x0, 0x1000, 0x2000, 0x3000]
+        );
+    }
+
+    #[test]
+    fn try_alloc_aligns_the_base_past_an_unaligned_reservation() {
+        // The 4-byte IAT reservation leaves an unaligned tail; the next
+        // allocation must still start on a page boundary.
+        let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000), mapping(0x1000, 4)]);
+        assert_eq!(
+            mappings.try_alloc("aligned".into(), 0x100, 0x10000),
+            Some(0x2000)
         );
     }
 
