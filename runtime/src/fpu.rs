@@ -369,6 +369,9 @@ impl FPU {
     }
 
     pub fn store_env(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        // Real hardware zeroes the reserved bytes of the 28-byte image;
+        // leaving them stale would leak unrelated emulated memory.
+        memory.write_bytes(addr, &[0u8; 28]);
         memory.write(addr, self.control);
         memory.write(addr.saturating_add(4), self.status());
         memory.write(addr.saturating_add(8), self.tag_word());
@@ -381,6 +384,7 @@ impl FPU {
     }
 
     pub fn store_env16(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        memory.write_bytes(addr, &[0u8; 14]);
         memory.write(addr, self.control);
         memory.write(addr.saturating_add(2), self.status());
         memory.write(addr.saturating_add(4), self.tag_word());
