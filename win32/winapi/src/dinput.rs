@@ -1103,7 +1103,7 @@ mod tests {
     fn set_and_get_property_reject_null_pointers() {
         let mut ctx = context();
         lock().devices.insert(
-            0x2100,
+            0x2200,
             Device {
                 kind: DeviceKind::Joystick,
                 acquired: false,
@@ -1116,13 +1116,13 @@ mod tests {
         // SetProperty must not read or store from a null-page pdiph.
         ctx.memory[0x500..][..20].fill(0xAB);
         assert_eq!(
-            IDirectInputDevice::SetProperty(&mut ctx, 0x2100, DIPROP_DEADZONE, 0x500),
+            IDirectInputDevice::SetProperty(&mut ctx, 0x2200, DIPROP_DEADZONE, 0x500),
             DIERR_INVALIDPARAM
         );
         assert!(
             !lock()
                 .devices
-                .get(&0x2100)
+                .get(&0x2200)
                 .unwrap()
                 .properties
                 .contains_key(&DIPROP_DEADZONE)
@@ -1131,7 +1131,7 @@ mod tests {
         // GetProperty (BUFFERSIZE branch) must not write through a null-page pdiph.
         ctx.memory[0x500..][..8].fill(0xCD);
         assert_eq!(
-            IDirectInputDevice::GetProperty(&mut ctx, 0x2100, DIPROP_BUFFERSIZE, 0x500),
+            IDirectInputDevice::GetProperty(&mut ctx, 0x2200, DIPROP_BUFFERSIZE, 0x500),
             E_POINTER
         );
         assert_eq!(&ctx.memory.bytes[0x500..0x508], &[0xCD; 8]);
