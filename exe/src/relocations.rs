@@ -53,7 +53,9 @@ pub fn apply_relocs(
         for entry in iter_pod::<u16>(body) {
             let etype = entry >> 12;
             let ofs = entry & 0x0FFF;
-            let addr = addr + ofs as u32;
+            // A malformed block VirtualAddress can sit near u32::MAX; the
+            // entry offset must not overflow it.
+            let addr = addr.wrapping_add(ofs as u32);
             match etype {
                 0 => {} // skip
                 3 => {
