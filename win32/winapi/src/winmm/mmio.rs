@@ -200,7 +200,7 @@ pub fn mciSendCommandA(
             0
         };
         if let Some(field) = dwParam2.checked_add(4) {
-            let _ = crate::Ptr::<u32>::new(field).write(&mut ctx.memory, value);
+            crate::Ptr::<u32>::new(field).write(&mut ctx.memory, value);
         }
     }
     0

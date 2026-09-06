@@ -179,7 +179,7 @@ const DIERR_OBJECTNOTFOUND: u32 = make_dierror(0x02);
 
 fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
     if crate::ddraw::guest_range(ctx, addr, std::mem::size_of::<GUID>() as u32) {
-        let _ = Ptr::<GUID>::new(addr).write(&mut ctx.memory, *guid);
+        Ptr::<GUID>::new(addr).write(&mut ctx.memory, *guid);
     }
 }
 
@@ -195,7 +195,7 @@ fn write_cstr(ctx: &mut Context, addr: u32, s: &[u8]) {
     {
         dst.copy_from_slice(s);
     }
-    let _ = Ptr::<u8>::new(addr + s.len() as u32).write(&mut ctx.memory, 0);
+    Ptr::<u8>::new(addr + s.len() as u32).write(&mut ctx.memory, 0);
 }
 
 /// Which physical device a created IDirectInputDevice stands for.

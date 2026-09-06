@@ -79,7 +79,7 @@ pub fn GetDlgItemInt(
 ) -> u32 {
     // lpTranslated receives FALSE on failure; an unusable pointer is ignored.
     if crate::ddraw::guest_range(ctx, lpTranslated.addr, std::mem::size_of::<u32>() as u32) {
-        let _ = lpTranslated.write(&mut ctx.memory, 0);
+        lpTranslated.write(&mut ctx.memory, 0);
     }
     0
 }
@@ -97,7 +97,7 @@ pub fn GetDlgItemTextW(
     if cchMax > 0
         && crate::ddraw::guest_range(ctx, lpString.addr, std::mem::size_of::<u16>() as u32)
     {
-        let _ = lpString.write(&mut ctx.memory, 0);
+        lpString.write(&mut ctx.memory, 0);
     }
     0
 }

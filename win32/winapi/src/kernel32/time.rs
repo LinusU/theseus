@@ -57,7 +57,7 @@ fn get_time(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
     ) {
         return;
     }
-    let _ = lpSystemTime.write(&mut ctx.memory, current_system_time());
+    lpSystemTime.write(&mut ctx.memory, current_system_time());
 }
 
 #[win32_derive::dllexport]

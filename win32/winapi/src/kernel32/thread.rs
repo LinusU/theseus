@@ -355,7 +355,7 @@ pub fn InterlockedIncrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
         return 0;
     };
     let value = value.wrapping_add(1);
-    let _ = Addend.write(&mut ctx.memory, value);
+    Addend.write(&mut ctx.memory, value);
     value
 }
 
@@ -365,7 +365,7 @@ pub fn InterlockedDecrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
         return 0;
     };
     let value = value.wrapping_sub(1);
-    let _ = Addend.write(&mut ctx.memory, value);
+    Addend.write(&mut ctx.memory, value);
     value
 }
 

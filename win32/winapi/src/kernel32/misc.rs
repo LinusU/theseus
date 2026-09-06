@@ -52,7 +52,7 @@ pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
         wProcessorLevel: 6,
         ..Default::default()
     };
-    let _ = lpSystemInfo.write(&mut ctx.memory, info);
+    lpSystemInfo.write(&mut ctx.memory, info);
 }
 
 fn processor_feature_present(feature: u32) -> bool {
@@ -177,7 +177,7 @@ pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
         cb: std::mem::size_of::<STARTUPINFOA>() as u32,
         ..Default::default()
     };
-    let _ = lpStartupInfo.write(&mut ctx.memory, info);
+    lpStartupInfo.write(&mut ctx.memory, info);
 }
 
 #[win32_derive::dllexport]
@@ -219,7 +219,7 @@ pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
         dwAvailVirtual: capacity,
         ..Default::default()
     };
-    let _ = lpBuffer.write(&mut ctx.memory, status);
+    lpBuffer.write(&mut ctx.memory, status);
 }
 
 #[win32_derive::dllexport]
