@@ -42,7 +42,9 @@ pub fn acmMetrics(
         }
     };
     if pMetric != 0 {
-        ctx.memory.write::<u32>(pMetric, value);
+        // An out-of-range out-pointer truncates the result rather than
+        // panicking the host.
+        let _ = crate::Ptr::<u32>::new(pMetric).write(&mut ctx.memory, value);
     }
     MMSYSERR_NOERROR
 }
