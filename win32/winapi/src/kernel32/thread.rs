@@ -317,7 +317,12 @@ pub fn EnterCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
                 state.depth += 1;
                 return;
             }
-            Some(_) => state = section.available.wait(state).unwrap(),
+            Some(_) => {
+                state = section
+                    .available
+                    .wait(state)
+                    .unwrap_or_else(|e| e.into_inner())
+            }
         }
     }
 }

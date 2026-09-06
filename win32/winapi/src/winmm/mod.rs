@@ -81,7 +81,9 @@ fn winmm_main(ctx: &mut Context) {
 
         if now < next {
             let delta = std::time::Duration::from_millis((next - now) as u64);
-            let (l, _) = TIMER_COND.wait_timeout(lock, delta).unwrap();
+            let (l, _) = TIMER_COND
+                .wait_timeout(lock, delta)
+                .unwrap_or_else(|e| e.into_inner());
             lock = l;
             continue;
         }

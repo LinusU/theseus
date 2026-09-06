@@ -73,7 +73,7 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
                 signaled,
                 std::time::Duration::from_millis(dwMilliseconds as u64),
             )
-            .unwrap();
+            .unwrap_or_else(|e| e.into_inner());
         signaled = new_signaled;
         if result.timed_out() {
             return WAIT_TIMEOUT;
