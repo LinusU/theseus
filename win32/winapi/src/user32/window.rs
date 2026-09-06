@@ -439,19 +439,26 @@ pub fn MoveWindow(
 }
 
 #[win32_derive::dllexport]
-pub fn UpdateWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
-    // A dirty window gets a WM_PAINT from the next queue pump, which is
-    // what UpdateWindow's synchronous paint achieves here.
-    let state = state();
-    let window = state.window.borrow();
-    let Some(window) = window.as_ref() else {
-        return false;
+pub fn UpdateWindow(ctx: &mut Context, hWnd: HWND) -> bool {
+    let dirty = {
+        let state = state();
+        let window = state.window.borrow();
+        let Some(window) = window.as_ref() else {
+            return false;
+        };
+        let window = window.borrow();
+        if window.hwnd != hWnd {
+            return false;
+        }
+        window.dirty
     };
-    let mut window = window.borrow_mut();
-    if window.hwnd != hWnd {
-        return false;
+    // Windows sends WM_PAINT synchronously when the window has an update
+    // region, bypassing the message queue; the wndproc's BeginPaint (or
+    // DefWindowProc's default handling) clears the dirty flag.
+    if dirty {
+        use super::message::{SendMessageW, WM};
+        SendMessageW(ctx, hWnd, WM::PAINT as u32, 0, 0);
     }
-    window.dirty = true;
     true
 }
 
@@ -484,8 +491,15 @@ pub fn DefWindowProcW(
 
     match msg {
         WM::PAINT => {
+            // The default handler validates the update region; with no
+            // BeginPaint/EndPaint from the wndproc, flush the guest pixels
+            // to the host surface ourselves.
             if let Some(window) = state().window.borrow().as_ref() {
-                window.borrow_mut().dirty = false;
+                let mut window = window.borrow_mut();
+                if window.hwnd == hWnd {
+                    window.dirty = false;
+                    window.flush(ctx);
+                }
             }
         }
         WM::ERASEBKGND => {
@@ -1241,10 +1255,11 @@ pub fn ValidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>) -> bool 
 #[cfg(test)]
 mod tests {
     use super::{
-        GetWindowTextA, HWND, RegisterClassA, SetWindowTextA, UnregisterClassA, UnregisterClassW,
-        Window,
+        DefWindowProcW, GetWindowTextA, HWND, RegisterClassA, SetWindowTextA, UnregisterClassA,
+        UnregisterClassW, UpdateWindow, Window,
     };
     use crate::Ptr;
+    use crate::user32::WM;
     use runtime::{BlockCache, CPU, ContFn, Context, Memory};
     use std::{cell::RefCell, rc::Rc};
 
@@ -1359,6 +1374,85 @@ mod tests {
         ctx.memory[0x4000..][..8].fill(0xAB);
         assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0x500), 16), 0);
         assert_eq!(&ctx.memory.bytes[0x4000..0x4008], &[0xAB; 8]);
+
+        super::state().window.borrow_mut().take();
+    }
+
+    fn test_window(hwnd: u32, dirty: bool) {
+        let host_window: host::Window = unsafe { std::mem::zeroed() };
+        let window = Rc::new(RefCell::new(Window {
+            hwnd: HWND::from_raw(hwnd),
+            style: 0,
+            ex_style: 0,
+            dirty,
+            title: "Test".into(),
+            enabled: true,
+            visible: false,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            pixels: None,
+            host: host_window,
+            surface: None,
+        }));
+        super::state().window.borrow_mut().replace(window);
+    }
+
+    fn window_dirty() -> bool {
+        super::state()
+            .window
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .dirty
+    }
+
+    #[test]
+    fn def_window_proc_paint_clears_the_update_region() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        test_window(1, true);
+
+        // A mismatched hwnd leaves the update region alone.
+        assert_eq!(
+            DefWindowProcW(&mut ctx, HWND::from_raw(2), Ok(WM::PAINT), 0, 0),
+            0
+        );
+        assert!(window_dirty());
+
+        // The real hwnd validates it without a BeginPaint/EndPaint pair.
+        DefWindowProcW(&mut ctx, HWND::from_raw(1), Ok(WM::PAINT), 0, 0);
+        assert!(!window_dirty());
+
+        super::state().window.borrow_mut().take();
+    }
+
+    #[test]
+    fn update_window_paints_only_a_dirty_window() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        test_window(1, true);
+
+        // A mismatched hwnd and a missing window both fail.
+        assert!(!UpdateWindow(&mut ctx, HWND::from_raw(2)));
+        super::state().window.borrow_mut().take();
+        assert!(!UpdateWindow(&mut ctx, HWND::from_raw(1)));
+
+        // A clean window needs no dispatch; a dirty one dispatches
+        // WM_PAINT synchronously (a test context has no wndproc, so the
+        // send is a no-op and the flag remains for the queue pump).
+        test_window(1, false);
+        assert!(UpdateWindow(&mut ctx, HWND::from_raw(1)));
+        test_window(1, true);
+        assert!(UpdateWindow(&mut ctx, HWND::from_raw(1)));
+        assert!(window_dirty());
 
         super::state().window.borrow_mut().take();
     }
