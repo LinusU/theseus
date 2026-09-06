@@ -45,6 +45,12 @@ pub const CLSID_DirectMusicLoader: GUID = GUID::new(
     0x11d1,
     [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
 );
+pub const CLSID_DirectMusicSegment: GUID = GUID::new(
+    0xd2ac_2882,
+    0xb39b,
+    0x11d1,
+    [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
 
 const IID_IDirectMusicPerformance: GUID = GUID::new(
     0x07d4_3d03,
@@ -81,6 +87,24 @@ const IID_IDirectMusicComposer: GUID = GUID::new(
     0xb39b,
     0x11d1,
     [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
+const IID_IDirectMusicSegment: GUID = GUID::new(
+    0xf960_29a2,
+    0x4282,
+    0x11d2,
+    [0x87, 0x17, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
+const IID_IDirectMusicSegment2: GUID = GUID::new(
+    0xd388_94d1,
+    0xc052,
+    0x11d2,
+    [0x87, 0x2f, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
+const IID_IDirectMusicSegment8: GUID = GUID::new(
+    0xc678_4488,
+    0x41a3,
+    0x418f,
+    [0xaa, 0x15, 0xb3, 0x50, 0x93, 0xba, 0x42, 0xd4],
 );
 
 /// The GUID the single emulated port reports through `EnumPort` and
@@ -741,6 +765,148 @@ pub mod port {
     );
 }
 
+pub mod segment {
+    use super::*;
+
+    query_interface!(
+        QueryInterface_stub,
+        &[
+            IID_IDirectMusicSegment,
+            IID_IDirectMusicSegment2,
+            IID_IDirectMusicSegment8,
+        ]
+    );
+    stub!(AddRef_stub, 1, 1);
+    stub!(Release_stub, 1, 0);
+
+    stub_out!(GetLength_stub, 2, 1, S_OK, u32);
+    stub!(SetLength_stub, 2);
+    stub_out!(GetRepeats_stub, 2, 1, S_OK, u32);
+    stub!(SetRepeats_stub, 2);
+    stub_out!(GetDefaultResolution_stub, 2, 1, S_OK, u32);
+    stub!(SetDefaultResolution_stub, 2);
+    stub_out!(GetTrack_stub, 5, 4, S_OK, u32);
+    stub_out!(GetTrackGroup_stub, 3, 2, S_OK, u32);
+    stub!(InsertTrack_stub, 3);
+    stub!(RemoveTrack_stub, 2);
+    stub_out!(InitPlay_stub, 4, 1, S_OK, u32);
+    stub_out!(GetGraph_stub, 2, 1, S_OK, u32);
+    stub!(SetGraph_stub, 2);
+    stub!(AddNotificationType_stub, 2);
+    stub!(RemoveNotificationType_stub, 2);
+
+    /// GetParam(this, rguidType, dwGroupBits, dwIndex, mtTime, pmtNext, pParam):
+    /// zero `pmtNext` if provided; leave `pParam` untouched because its size is
+    /// determined by the parameter type.
+    #[allow(non_snake_case)]
+    pub fn GetParam_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let pmt_next = ctx.memory.read::<u32>(esp.wrapping_add(6 * 4));
+        let mut ret = S_OK;
+        if pmt_next != 0
+            && crate::Ptr::<u32>::new(pmt_next)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+        {
+            ret = E_POINTER;
+        }
+        log::debug!("dmusic GetParam (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(8 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    stub!(SetParam_stub, 6);
+    stub_out!(Clone_stub, 4, 3, S_OK, u32);
+    stub!(SetStartPoint_stub, 2);
+    stub_out!(GetStartPoint_stub, 2, 1, S_OK, u32);
+    stub!(SetLoopPoints_stub, 3);
+
+    /// GetLoopPoints(this, pmtStart, pmtEnd): zero both out parameters.
+    #[allow(non_snake_case)]
+    pub fn GetLoopPoints_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let pmt_start = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let pmt_end = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let mut ret = S_OK;
+        for out in [pmt_start, pmt_end] {
+            if out != 0
+                && crate::Ptr::<u32>::new(out)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+            {
+                ret = E_POINTER;
+            }
+        }
+        log::debug!("dmusic GetLoopPoints (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    stub!(SetPChannelsUsed_stub, 3);
+    stub!(SetTrackConfig_stub, 6);
+    stub_out!(GetAudioPathConfig_stub, 2, 1, S_OK, u32);
+    stub_out!(Compose_stub, 5, 4, S_OK, u32);
+    stub!(Download_stub, 2);
+    stub!(Unload_stub, 2);
+
+    vtable!(
+        SEGMENT_VTABLE,
+        get_vtable,
+        0xfafc_5000,
+        [
+            QueryInterface_stub,
+            AddRef_stub,
+            Release_stub,
+            GetLength_stub,
+            SetLength_stub,
+            GetRepeats_stub,
+            SetRepeats_stub,
+            GetDefaultResolution_stub,
+            SetDefaultResolution_stub,
+            GetTrack_stub,
+            GetTrackGroup_stub,
+            InsertTrack_stub,
+            RemoveTrack_stub,
+            InitPlay_stub,
+            GetGraph_stub,
+            SetGraph_stub,
+            AddNotificationType_stub,
+            RemoveNotificationType_stub,
+            GetParam_stub,
+            SetParam_stub,
+            Clone_stub,
+            SetStartPoint_stub,
+            GetStartPoint_stub,
+            SetLoopPoints_stub,
+            GetLoopPoints_stub,
+            SetPChannelsUsed_stub,
+            SetTrackConfig_stub,
+            GetAudioPathConfig_stub,
+            Compose_stub,
+            Download_stub,
+            Unload_stub,
+        ]
+    );
+
+    pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
+        super::create(
+            ctx,
+            riid,
+            ppv,
+            &[
+                IID_IDirectMusicSegment,
+                IID_IDirectMusicSegment2,
+                IID_IDirectMusicSegment8,
+            ],
+            get_vtable,
+        )
+    }
+}
+
 pub mod loader {
     use super::*;
 
@@ -748,9 +914,46 @@ pub mod loader {
     stub!(AddRef_stub, 1, 1);
     stub!(Release_stub, 1, 0);
 
-    // GetObject always fails: there is no .sgt segment loading, so callers
-    // get a clean failure instead of a null object they might call through.
-    stub_out!(GetObject_stub, 4, 3, E_FAIL);
+    /// GetObject(this, pDesc, riid, ppv): create a dummy `IDirectMusicSegment`
+    /// for segment requests so callers like `OpenSegmentFile` can proceed even
+    /// when the underlying `.sgt` file is missing.
+    #[allow(non_snake_case)]
+    pub fn GetObject_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let p_desc = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let riid = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let ppv = ctx.memory.read::<u32>(esp.wrapping_add(16));
+        let mut ret = E_FAIL;
+
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            ret = E_POINTER;
+        } else {
+            let mut wants_segment = false;
+            if let Some(iid) = read_guid(ctx, riid)
+                && (iid == IID_IDirectMusicSegment
+                    || iid == IID_IDirectMusicSegment2
+                    || iid == IID_IDirectMusicSegment8)
+            {
+                wants_segment = true;
+            }
+            if !wants_segment
+                && p_desc >= 0x1000
+                && let Some(class) =
+                    crate::Ptr::<GUID>::new(p_desc.saturating_add(24)).read(&ctx.memory)
+                && class == CLSID_DirectMusicSegment
+            {
+                wants_segment = true;
+            }
+            if wants_segment {
+                ret = super::segment::create(ctx, riid, ppv);
+            }
+        }
+        log::debug!("dmusic loader GetObject (ret={return_addr:#x}) = {ret:#x}");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(5 * 4);
+        ctx.indirect(return_addr)
+    }
 
     stub!(SetObject_stub, 2);
     stub!(SetSearchDirectory_stub, 4);
