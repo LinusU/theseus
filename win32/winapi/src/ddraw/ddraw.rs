@@ -86,6 +86,11 @@ impl DirectDraw {
         // reject dimensions that can never be backed rather than panicking
         // on an out-of-memory or overflowing allocation later.
         const MAX_SURFACE_BYTES: u64 = 64 << 20;
+        const MAX_SURFACE_DIMENSION: u32 = 8192;
+        if width > MAX_SURFACE_DIMENSION || height > MAX_SURFACE_DIMENSION {
+            log::warn!("ddraw: rejecting {width}x{height} surface outside host texture limits");
+            return None;
+        }
         let pixels = width as u64 * height as u64;
         let worst = pixels * u64::from(bytes_per_pixel.max(4));
         if worst > MAX_SURFACE_BYTES {
