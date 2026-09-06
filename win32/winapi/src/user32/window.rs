@@ -495,16 +495,29 @@ pub struct WNDCLASS {
     lpszClassName: u32,
 }
 
+/// A class is registered under a string name or an atom in the low word.
+#[derive(Debug, PartialEq)]
+pub enum ClassName {
+    Atom(u16),
+    Name(String),
+}
+
 pub struct WndClass {
     pub wndproc: runtime::Cont,
     pub background: Option<gdi32::Brush>,
+    /// The name or atom the class was registered under, so GetClassName and
+    /// UnregisterClass can match it.
+    pub name: Option<ClassName>,
+    /// The atom handed out by RegisterClass, also accepted by UnregisterClass.
+    pub atom: u16,
 }
 
 impl State {
-    pub fn register_class(&self, wnd_class: WndClass) -> u16 {
-        *self.wndclass.borrow_mut() = Some(wnd_class);
+    pub fn register_class(&self, mut wnd_class: WndClass) -> u16 {
         let atom = self.next_class_atom.get();
         self.next_class_atom.set(atom + 1);
+        wnd_class.atom = atom;
+        *self.wndclass.borrow_mut() = Some(wnd_class);
         atom
     }
 }
@@ -556,11 +569,15 @@ impl COLOR {
 
 #[win32_derive::dllexport]
 pub fn RegisterClassA(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
-    RegisterClassW(ctx, lpWndClass)
+    register_class(ctx, lpWndClass, false)
 }
 
 #[win32_derive::dllexport]
 pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
+    register_class(ctx, lpWndClass, true)
+}
+
+fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u16 {
     let Some(wndclass) = lpWndClass.read(&ctx.memory) else {
         return 0;
     };
@@ -578,15 +595,62 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
             _ => return 0,
         }
     };
+    // lpszClassName is a string pointer, or an atom in the low word.
+    let name = if wndclass.lpszClassName == 0 {
+        None
+    } else if wndclass.lpszClassName >> 16 == 0 {
+        Some(ClassName::Atom(wndclass.lpszClassName as u16))
+    } else if wide {
+        Some(ClassName::Name(
+            ctx.memory
+                .read_wstr(wndclass.lpszClassName)
+                .to_string_lossy(),
+        ))
+    } else {
+        Some(ClassName::Name(
+            ctx.memory.read_str(wndclass.lpszClassName).to_owned(),
+        ))
+    };
     state().register_class(WndClass {
         wndproc: ctx.indirect(wndclass.lpfnWndProc),
         background,
+        name,
+        atom: 0,
     })
 }
 
+fn unregister_class(ctx: &mut Context, addr: u32, wide: bool) -> bool {
+    let mut slot = state().wndclass.borrow_mut();
+    let Some(class) = slot.as_ref() else {
+        return false;
+    };
+    let matches = if addr >> 16 == 0 {
+        // An atom value matches the atom this class was registered under or
+        // the atom RegisterClass returned.
+        matches!(&class.name, Some(ClassName::Atom(a)) if *a == addr as u16)
+            || class.atom == addr as u16
+    } else {
+        let queried = if wide {
+            ctx.memory.read_wstr(addr).to_string_lossy()
+        } else {
+            ctx.memory.read_str(addr).to_owned()
+        };
+        matches!(&class.name, Some(ClassName::Name(name)) if name.eq_ignore_ascii_case(&queried))
+    };
+    if matches {
+        slot.take();
+    }
+    matches
+}
+
 #[win32_derive::dllexport]
-pub fn UnregisterClassA(_ctx: &mut Context, _lpClassName: Ptr<u8>, _hInstance: HINSTANCE) -> bool {
-    state().wndclass.borrow_mut().take().is_some()
+pub fn UnregisterClassA(ctx: &mut Context, lpClassName: Ptr<u8>, _hInstance: HINSTANCE) -> bool {
+    unregister_class(ctx, lpClassName.addr, false)
+}
+
+#[win32_derive::dllexport]
+pub fn UnregisterClassW(ctx: &mut Context, lpClassName: Ptr<u16>, _hInstance: HINSTANCE) -> bool {
+    unregister_class(ctx, lpClassName.addr, true)
 }
 
 #[repr(C)]
@@ -866,6 +930,67 @@ pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCoun
     copy as i32
 }
 
+fn get_class_name(ctx: &mut Context, hWnd: HWND, addr: u32, nMaxCount: i32, wide: bool) -> i32 {
+    let window = state().window.borrow();
+    let Some(window) = window.as_ref() else {
+        return 0;
+    };
+    if window.borrow().hwnd != hWnd || nMaxCount <= 0 {
+        return 0;
+    }
+    let wndclass = state().wndclass.borrow();
+    let name = match wndclass.as_ref().and_then(|c| c.name.as_ref()) {
+        // An atom-registered class reports the "#atom" atom string.
+        Some(ClassName::Atom(atom)) => format!("#{atom}"),
+        Some(ClassName::Name(name)) => name.clone(),
+        None => return 0,
+    };
+    drop(wndclass);
+    if wide {
+        let units: Vec<u16> = name.encode_utf16().collect();
+        let copy = (nMaxCount as usize - 1).min(units.len());
+        let Some(end) = addr
+            .checked_add((copy as u32 + 1) * 2)
+            .map(|e| e as usize <= ctx.memory.bytes.len())
+        else {
+            return 0;
+        };
+        if addr < 0x1000 || !end {
+            return 0;
+        }
+        for (i, unit) in units[..copy].iter().enumerate() {
+            ctx.memory.write::<u16>(addr + i as u32 * 2, *unit);
+        }
+        ctx.memory.write::<u16>(addr + copy as u32 * 2, 0);
+        copy as i32
+    } else {
+        let bytes = name.as_bytes();
+        let copy = (nMaxCount as usize - 1).min(bytes.len());
+        let end = addr as usize + copy + 1;
+        if addr < 0x1000 || end > ctx.memory.bytes.len() {
+            return 0;
+        }
+        ctx.memory[addr..][..copy].copy_from_slice(&bytes[..copy]);
+        ctx.memory[addr + copy as u32] = 0;
+        copy as i32
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetClassNameA(ctx: &mut Context, hWnd: HWND, lpClassName: Ptr<u8>, nMaxCount: i32) -> i32 {
+    get_class_name(ctx, hWnd, lpClassName.addr, nMaxCount, false)
+}
+
+#[win32_derive::dllexport]
+pub fn GetClassNameW(
+    ctx: &mut Context,
+    hWnd: HWND,
+    lpClassName: Ptr<u16>, /* WSTR */
+    nMaxCount: i32,
+) -> i32 {
+    get_class_name(ctx, hWnd, lpClassName.addr, nMaxCount, true)
+}
+
 #[win32_derive::dllexport]
 pub fn EnableWindow(_ctx: &mut Context, hWnd: HWND, bEnable: bool) -> bool {
     let window = state().window.borrow();
@@ -984,4 +1109,76 @@ pub fn ValidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>) -> bool 
     }
     window.dirty = false;
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RegisterClassA, UnregisterClassA, UnregisterClassW};
+    use crate::Ptr;
+    use runtime::{BlockCache, CPU, ContFn, Context, Memory};
+
+    static BLOCKS: &[(u32, ContFn)] = &[(0x3000, Context::return_from_x86)];
+
+    /// The registered-class slot is process-global; tests that register and
+    /// unregister classes must not interleave.
+    static CLASS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x30000),
+            blocks: BLOCKS,
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    /// WNDCLASS fields: style@0, lpfnWndProc@4, ..., hbrBackground@0x1c,
+    /// lpszMenuName@0x20, lpszClassName@0x24.
+    fn write_wndclass(ctx: &mut Context, addr: u32, name: u32) {
+        ctx.memory.write::<u32>(addr + 4, 0x3000); // lpfnWndProc
+        ctx.memory.write::<u32>(addr + 0x24, name); // lpszClassName
+    }
+
+    // Addresses below 0x10000 read as atoms per MAKEINTRESOURCE, so the test
+    // keeps its buffers above that line.
+    const WNDCLASS_ADDR: u32 = 0x1_4000;
+    const NAME_ADDR: u32 = 0x1_5000;
+    const OTHER_NAME_ADDR: u32 = 0x1_6000;
+
+    #[test]
+    fn unregister_class_matches_name_or_atom() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        ctx.memory[NAME_ADDR..][..10].copy_from_slice(b"TestClass\0");
+        write_wndclass(&mut ctx, WNDCLASS_ADDR, NAME_ADDR);
+
+        let atom = RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR));
+        assert_ne!(atom, 0);
+
+        // A different name must not unregister the class.
+        ctx.memory[NAME_ADDR..][..8].copy_from_slice(b"Other\0\0\0");
+        assert!(!UnregisterClassA(&mut ctx, Ptr::new(NAME_ADDR), 0));
+
+        // The registration atom unregisters it.
+        assert!(UnregisterClassA(&mut ctx, Ptr::new(atom as u32), 0));
+        // Already gone.
+        assert!(!UnregisterClassA(&mut ctx, Ptr::new(atom as u32), 0));
+        assert!(!UnregisterClassW(&mut ctx, Ptr::new(NAME_ADDR), 0));
+    }
+
+    #[test]
+    fn unregister_class_by_name() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        ctx.memory[NAME_ADDR..][..10].copy_from_slice(b"TestClass\0");
+        write_wndclass(&mut ctx, WNDCLASS_ADDR, NAME_ADDR);
+
+        assert_ne!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
+        // Case-insensitive match, like Windows.
+        ctx.memory[OTHER_NAME_ADDR..][..10].copy_from_slice(b"testclass\0");
+        assert!(UnregisterClassA(&mut ctx, Ptr::new(OTHER_NAME_ADDR), 0));
+    }
 }
