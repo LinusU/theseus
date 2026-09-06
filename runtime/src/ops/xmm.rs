@@ -112,11 +112,11 @@ pub fn cvtsi2sd(dst: [u32; 4], src: u32) -> [u32; 4] {
 }
 
 pub fn cvtsd2si(src: [u32; 2]) -> u32 {
-    (qword2(src).round() as i32) as u32
+    cvt_f64_to_i32(qword2(src), false)
 }
 
 pub fn cvttsd2si(src: [u32; 2]) -> u32 {
-    (qword2(src) as i32) as u32
+    cvt_f64_to_i32(qword2(src), true)
 }
 
 pub fn cvtsd2ss(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
@@ -152,11 +152,11 @@ pub fn cvtdq2ps(src: [u32; 4]) -> [u32; 4] {
 }
 
 pub fn cvtps2dq(src: [u32; 4]) -> [u32; 4] {
-    std::array::from_fn(|i| (f32::from_bits(src[i]).round() as i32) as u32)
+    std::array::from_fn(|i| cvt_f32_to_i32(src[i], false) as u32)
 }
 
 pub fn cvttps2dq(src: [u32; 4]) -> [u32; 4] {
-    std::array::from_fn(|i| (f32::from_bits(src[i]) as i32) as u32)
+    std::array::from_fn(|i| cvt_f32_to_i32(src[i], true) as u32)
 }
 
 pub fn cvtdq2pd(src: [u32; 4]) -> [u32; 4] {
@@ -168,8 +168,8 @@ pub fn cvtdq2pd(src: [u32; 4]) -> [u32; 4] {
 
 pub fn cvtpd2dq(src: [u32; 4]) -> [u32; 4] {
     [
-        (qword(src, 0).round() as i32) as u32,
-        (qword(src, 1).round() as i32) as u32,
+        cvt_f64_to_i32(qword(src, 0), false),
+        cvt_f64_to_i32(qword(src, 1), false),
         0,
         0,
     ]
@@ -177,8 +177,8 @@ pub fn cvtpd2dq(src: [u32; 4]) -> [u32; 4] {
 
 pub fn cvttpd2dq(src: [u32; 4]) -> [u32; 4] {
     [
-        (qword(src, 0) as i32) as u32,
-        (qword(src, 1) as i32) as u32,
+        cvt_f64_to_i32(qword(src, 0), true),
+        cvt_f64_to_i32(qword(src, 1), true),
         0,
         0,
     ]
@@ -1048,11 +1048,11 @@ pub fn cvtsi2ss(dst: [u32; 4], src: u32) -> [u32; 4] {
 }
 
 pub fn cvtss2si(src: u32) -> u32 {
-    (f32::from_bits(src).round() as i32) as u32
+    cvt_f32_to_i32(src, false) as u32
 }
 
 pub fn cvttss2si(src: u32) -> u32 {
-    (f32::from_bits(src) as i32) as u32
+    cvt_f32_to_i32(src, true) as u32
 }
 
 pub fn cvtpi2ps(dst: [u32; 4], src: u64) -> [u32; 4] {
@@ -1066,9 +1066,26 @@ pub fn cvtpi2ps(dst: [u32; 4], src: u64) -> [u32; 4] {
     ]
 }
 
+/// Float to signed-int conversion, as the x86 CVT/CVTT family specifies
+/// it: `truncate` picks cvtt's truncation over the MXCSR-default
+/// round-to-nearest-even, and NaN or out-of-i32-range inputs produce the
+/// integer-indefinite value 0x8000_0000, not Rust's `as` semantics
+/// (NaN -> 0, saturating).
+fn cvt_f64_to_i32(f: f64, truncate: bool) -> u32 {
+    let f = if truncate {
+        f.trunc()
+    } else {
+        f.round_ties_even()
+    };
+    // NaN fails the containment test too, which is what we want.
+    if !(-2147483648.0..2147483648.0).contains(&f) {
+        return 0x8000_0000;
+    }
+    f as i32 as u32
+}
+
 fn cvt_f32_to_i32(src: u32, truncate: bool) -> i32 {
-    let f = f32::from_bits(src);
-    if truncate { f as i32 } else { f.round() as i32 }
+    cvt_f64_to_i32(f32::from_bits(src) as f64, truncate) as i32
 }
 
 pub fn cvtps2pi(src: [u32; 2]) -> u64 {
@@ -1388,6 +1405,45 @@ pub fn pmaddwd_xmm(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dwords(x: f64) -> [u32; 2] {
+        let bits = x.to_bits();
+        [bits as u32, (bits >> 32) as u32]
+    }
+
+    fn dwords_array(a: f64, b: f64) -> [u32; 4] {
+        let [a0, a1] = dwords(a);
+        let [b0, b1] = dwords(b);
+        [a0, a1, b0, b1]
+    }
+
+    #[test]
+    fn cvt_to_int_rounds_ties_even_and_reports_indefinite() {
+        // Round-to-nearest-even: 2.5 -> 2 and 3.5 -> 4, not half-up.
+        assert_eq!(cvtsd2si(dwords(2.5)), 2);
+        assert_eq!(cvtsd2si(dwords(3.5)), 4);
+        assert_eq!(cvtss2si(2.5f32.to_bits()), 2);
+        // Truncating forms drop the fraction.
+        assert_eq!(cvttsd2si(dwords(-2.9)), (-2i32) as u32);
+        assert_eq!(cvttss2si(2.9f32.to_bits()), 2);
+        // NaN, infinities, and out-of-range values yield the integer
+        // indefinite value, not Rust's `as` result (0 or saturation).
+        assert_eq!(cvtsd2si(dwords(f64::NAN)), 0x8000_0000);
+        assert_eq!(cvttsd2si(dwords(f64::INFINITY)), 0x8000_0000);
+        assert_eq!(cvtsd2si(dwords(2147483648.0)), 0x8000_0000);
+        // -2^31 exactly is a valid result that happens to share the
+        // indefinite bit pattern.
+        assert_eq!(cvtsd2si(dwords(-2147483648.0)), 0x8000_0000);
+        assert_eq!(cvttss2si(f32::NAN.to_bits()), 0x8000_0000);
+        assert_eq!(
+            cvttps2dq([f32::NAN.to_bits(), 1.9f32.to_bits(), 0, 0]),
+            [0x8000_0000, 1, 0, 0]
+        );
+        assert_eq!(
+            cvttpd2dq(dwords_array(2147483647.9, f64::NEG_INFINITY)),
+            [2147483647, 0x8000_0000, 0, 0]
+        );
+    }
 
     #[test]
     fn pmovmskb_pextrw_pinsrw_move_xmm_word_lanes() {
