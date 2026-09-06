@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use runtime::Context;
 
-use crate::{ddraw::GUID, heap::Heap, kernel32, locked_state::LockedState, user32};
+use crate::{Ptr, ddraw::GUID, heap::Heap, kernel32, locked_state::LockedState, user32};
 
 const GUID_SysMouse: GUID = GUID::new(
     0x6F1D2B60,
@@ -178,17 +178,24 @@ const DIDC_POLLEDDATAFORMAT: u32 = 0x00000008;
 const DIERR_OBJECTNOTFOUND: u32 = make_dierror(0x02);
 
 fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
-    let mut bytes = [0u8; 16];
-    bytes[..4].copy_from_slice(&guid.data1.to_le_bytes());
-    bytes[4..6].copy_from_slice(&guid.data2.to_le_bytes());
-    bytes[6..8].copy_from_slice(&guid.data3.to_le_bytes());
-    bytes[8..].copy_from_slice(&guid.data4);
-    ctx.memory[addr..][..16].copy_from_slice(&bytes);
+    // Ptr::write rejects the null page and out-of-bounds destinations; the
+    // caller is still expected to have validated the destination.
+    let _ = Ptr::<GUID>::new(addr).write(&mut ctx.memory, *guid);
 }
 
 fn write_cstr(ctx: &mut Context, addr: u32, s: &[u8]) {
-    ctx.memory[addr..][..s.len()].copy_from_slice(s);
-    ctx.memory[addr + s.len() as u32] = 0;
+    if addr < 0x1000 {
+        return;
+    }
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(addr as usize..)
+        .and_then(|b| b.get_mut(..s.len()))
+    {
+        dst.copy_from_slice(s);
+    }
+    let _ = Ptr::<u8>::new(addr + s.len() as u32).write(&mut ctx.memory, 0);
 }
 
 /// Which physical device a created IDirectInputDevice stands for.
@@ -1183,5 +1190,33 @@ mod tests {
             IDirectInputDevice::GetDeviceInfo(&mut ctx, 0x2000, 0x1000),
             DIERR_INVALIDPARAM
         );
+    }
+
+    #[test]
+    fn write_guid_and_cstr_reject_null_page() {
+        let mut ctx = context();
+        let guid = GUID {
+            data1: 0x12345678,
+            data2: 0x9abc,
+            data3: 0xdef0,
+            data4: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+        };
+
+        ctx.memory.bytes[0..16].fill(0);
+        super::write_guid(&mut ctx, 0, &guid);
+        super::write_guid(&mut ctx, 0x500, &guid);
+        assert_eq!(&ctx.memory.bytes[0..16], &[0u8; 16]);
+
+        super::write_guid(&mut ctx, 0x1000, &guid);
+        assert_eq!(ctx.memory.read::<GUID>(0x1000), guid);
+
+        ctx.memory.bytes[0x1000..0x1008].fill(0);
+        super::write_cstr(&mut ctx, 0x1000, b"foo");
+        assert_eq!(&ctx.memory.bytes[0x1000..0x1004], b"foo\0");
+
+        ctx.memory.bytes[0..4].fill(0);
+        super::write_cstr(&mut ctx, 0, b"foo");
+        super::write_cstr(&mut ctx, 0x500, b"foo");
+        assert_eq!(&ctx.memory.bytes[0..4], &[0u8; 4]);
     }
 }
