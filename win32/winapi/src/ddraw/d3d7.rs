@@ -1330,7 +1330,11 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        let value = *device.render_states.get(&dwState).unwrap_or(&0);
+        let value = device
+            .render_states
+            .get(&dwState)
+            .copied()
+            .unwrap_or_else(|| default_render_state(dwState));
         if crate::Ptr::<u32>::new(lpdwRenderState)
             .write(&mut ctx.memory, value)
             .is_none()
@@ -2180,6 +2184,29 @@ const HANDLED_TEXTURE_STAGE_STATES: &[u32] = &[
     18, // D3DTSS_MIPFILTER
 ];
 
+/// The D3D7 default for each render state the rasterizer consults. Both
+/// `GetRenderState` and the rasterizer read through this so a save/restore
+/// of an unset state round-trips to the same value the device draws with.
+fn default_render_state(state: u32) -> u32 {
+    match state {
+        // D3D7 defaults: cull CCW; z test on, writes on, less-or-equal.
+        D3DRENDERSTATE_CULLMODE => D3DCULL_CCW,
+        D3DRENDERSTATE_ZENABLE => 1,
+        D3DRENDERSTATE_ZWRITEENABLE => 1,
+        D3DRENDERSTATE_ZFUNC => 4, // D3DCMP_LESSEQUAL
+        // No blending, src=ONE dst=ZERO.
+        D3DRENDERSTATE_ALPHABLENDENABLE => 0,
+        D3DRENDERSTATE_SRCBLEND => 2,  // D3DBLEND_ONE
+        D3DRENDERSTATE_DESTBLEND => 1, // D3DBLEND_ZERO
+        // Alpha test defaults: disabled, D3DCMP_ALWAYS, ref 0.
+        D3DRENDERSTATE_ALPHATESTENABLE => 0,
+        D3DRENDERSTATE_ALPHAFUNC => 8,
+        D3DRENDERSTATE_ALPHAREF => 0,
+        D3DRENDERSTATE_SHADEMODE => 2, // D3DSHADE_GOURAUD
+        _ => 0,
+    }
+}
+
 static WARNED_RENDER_STATES: LazyLock<Mutex<HashSet<u32>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 static WARNED_TEXTURE_STAGE_STATES: LazyLock<Mutex<HashSet<(u32, u32)>>> =
@@ -2449,77 +2476,35 @@ fn rasterize(
         };
         let rt_surface_key = device.render_target;
         let tex = *device.textures.get(&0).unwrap_or(&0);
+        let render_state = |state: u32| {
+            device
+                .render_states
+                .get(&state)
+                .copied()
+                .unwrap_or_else(|| default_render_state(state))
+        };
         // D3D7 defaults: cull CCW; z test on, writes on, less-or-equal.
-        let cull = *device
-            .render_states
-            .get(&D3DRENDERSTATE_CULLMODE)
-            .unwrap_or(&D3DCULL_CCW);
-        let zenable = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ZENABLE)
-            .unwrap_or(&1);
-        let zwrite = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ZWRITEENABLE)
-            .unwrap_or(&1);
-        let zfunc = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ZFUNC)
-            .unwrap_or(&4);
+        let cull = render_state(D3DRENDERSTATE_CULLMODE);
+        let zenable = render_state(D3DRENDERSTATE_ZENABLE);
+        let zwrite = render_state(D3DRENDERSTATE_ZWRITEENABLE);
+        let zfunc = render_state(D3DRENDERSTATE_ZFUNC);
         // D3D7 defaults: no blending, src=ONE dst=ZERO.
-        let alpha_blend = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ALPHABLENDENABLE)
-            .unwrap_or(&0);
-        let src_blend = *device
-            .render_states
-            .get(&D3DRENDERSTATE_SRCBLEND)
-            .unwrap_or(&2);
-        let dst_blend = *device
-            .render_states
-            .get(&D3DRENDERSTATE_DESTBLEND)
-            .unwrap_or(&1);
+        let alpha_blend = render_state(D3DRENDERSTATE_ALPHABLENDENABLE);
+        let src_blend = render_state(D3DRENDERSTATE_SRCBLEND);
+        let dst_blend = render_state(D3DRENDERSTATE_DESTBLEND);
         // Alpha test defaults: disabled, ALWAYS(8), ref 0.
-        let alpha_test = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ALPHATESTENABLE)
-            .unwrap_or(&0);
-        let alpha_func = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ALPHAFUNC)
-            .unwrap_or(&8);
-        let alpha_ref = *device
-            .render_states
-            .get(&D3DRENDERSTATE_ALPHAREF)
-            .unwrap_or(&0);
-        let shade_mode = *device
-            .render_states
-            .get(&D3DRENDERSTATE_SHADEMODE)
-            .unwrap_or(&2);
+        let alpha_test = render_state(D3DRENDERSTATE_ALPHATESTENABLE);
+        let alpha_func = render_state(D3DRENDERSTATE_ALPHAFUNC);
+        let alpha_ref = render_state(D3DRENDERSTATE_ALPHAREF);
+        let shade_mode = render_state(D3DRENDERSTATE_SHADEMODE);
         let flat_shade = shade_mode == D3DSHADE_FLAT;
 
         // Linear fog.  FOGVERTEXMODE=3 selects linear; FOGSTART/FOGEND are
         // stored as u32 bit patterns of an f32.
-        let fog_color = *device
-            .render_states
-            .get(&D3DRENDERSTATE_FOGCOLOR)
-            .unwrap_or(&0);
-        let fog_start = f32::from_bits(
-            *device
-                .render_states
-                .get(&D3DRENDERSTATE_FOGSTART)
-                .unwrap_or(&0),
-        );
-        let fog_end = f32::from_bits(
-            *device
-                .render_states
-                .get(&D3DRENDERSTATE_FOGEND)
-                .unwrap_or(&0),
-        );
-        let fog_vertex_mode = *device
-            .render_states
-            .get(&D3DRENDERSTATE_FOGVERTEXMODE)
-            .unwrap_or(&0);
+        let fog_color = render_state(D3DRENDERSTATE_FOGCOLOR);
+        let fog_start = f32::from_bits(render_state(D3DRENDERSTATE_FOGSTART));
+        let fog_end = f32::from_bits(render_state(D3DRENDERSTATE_FOGEND));
+        let fog_vertex_mode = render_state(D3DRENDERSTATE_FOGVERTEXMODE);
         let fog_linear = fog_vertex_mode == D3DFOG_LINEAR && fog_start < fog_end;
 
         let surfs = state().surf.borrow();
