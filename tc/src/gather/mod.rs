@@ -371,7 +371,9 @@ impl<'a> Traverse<'a> {
     }
 
     /// Search uncovered code ranges for `push ebp; mov ebp, esp` function
-    /// prologues, adding them as candidates.
+    /// prologues, adding them as candidates. `mov ebp, esp` has two valid
+    /// encodings: MSVC emits `8B EC`, but `89 E5` appears in hand-written
+    /// code and other compilers' output.
     fn scan_gaps_for_prologues(&mut self) {
         for gap in self.gaps() {
             let data = self.mem.slice(gap.start, gap.end - gap.start);
@@ -379,7 +381,11 @@ impl<'a> Traverse<'a> {
                 continue;
             }
             for i in 0..data.len() - 2 {
-                if data[i] == 0x55 && data[i + 1] == 0x8b && data[i + 2] == 0xec {
+                let prologue = matches!(
+                    (&data[i], &data[i + 1], &data[i + 2]),
+                    (0x55, 0x8b, 0xec) | (0x55, 0x89, 0xe5)
+                );
+                if prologue {
                     let addr = gap.start + i as u32;
                     self.queue.add_candidate(addr);
                 }
