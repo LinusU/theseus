@@ -3484,6 +3484,39 @@ mod tests {
     }
 
     #[test]
+    fn codegen_xadd_writes_memory_before_updating_the_source_register() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+        // xadd [eax], eax: the destination address depends on the source
+        // register, so the memory write must precede the register update.
+        let bytes = [0x0f, 0xc1, 0x00];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        let write = codegen
+            .buf
+            .find("ctx.memory.write::<u32>(ctx.cpu.regs.eax, xadd_tmp)")
+            .expect("xadd should write the sum to memory");
+        let reg = codegen
+            .buf
+            .find("ctx.cpu.regs.eax = xadd_dst")
+            .expect("xadd should give the source the old destination");
+        assert!(
+            write < reg,
+            "xadd memory write must precede the register update: {}",
+            codegen.buf
+        );
+    }
+
+    #[test]
     fn codegen_handles_all_setcc_conditions() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),

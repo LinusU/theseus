@@ -276,12 +276,22 @@ impl<'a> CodeGen<'a> {
                 assert_eq!(instr.op_count(), 2);
                 let dst = self.get_op(instr, 0);
                 let src = self.get_op(instr, 1);
+                self.line("{");
                 self.line(format!("let xadd_dst = {dst};"));
                 self.line(format!(
                     "let xadd_tmp = add(xadd_dst, {src}, &mut ctx.cpu.flags);"
                 ));
-                self.line(self.set_op(instr, 1, "xadd_dst".into()));
-                self.line(self.set_op(instr, 0, "xadd_tmp".into()));
+                // If the destination is memory its address may use the
+                // source register, so write memory before the register
+                // takes the old destination value (same as xchg).
+                if is_memory_op(instr.op_kind(0)) {
+                    self.line(self.set_op(instr, 0, "xadd_tmp".into()));
+                    self.line(self.set_op(instr, 1, "xadd_dst".into()));
+                } else {
+                    self.line(self.set_op(instr, 1, "xadd_dst".into()));
+                    self.line(self.set_op(instr, 0, "xadd_tmp".into()));
+                }
+                self.line("}");
             }
             Bsf | Bsr => {
                 let func = instr_name(instr);
