@@ -204,7 +204,9 @@ fn find_string(ctx: &Context, hInstance: HINSTANCE, uID: u32) -> Option<&[u8]> {
         }
         block = next;
     }
-    unreachable!()
+    // The block is either exhausted (split_at_checked returns None) or the
+    // index is found; this is a defensive fallback rather than panic.
+    None
 }
 
 fn ansi_string(bytes: &[u8]) -> Vec<u8> {
