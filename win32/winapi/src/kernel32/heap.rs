@@ -246,6 +246,8 @@ mod tests {
     fn heap_realloc_grows_and_preserves() {
         kernel32::ensure_test_state();
         let mut ctx = context();
+        // Each test uses a distinct heap base so parallel tests cannot evict
+        // one another's live-block table through the shared `heaps` map.
         let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
         let hheap = heap.addr;
         lock().heaps.insert(hheap, heap);
@@ -288,7 +290,7 @@ mod tests {
     fn heap_apis_degrade_on_bad_handles() {
         kernel32::ensure_test_state();
         let mut ctx = context();
-        let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
+        let heap = crate::heap::Heap::new(0x200_000, 0x10_000);
         let hheap = heap.addr;
         lock().heaps.insert(hheap, heap);
 
@@ -309,7 +311,7 @@ mod tests {
     fn heap_alloc_rejects_overflowing_sizes() {
         kernel32::ensure_test_state();
         let mut ctx = context();
-        let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
+        let heap = crate::heap::Heap::new(0x300_000, 0x10_000);
         let hheap = heap.addr;
         lock().heaps.insert(hheap, heap);
 
