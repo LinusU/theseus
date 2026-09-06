@@ -492,7 +492,7 @@ impl FPU {
     /// (FOP, the exception pointers, MXCSR, and the XMM registers) are zeroed,
     /// matching the pointer fields in the 28-byte environment image.
     pub fn fxsave(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
-        memory[addr..addr.saturating_add(512)].fill(0);
+        memory.write_bytes(addr, &[0u8; 512]);
         memory.write(addr, self.control);
         memory.write(addr.saturating_add(2), self.status());
         memory.write(addr.saturating_add(4), self.abridged_tag());
