@@ -53,7 +53,9 @@ pub struct Exports {
 const MODULE_HANDLE_BASE: HMODULE = 0xd11_0000;
 
 fn normalize_module_name(name: &str) -> String {
-    let name = name.rsplit(['\\', '/']).next().unwrap();
+    // `rsplit` on a string always yields at least one item, but keep the
+    // original name as a fallback so a malformed/empty string cannot panic.
+    let name = name.rsplit(['\\', '/']).next().unwrap_or(name);
     // Lowercase first: stripping ".dll" before folding case misses "Foo.Dll".
     let name = name.to_ascii_lowercase();
     name.strip_suffix(".dll").unwrap_or(&name).to_string()
