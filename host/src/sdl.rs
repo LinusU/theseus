@@ -6,13 +6,17 @@ use sdl3_sys as sdl;
 
 use crate::{self as host, SingleThreader};
 
+fn sdl_error() -> String {
+    unsafe {
+        std::ffi::CStr::from_ptr(sdl::error::SDL_GetError())
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
 fn check(res: bool) {
     if !res {
-        let err = sdl::error::SDL_GetError();
-        panic!(
-            "SDL error: {}",
-            unsafe { std::ffi::CStr::from_ptr(err) }.to_string_lossy()
-        );
+        panic!("SDL error: {}", sdl_error());
     }
 }
 
@@ -533,11 +537,13 @@ impl AudioStream {
             return;
         }
         unsafe {
-            check(sdl::audio::SDL_PutAudioStreamData(
+            if !sdl::audio::SDL_PutAudioStreamData(
                 self.0,
                 data.as_ptr() as *const _,
                 data.len() as i32,
-            ))
+            ) {
+                log::warn!("SDL_PutAudioStreamData failed: {}", sdl_error());
+            }
         }
     }
 
@@ -546,7 +552,9 @@ impl AudioStream {
             return;
         }
         unsafe {
-            check(sdl::audio::SDL_ResumeAudioStreamDevice(self.0));
+            if !sdl::audio::SDL_ResumeAudioStreamDevice(self.0) {
+                log::warn!("SDL_ResumeAudioStreamDevice failed: {}", sdl_error());
+            }
         }
     }
 
@@ -556,7 +564,9 @@ impl AudioStream {
             return;
         }
         unsafe {
-            check(sdl::audio::SDL_ClearAudioStream(self.0));
+            if !sdl::audio::SDL_ClearAudioStream(self.0) {
+                log::warn!("SDL_ClearAudioStream failed: {}", sdl_error());
+            }
         }
     }
 }
