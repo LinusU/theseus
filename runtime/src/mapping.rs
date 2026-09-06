@@ -207,8 +207,8 @@ mod tests {
         // Real setups always reserve the null page first, so address 0 is
         // never handed out by an alloc.
         let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000), mapping(0x9000, 0x1000)]);
-        let addr = mappings.alloc("test".into(), 0x1000);
-        assert_eq!(addr, 0x1000);
+        let addr = mappings.try_alloc("test".into(), 0x1000, 0x10000);
+        assert_eq!(addr, Some(0x1000));
     }
 
     #[test]

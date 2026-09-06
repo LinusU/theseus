@@ -195,8 +195,8 @@ impl State {
             if !addr.starts_with('0') {
                 continue;
             }
-            let addr = u32::from_str_radix(addr, 16)
-                .map_err(|err| anyhow::anyhow!("{addr:?}: {err}"))?;
+            let addr =
+                u32::from_str_radix(addr, 16).map_err(|err| anyhow::anyhow!("{addr:?}: {err}"))?;
             self.addr_info.insert(
                 addr,
                 AddrInfo {
@@ -225,8 +225,11 @@ impl State {
                 continue;
             }
             if addr == 0 {
-                addr = self.mem.mappings.alloc("vtables".into(), 0x1000);
-                assert!(addr != 0);
+                addr = self
+                    .mem
+                    .mappings
+                    .try_alloc("vtables".into(), 0x1000, self.mem.bytes.len() as u32)
+                    .expect("vtables mapping could not be allocated");
             }
             for (interface, entries) in vtables {
                 module.vtables.push((format!("{dll}::{interface}"), addr));
@@ -261,8 +264,11 @@ impl State {
                     continue;
                 }
                 if addr == 0 {
-                    addr = self.mem.mappings.alloc("vtables".into(), 0x1000);
-                    assert!(addr != 0);
+                    addr = self
+                        .mem
+                        .mappings
+                        .try_alloc("vtables".into(), 0x1000, self.mem.bytes.len() as u32)
+                        .expect("vtables mapping could not be allocated");
                 }
                 module.imports.push(Import {
                     dll: dll.to_string(),
