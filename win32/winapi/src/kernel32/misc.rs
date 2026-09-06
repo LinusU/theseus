@@ -305,7 +305,7 @@ pub fn IsBadCodePtr(ctx: &mut Context, lp: Ptr<()>) -> bool {
 
 #[win32_derive::dllexport]
 pub fn VirtualAlloc(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     lpAddress: Ptr<()>,
     dwSize: u32,
     _flAllocationType: u32, /* VIRTUAL_ALLOCATION_TYPE */
@@ -316,7 +316,13 @@ pub fn VirtualAlloc(
         // memory is always committed, so just say yes.
         return lpAddress.addr;
     }
-    lock().mappings.alloc("VirtualAlloc".into(), dwSize)
+    // A reservation has to fit inside emulated memory; failing with NULL
+    // beats handing out an address no access can reach.
+    let limit = u32::try_from(ctx.memory.bytes.len()).unwrap_or(u32::MAX);
+    lock()
+        .mappings
+        .try_alloc("VirtualAlloc".into(), dwSize, limit)
+        .unwrap_or(0)
     /*
     let memory = sys.memory_mut();
     if lpAddress != 0 {

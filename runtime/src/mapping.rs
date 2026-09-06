@@ -58,6 +58,44 @@ impl Mappings {
         addr
     }
 
+    /// Like `alloc`, but bounded by `limit` (typically the size of emulated
+    /// memory): returns `None` when no gap can hold the mapping rather than
+    /// handing out an address that cannot be backed.
+    pub fn try_alloc(&mut self, desc: String, size: u32, limit: u32) -> Option<u32> {
+        let size = round_to_page(size);
+        let mut prev_end = 0u64;
+        for (i, mapping) in self.mappings.iter().enumerate() {
+            let end = prev_end + size as u64;
+            if (mapping.addr as u64).saturating_sub(prev_end) >= size as u64 && end <= limit as u64
+            {
+                let addr = prev_end as u32;
+                self.mappings.insert(
+                    i,
+                    Mapping {
+                        desc,
+                        addr,
+                        size,
+                        section: false,
+                    },
+                );
+                return Some(addr);
+            }
+            prev_end = mapping.addr as u64 + mapping.size as u64;
+        }
+        let end = prev_end.checked_add(size as u64)?;
+        if end > limit as u64 {
+            return None;
+        }
+        let addr = u32::try_from(prev_end).ok()?;
+        self.mappings.push(Mapping {
+            desc,
+            addr,
+            size,
+            section: false,
+        });
+        Some(addr)
+    }
+
     /// Choose the index into self.mappings to add this mapping, potentially assigning it an address.
     fn insert_index(&self, new_mapping: &mut Mapping) -> usize {
         // A fixed-address reservation must end inside the address space.
@@ -157,5 +195,38 @@ mod tests {
         let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000), mapping(0x9000, 0x1000)]);
         let addr = mappings.alloc("test".into(), 0x1000);
         assert_eq!(addr, 0x1000);
+    }
+
+    #[test]
+    fn try_alloc_respects_the_limit() {
+        let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000)]);
+        assert_eq!(mappings.try_alloc("a".into(), 0x1000, 0x4000), Some(0x1000));
+        assert_eq!(mappings.try_alloc("b".into(), 0x1000, 0x4000), Some(0x2000));
+        assert_eq!(mappings.try_alloc("c".into(), 0x1000, 0x4000), Some(0x3000));
+        // The tail is full; nothing is placed past the limit.
+        assert_eq!(mappings.try_alloc("d".into(), 0x1000, 0x4000), None);
+        assert_eq!(mappings.try_alloc("e".into(), 0x8000, 0x4000), None);
+        assert_eq!(
+            mappings.vec().iter().map(|m| m.addr).collect::<Vec<_>>(),
+            [0x0, 0x1000, 0x2000, 0x3000]
+        );
+    }
+
+    #[test]
+    fn try_alloc_uses_the_first_gap() {
+        let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000), mapping(0x9000, 0x1000)]);
+        assert_eq!(
+            mappings.try_alloc("gap".into(), 0x2000, 0x10000),
+            Some(0x1000)
+        );
+        // The gap can no longer hold this and the tail would exceed the
+        // limit.
+        assert_eq!(mappings.try_alloc("wide".into(), 0x8000, 0xa000), None);
+        // Larger than any gap but still inside the limit: placed on the
+        // tail after the last mapping.
+        assert_eq!(
+            mappings.try_alloc("tail".into(), 0x7000, 0x12000),
+            Some(0xa000)
+        );
     }
 }

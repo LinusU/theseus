@@ -35,7 +35,7 @@ pub fn HeapAlloc(ctx: &mut Context, hHeap: HANDLE, dwFlags: HEAP_FLAGS, dwBytes:
 
 #[win32_derive::dllexport]
 pub fn HeapCreate(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _flOptions: u32, /* HEAP_FLAGS */
     dwInitialSize: u32,
     _dwMaximumSize: u32,
@@ -43,8 +43,13 @@ pub fn HeapCreate(
     // Currently none of the flags will affect behavior, but we might need to revisit this
     // with exceptions or threads support...
     let size = dwInitialSize.max(20 << 20);
+    // The heap's address range has to fit inside emulated memory; report
+    // failure with NULL rather than vending an unbacked region.
+    let limit = u32::try_from(ctx.memory.bytes.len()).unwrap_or(u32::MAX);
     let mut state = kernel32::lock();
-    let addr = state.mappings.alloc("HeapCreate".into(), size);
+    let Some(addr) = state.mappings.try_alloc("HeapCreate".into(), size, limit) else {
+        return 0;
+    };
     let heap = Heap::new(addr, size);
     state.heaps.insert(addr, heap);
     addr
