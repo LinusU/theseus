@@ -22,8 +22,8 @@ pub fn cld(ctx: &mut Context) {
 }
 
 pub fn sahf(ctx: &mut Context) {
-    // This constructs flags from the AH register, but only specific flags.
-    let flags = Flags::from_bits(ctx.cpu.regs.get_ah() as u32).unwrap();
+    // SAHF loads only SF/ZF/AF/PF/CF from AH; reserved bits are ignored.
+    let flags = Flags::from_bits_truncate(ctx.cpu.regs.get_ah() as u32);
     ctx.cpu.flags.set(Flags::SF, flags.contains(Flags::SF));
     ctx.cpu.flags.set(Flags::ZF, flags.contains(Flags::ZF));
     ctx.cpu.flags.set(Flags::AF, flags.contains(Flags::AF));
@@ -105,5 +105,19 @@ mod tests {
         ctx.cpu.regs.set_ah(0x10);
         sahf(&mut ctx);
         assert!(ctx.cpu.flags.contains(Flags::AF));
+    }
+
+    #[test]
+    fn sahf_ignores_reserved_ah_bits() {
+        let mut ctx = context();
+        ctx.cpu.flags = Flags::empty();
+        // lahf leaves bit 1 set; sahf must ignore it rather than panic.
+        ctx.cpu.regs.set_ah(0xd7);
+        sahf(&mut ctx);
+        assert!(
+            ctx.cpu
+                .flags
+                .contains(Flags::SF | Flags::ZF | Flags::AF | Flags::PF | Flags::CF)
+        );
     }
 }
