@@ -70,7 +70,14 @@ pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -
     {
         return false;
     }
-    ctx.memory[lpBuffer.addr..][..name.len()].copy_from_slice(name);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..name.len()))
+    {
+        dst.copy_from_slice(name);
+    }
     ctx.memory.write::<u8>(lpBuffer.addr + name.len() as u32, 0);
     nSize.write(&mut ctx.memory, name.len() as u32);
     true

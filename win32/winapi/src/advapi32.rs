@@ -101,7 +101,14 @@ pub fn GetUserNameA(
     if !crate::ddraw::guest_range(ctx, lpBuffer.addr, name.len() as u32 + 1) {
         return false;
     }
-    ctx.memory[lpBuffer.addr..][..name.len()].copy_from_slice(name);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..name.len()))
+    {
+        dst.copy_from_slice(name);
+    }
     ctx.memory.write::<u8>(lpBuffer.addr + name.len() as u32, 0);
     pcbBuffer.write(&mut ctx.memory, name.len() as u32 + 1);
     true
