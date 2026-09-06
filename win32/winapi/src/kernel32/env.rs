@@ -33,7 +33,14 @@ pub fn GetEnvironmentStrings(ctx: &mut Context) -> u32 {
         // GetEnvironmentStrings returns NULL on failure.
         return 0;
     };
-    ctx.memory[addr..][..block.len()].copy_from_slice(&block);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(addr as usize..)
+        .and_then(|b| b.get_mut(..block.len()))
+    {
+        dst.copy_from_slice(&block);
+    }
     addr
 }
 
@@ -99,8 +106,17 @@ pub fn GetEnvironmentVariableA(
     if !fits {
         return needs;
     }
-    ctx.memory[lpBuffer.addr..][..len as usize].copy_from_slice(value.as_bytes());
-    ctx.memory[lpBuffer.addr + len] = 0;
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..len as usize))
+    {
+        dst.copy_from_slice(value.as_bytes());
+    }
+    if let Some(b) = ctx.memory.bytes.get_mut((lpBuffer.addr + len) as usize) {
+        *b = 0;
+    }
     len
 }
 
