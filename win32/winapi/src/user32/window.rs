@@ -679,9 +679,9 @@ fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u
     let Some(wndclass) = lpWndClass.read(&ctx.memory) else {
         return 0;
     };
-    // A class without a window procedure is invalid; resolving the address
-    // would panic on null.
-    if wndclass.lpfnWndProc == 0 {
+    // A class without a valid window procedure is invalid; resolving a null
+    // or low address would log a missing block and eventually halt.
+    if wndclass.lpfnWndProc < 0x1000 {
         return 0;
     }
     let background = if wndclass.hbrBackground.is_null() {
@@ -1326,6 +1326,22 @@ mod tests {
         // Case-insensitive match, like Windows.
         ctx.memory[OTHER_NAME_ADDR..][..10].copy_from_slice(b"testclass\0");
         assert!(UnregisterClassA(&mut ctx, Ptr::new(OTHER_NAME_ADDR), 0));
+    }
+
+    #[test]
+    fn register_class_rejects_null_and_low_wndproc() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        ctx.memory[NAME_ADDR..][..9].copy_from_slice(b"BadClass\0");
+
+        // Null window procedure.
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 4, 0);
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 0x24, NAME_ADDR);
+        assert_eq!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
+
+        // Low but non-zero window procedure.
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 4, 0x500);
+        assert_eq!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
     }
 
     #[test]
