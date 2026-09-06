@@ -196,8 +196,8 @@ pub fn CreateThread(
     }) else {
         return HANDLE::null();
     };
-    if lpThreadId.addr >= 0x1000 {
-        let _ = lpThreadId.write(&mut ctx.memory, thread_id);
+    if crate::ddraw::guest_range(ctx, lpThreadId.addr, std::mem::size_of::<u32>() as u32) {
+        lpThreadId.write(&mut ctx.memory, thread_id);
     }
     // The caller gets the object handle; returning the thread id here would
     // hand back a value WaitForSingleObject/CloseHandle can't resolve.
