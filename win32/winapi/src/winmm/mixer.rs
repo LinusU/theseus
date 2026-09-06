@@ -216,7 +216,7 @@ pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDe
         return MMSYSERR_INVALPARAM;
     };
     if dwControlID != 1
-        || cChannels != volume.len() as u32
+        || !(1..=volume.len() as u32).contains(&cChannels)
         || cbDetails < 4
         || fdwDetails != 0
         || paDetails < 0x1000
@@ -253,7 +253,7 @@ pub fn mixerSetControlDetails(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDet
         return MMSYSERR_INVALPARAM;
     };
     if dwControlID != 1
-        || cChannels != 2
+        || !(1..=2).contains(&cChannels)
         || cbDetails < 4
         || fdwDetails != 0
         || paDetails < 0x1000
@@ -261,15 +261,18 @@ pub fn mixerSetControlDetails(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDet
     {
         return MMSYSERR_INVALPARAM;
     }
-    let volume = [
-        ctx.memory.read::<u32>(paDetails),
-        ctx.memory.read::<u32>(paDetails + cbDetails),
-    ];
     let mut state = kernel32::lock();
     let Some(kernel32::Object::Mixer(current)) = state.objects.get_mut(hmxobj) else {
         return MMSYSERR_INVALHANDLE;
     };
-    *current = volume;
+    // A caller may write a subset of channels; clamp to the advertised
+    // bounds and leave the rest alone.
+    for channel in 0..cChannels as usize {
+        current[channel] = ctx
+            .memory
+            .read::<u32>(paDetails + channel as u32 * cbDetails)
+            .min(0xffff);
+    }
     MMSYSERR_NOERROR
 }
 
@@ -288,9 +291,11 @@ pub fn mixerOpen(
     if !crate::ddraw::guest_range(ctx, phmx, 4) {
         return MMSYSERR_INVALPARAM;
     }
+    // Start at full volume inside the advertised 0..=0xffff bounds, so a
+    // guest that never calls mixerSetControlDetails reads a sane level.
     let hmx = kernel32::lock()
         .objects
-        .add(kernel32::Object::Mixer([u32::MAX; 2]));
+        .add(kernel32::Object::Mixer([0xffff; 2]));
     ctx.memory.write(phmx, hmx.to_raw());
     MMSYSERR_NOERROR
 }
@@ -309,7 +314,50 @@ pub fn mixerClose(_ctx: &mut Context, hmx: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIXERCONTROL, MIXERLINEA};
+    use super::{
+        MIXERCONTROL, MIXERLINEA, mixerGetControlDetailsA, mixerOpen, mixerSetControlDetails,
+    };
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn mixer_volume_defaults_and_single_channel_writes() {
+        let mut ctx = context();
+        assert_eq!(mixerOpen(&mut ctx, 0x1000, 0, 0, 0, 0), 0);
+        let hmx = ctx.memory.read::<u32>(0x1000);
+
+        // MIXERCONTROLDETAILS at 0x2000 over a two-u32 details buffer.
+        ctx.memory.write::<u32>(0x2000, 24); // cbStruct
+        ctx.memory.write::<u32>(0x2004, 1); // dwControlID
+        ctx.memory.write::<u32>(0x2008, 2); // cChannels
+        ctx.memory.write::<u32>(0x2010, 4); // cbDetails
+        ctx.memory.write::<u32>(0x2014, 0x3000); // paDetails
+
+        // A freshly opened mixer reports full volume, not 0xffffffff.
+        assert_eq!(mixerGetControlDetailsA(&mut ctx, hmx, 0x2000, 0), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xffff);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0xffff);
+
+        // A single-channel set updates only that channel.
+        ctx.memory.write::<u32>(0x2008, 1);
+        ctx.memory.write::<u32>(0x3000, 0x1234);
+        assert_eq!(mixerSetControlDetails(&mut ctx, hmx, 0x2000, 0), 0);
+        ctx.memory.write::<u32>(0x2008, 2);
+        assert_eq!(mixerGetControlDetailsA(&mut ctx, hmx, 0x2000, 0), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x1234);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0xffff);
+    }
 
     #[test]
     fn mixer_line_abi_matches_windows() {
