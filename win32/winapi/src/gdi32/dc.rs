@@ -377,9 +377,13 @@ pub enum R2 {
 }
 
 #[win32_derive::dllexport]
-pub fn SetROP2(_ctx: &mut Context, hdc: HDC, rop2: R2) -> i32 {
+pub fn SetROP2(_ctx: &mut Context, hdc: HDC, rop2: u32) -> i32 {
     let mut state = gdi32::lock();
     let Some(dc) = state.dcs.get_mut(hdc) else {
+        return 0;
+    };
+    let Ok(rop2) = R2::try_from(rop2) else {
+        log::warn!("SetROP2({hdc:?}, {rop2}): unknown R2");
         return 0;
     };
     std::mem::replace(&mut dc.rop2, rop2) as i32
@@ -423,7 +427,7 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
                     COPYPEN => p,
                     MERGEPENNOT => p | !d,
                     MERGEPEN => d | p,
-                    _ => unreachable!(),
+                    _ => return None,
                 },
             },
         })
