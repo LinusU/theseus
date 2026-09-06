@@ -808,15 +808,27 @@ pub mod IDirectInputDevice {
                 else {
                     continue;
                 };
-                let _ = crate::Ptr::new(addr).write(
-                    &mut ctx.memory,
-                    DIDEVICEOBJECTDATA {
-                        dwOfs: event.ofs,
-                        dwData: event.data,
-                        dwTimeStamp: event.time,
-                        dwSequence: event.sequence,
-                    },
-                );
+                if !crate::ddraw::guest_range(
+                    ctx,
+                    addr,
+                    std::mem::size_of::<DIDEVICEOBJECTDATA>() as u32,
+                ) {
+                    continue;
+                }
+                if crate::Ptr::new(addr)
+                    .write(
+                        &mut ctx.memory,
+                        DIDEVICEOBJECTDATA {
+                            dwOfs: event.ofs,
+                            dwData: event.data,
+                            dwTimeStamp: event.time,
+                            dwSequence: event.sequence,
+                        },
+                    )
+                    .is_none()
+                {
+                    continue;
+                }
             }
         }
         let _ = crate::Ptr::<u32>::new(pdwInOut).write(&mut ctx.memory, events.len() as u32);
