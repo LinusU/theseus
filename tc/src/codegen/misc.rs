@@ -134,9 +134,7 @@ impl<'a> CodeGen<'a> {
                     let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
                         let shift = size.trailing_zeros();
                         let bytes = size / 8;
-                        format!(
-                            "{addr}.wrapping_add(((bit as i32 >> {shift}) * {bytes}i32) as u32)"
-                        )
+                        format!("{addr}.wrapping_add((bit >> {shift}).wrapping_mul({bytes}u32))")
                     } else {
                         addr
                     };
