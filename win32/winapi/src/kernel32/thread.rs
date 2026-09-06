@@ -87,17 +87,22 @@ pub fn teb_mut(ctx: &mut Context) -> &mut TEB {
 }
 
 impl kernel32::State {
+    /// Spawn a host thread running `proc` against a fresh guest context.
+    /// Returns the thread's object handle and its thread id — the two are
+    /// different namespaces, and callers that only need success/failure can
+    /// check `.is_some()`.
     pub fn create_thread(
         &mut self,
         ctx: &mut Context,
         name: String,
         proc: impl FnOnce(&mut Context) + Send + 'static,
-    ) -> bool {
+    ) -> Option<(HANDLE, u32)> {
         let handle = self.objects.add(Object::Thread);
+        let thread_id = self.next_thread_id;
         let mut new_ctx = Context {
             cpu: runtime::CPU::default(),
             thread_handle: handle.to_raw(),
-            thread_id: self.next_thread_id,
+            thread_id,
             // See docstring on Memory about the unsafety of sharing memory in this way.
             memory: ctx.memory.unsafe_clone(),
             blocks: ctx.blocks,
@@ -110,7 +115,7 @@ impl kernel32::State {
         // itself.
         if !self.init_thread(&mut new_ctx, teb(ctx).Peb) {
             self.objects.remove(handle);
-            return false;
+            return None;
         }
         if let Err(err) = std::thread::Builder::new()
             .name(name)
@@ -118,9 +123,9 @@ impl kernel32::State {
         {
             log::warn!("create_thread: host spawn failed: {err}");
             self.objects.remove(handle);
-            return false;
+            return None;
         }
-        true
+        Some((handle, thread_id))
     }
 
     // shared between the process initial thread and create_thread
@@ -165,20 +170,22 @@ pub fn CreateThread(
     lpStartAddress: Ptr<()>,
     lpParameter: Ptr<()>,
     _dwCreationFlags: u32, /* THREAD_CREATION_FLAGS */
-    _lpThreadId: Ptr<u32>,
+    lpThreadId: Ptr<u32>,
 ) -> HANDLE {
     let mut lock = kernel32::lock();
-    let id = lock.next_thread_id;
-    let name = format!("thread {}@{:x}", id, lpStartAddress.addr);
-    let spawned = lock.create_thread(ctx, name, move |ctx| {
+    let name = format!("thread {}@{:x}", lock.next_thread_id, lpStartAddress.addr);
+    let Some((handle, thread_id)) = lock.create_thread(ctx, name, move |ctx| {
         let f = ctx.indirect(lpStartAddress.addr);
         ctx.call32_x86(f, vec![lpParameter.addr]);
-    });
-    if spawned {
-        HANDLE::from_raw(id)
-    } else {
-        HANDLE::null()
+    }) else {
+        return HANDLE::null();
+    };
+    if lpThreadId.addr != 0 {
+        let _ = lpThreadId.write(&mut ctx.memory, thread_id);
     }
+    // The caller gets the object handle; returning the thread id here would
+    // hand back a value WaitForSingleObject/CloseHandle can't resolve.
+    handle
 }
 
 #[win32_derive::dllexport]

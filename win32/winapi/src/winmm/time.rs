@@ -106,9 +106,11 @@ pub fn timeSetEvent(
     };
 
     if need_spawn
-        && !kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
-            winmm_main(ctx);
-        })
+        && kernel32::lock()
+            .create_thread(ctx, "winmm".into(), |ctx| {
+                winmm_main(ctx);
+            })
+            .is_none()
     {
         let mut lock = state();
         lock.timers.remove(&id);
