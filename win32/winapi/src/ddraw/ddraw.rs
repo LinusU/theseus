@@ -778,6 +778,7 @@ pub fn blit_copy(
     src_ptr: u32,
     src_rect: Option<RECT>,
     color_key: Option<ColorKey>,
+    dst_color_key: Option<ColorKey>,
 ) -> DD {
     let (src_rc, dst_rc) = {
         let surfaces = state().surf.borrow();
@@ -858,6 +859,7 @@ pub fn blit_copy(
         row_count,
         bpp,
         color_key,
+        dst_color_key,
     );
     dst.present(&mut ctx.memory);
     result
@@ -876,7 +878,8 @@ fn pixel_value(pixel: &[u8], bpp: u32) -> Option<u32> {
 /// Write the staged source rows into a destination surface. `want` is the
 /// requested destination rect, already clipped to `rect`; a different-size
 /// `want` stretches the source nearest-neighbor, matching what `Blt` does
-/// with unequal `lpSrcRect`/`lpDestRect`.
+/// with unequal `lpSrcRect`/`lpDestRect`. A `dst_color_key` writes only
+/// where the existing destination pixel is inside the key range.
 #[allow(clippy::too_many_arguments)]
 fn write_blit(
     memory: &mut Memory,
@@ -889,6 +892,7 @@ fn write_blit(
     src_h: usize,
     bpp: u32,
     color_key: Option<ColorKey>,
+    dst_color_key: Option<ColorKey>,
 ) -> DD {
     let row_bytes = src_w * bpp as usize;
     let dst_w = (want.right - want.left).max(0) as i64;
@@ -912,6 +916,9 @@ fn write_blit(
                     }
                 }
                 let at = addr + dy as u32 * pitch + dx as u32 * bpp;
+                if !dst_key_allows(memory, at, bpp, &dst_color_key) {
+                    continue;
+                }
                 memory[at..][..bpp as usize].copy_from_slice(pixel);
             }
         }
@@ -931,18 +938,23 @@ fn write_blit(
     for i in 0..copy_rows {
         let dst_start = addr + (rect.top + i as i32) as u32 * pitch + rect.left as u32 * bpp;
         let row = &rows[(i + skip_y) * row_bytes + skip_x..][..copy_bytes];
-        match color_key {
-            None => memory[dst_start..][..copy_bytes].copy_from_slice(row),
-            Some(key) => {
+        match (color_key, dst_color_key) {
+            (None, None) => memory[dst_start..][..copy_bytes].copy_from_slice(row),
+            (src_key, dst_key) => {
                 for (x, pixel) in row.chunks_exact(bpp as usize).enumerate() {
-                    let Some(value) = pixel_value(pixel, bpp) else {
-                        log::warn!("colorkey blit at {bpp} bytes per pixel");
-                        return DD::OK;
-                    };
-                    if key.matches(value) {
-                        continue;
+                    if let Some(key) = &src_key {
+                        let Some(value) = pixel_value(pixel, bpp) else {
+                            log::warn!("colorkey blit at {bpp} bytes per pixel");
+                            return DD::OK;
+                        };
+                        if key.matches(value) {
+                            continue;
+                        }
                     }
                     let at = dst_start + x as u32 * bpp;
+                    if !dst_key_allows(memory, at, bpp, &dst_key) {
+                        continue;
+                    }
                     memory[at..][..bpp as usize].copy_from_slice(pixel);
                 }
             }
@@ -951,11 +963,29 @@ fn write_blit(
     DD::OK
 }
 
+/// A destination color key lets the blit write only where the existing
+/// pixel is inside the key range.
+fn dst_key_allows(memory: &Memory, at: u32, bpp: u32, dst_color_key: &Option<ColorKey>) -> bool {
+    let Some(key) = dst_color_key else {
+        return true;
+    };
+    pixel_value(&memory[at..][..bpp as usize], bpp).is_some_and(|v| key.matches(v))
+}
+
 pub fn surface_src_color_key(surface: u32) -> Option<ColorKey> {
     let surfaces = state().surf.borrow();
     let key = surfaces.get(&surface)?.borrow().src_color_key;
     if key.is_none() {
         log::warn!("blit asked for a source color key, but none is set");
+    }
+    key
+}
+
+pub fn surface_dst_color_key(surface: u32) -> Option<ColorKey> {
+    let surfaces = state().surf.borrow();
+    let key = surfaces.get(&surface)?.borrow().dst_color_key;
+    if key.is_none() {
+        log::warn!("blit asked for a destination color key, but none is set");
     }
     key
 }
@@ -970,10 +1000,17 @@ pub fn blt(
     lpDDBLTFX: u32,
 ) -> DD {
     const DDBLT_COLORFILL: u32 = 0x0400;
+    const DDBLT_KEYDEST: u32 = 0x2000;
     const DDBLT_KEYSRC: u32 = 0x8000;
+    const DDBLT_KEYDESTOVERRIDE: u32 = 0x0004_0000;
     const DDBLT_KEYSRCOVERRIDE: u32 = 0x0001_0000;
     const DDBLT_WAIT: u32 = 0x0100_0000;
-    const KNOWN: u32 = DDBLT_COLORFILL | DDBLT_KEYSRC | DDBLT_KEYSRCOVERRIDE | DDBLT_WAIT;
+    const KNOWN: u32 = DDBLT_COLORFILL
+        | DDBLT_KEYDEST
+        | DDBLT_KEYSRC
+        | DDBLT_KEYDESTOVERRIDE
+        | DDBLT_KEYSRCOVERRIDE
+        | DDBLT_WAIT;
     if dwFlags & !KNOWN != 0 {
         log::warn!("Blt: ignoring flags {:#x}", dwFlags & !KNOWN);
     }
@@ -1042,10 +1079,32 @@ pub fn blt(
     } else {
         None
     };
+    let dst_color_key = if dwFlags & DDBLT_KEYDESTOVERRIDE != 0 {
+        if !guest_range(ctx, lpDDBLTFX, 92) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        // DDBLTFX.ddckDestColorkey sits just before ddckSrcColorkey.
+        Some(ColorKey {
+            low: ctx.memory.read::<u32>(lpDDBLTFX + 84),
+            high: ctx.memory.read::<u32>(lpDDBLTFX + 88),
+        })
+    } else if dwFlags & DDBLT_KEYDEST != 0 {
+        surface_dst_color_key(this)
+    } else {
+        None
+    };
 
     let src_rect = read_rect(ctx, lpSrcRect);
     log::debug!("Blt: dst={this:#x} src={lpDDSrcSurface:#x} flags={dwFlags:#x}");
-    blit_copy(ctx, this, dst_rect, lpDDSrcSurface, src_rect, color_key)
+    blit_copy(
+        ctx,
+        this,
+        dst_rect,
+        lpDDSrcSurface,
+        src_rect,
+        color_key,
+        dst_color_key,
+    )
 }
 
 pub fn blt_fast(
@@ -1064,11 +1123,11 @@ pub fn blt_fast(
     if dwTrans & !KNOWN != 0 {
         log::warn!("BltFast: ignoring flags {:#x}", dwTrans & !KNOWN);
     }
-    if dwTrans & DDBLTFAST_DESTCOLORKEY != 0 {
-        // Would need to test the destination pixel rather than the source;
-        // no caller has needed it.
-        log::warn!("BltFast: destination color key not supported");
-    }
+    let dst_color_key = if dwTrans & DDBLTFAST_DESTCOLORKEY != 0 {
+        surface_dst_color_key(this)
+    } else {
+        None
+    };
     let color_key = if dwTrans & DDBLTFAST_SRCCOLORKEY != 0 {
         surface_src_color_key(lpDDSrcSurface)
     } else {
@@ -1101,6 +1160,7 @@ pub fn blt_fast(
         lpDDSrcSurface,
         src_rect,
         color_key,
+        dst_color_key,
     )
 }
 
@@ -1190,7 +1250,7 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PALETTEENTRY, RECT, expand_palettized, lock_offset, write_blit};
+    use super::{ColorKey, PALETTEENTRY, RECT, expand_palettized, lock_offset, write_blit};
     use crate::ddraw::types::DD;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -1278,6 +1338,7 @@ mod tests {
                 2,
                 1,
                 4,
+                None,
                 None
             ),
             DD::OK
@@ -1286,6 +1347,45 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(0x4004), 0x11);
         assert_eq!(ctx.memory.read::<u32>(0x4008), 0x22);
         assert_eq!(ctx.memory.read::<u32>(0x400c), 0x22);
+    }
+
+    #[test]
+    fn write_blit_destination_color_key_writes_only_matching_pixels() {
+        let mut ctx = context();
+        let rows = [0x11, 0, 0, 0, 0x22, 0, 0, 0];
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(2, 1);
+        ctx.memory.write::<u32>(0x4000, 0xaa);
+        ctx.memory.write::<u32>(0x4004, 0xbb);
+        // Only the 0xaa pixel is inside the key range, so only it is
+        // replaced.
+        let key = Some(ColorKey {
+            low: 0xaa,
+            high: 0xaa,
+        });
+        assert_eq!(
+            write_blit(
+                &mut ctx.memory,
+                0x4000,
+                8,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                4,
+                None,
+                key
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0x11);
+        assert_eq!(ctx.memory.read::<u32>(0x4004), 0xbb);
     }
 
     #[test]

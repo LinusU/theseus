@@ -1812,7 +1812,15 @@ pub mod IDirect3DDevice7 {
             // mutably, which would conflict with a `Ref` held across the call.
             let dst_addr = dst_level.borrow().addr;
             let src_addr = src_level.borrow().addr;
-            crate::ddraw::ddraw::blit_copy(ctx, dst_addr, Some(dst_rect), src_addr, src_rect, None);
+            crate::ddraw::ddraw::blit_copy(
+                ctx,
+                dst_addr,
+                Some(dst_rect),
+                src_addr,
+                src_rect,
+                None,
+                None,
+            );
 
             let next = {
                 let dst = dst_level.borrow();
