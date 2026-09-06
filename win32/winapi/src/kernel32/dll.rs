@@ -134,6 +134,9 @@ pub fn GetModuleFileNameA(
         return 0;
     }
     let copy = name.len().min(nSize as usize - 1);
+    if !crate::ddraw::guest_range(ctx, lpFilename.addr, copy as u32 + 1) {
+        return 0;
+    }
     ctx.memory[lpFilename.addr..][..copy].copy_from_slice(&name.as_bytes()[..copy]);
     ctx.memory.write::<u8>(lpFilename.addr + copy as u32, 0);
     copy as u32
@@ -186,17 +189,25 @@ pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
     let rsrc_vsize = rsrc.VirtualSize;
     let rsrc_off = rsrc.PointerToRawData as usize;
     let rsrc_len = rsrc_vsize as usize;
-    let rsrc_end = (rsrc_off + rsrc_len).min(buf.len());
-    let rsrc_data = &buf[rsrc_off..rsrc_end];
+    let Some(rsrc_span) = rsrc_rva.checked_add(rsrc_vsize) else {
+        log::warn!("LoadLibrary({filename}): .rsrc range overflows, returning null");
+        return 0;
+    };
+    // A truncated file may declare a section past its own end.
+    let Some(rsrc_data) = buf.get(rsrc_off..rsrc_off.saturating_add(rsrc_len).min(buf.len()))
+    else {
+        log::warn!("LoadLibrary({filename}): .rsrc data out of file bounds, returning null");
+        return 0;
+    };
     let copy_len_u32 = rsrc_data.len().min(rsrc_len) as u32;
 
     let memory_size = ctx.memory.bytes.len() as u32;
     let mut state = lock();
-    let Some(image_base) = state.mappings.try_alloc(
-        format!("{} .rsrc", filename),
-        rsrc_rva + rsrc_vsize,
-        memory_size,
-    ) else {
+    let Some(image_base) =
+        state
+            .mappings
+            .try_alloc(format!("{} .rsrc", filename), rsrc_span, memory_size)
+    else {
         log::warn!("LoadLibrary({filename}): could not allocate .rsrc mapping");
         return 0;
     };
