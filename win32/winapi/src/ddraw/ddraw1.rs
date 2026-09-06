@@ -482,13 +482,13 @@ pub mod IDirectDraw {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
             VTABLE
         });
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -1073,13 +1073,13 @@ pub mod IDirectDrawSurface {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
             VTABLE
         });
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -1204,12 +1204,12 @@ pub mod IDirectDrawPalette {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         log::debug!("ddraw1 object at {addr:#x}, vtable {:#x}", unsafe {
             VTABLE
         });
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }

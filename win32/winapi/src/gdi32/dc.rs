@@ -518,7 +518,7 @@ pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{COLORREF, Font, SetPixel, SIZE, text_extent};
+    use super::{COLORREF, Font, SIZE, SetPixel, text_extent};
     use crate::gdi32;
     use runtime::{BlockCache, CPU, Context, Memory};
 

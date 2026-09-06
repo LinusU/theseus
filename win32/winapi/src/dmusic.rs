@@ -25,6 +25,7 @@ const E_POINTER: u32 = 0x8000_4003;
 const E_NOINTERFACE: u32 = 0x8000_4002;
 const E_FAIL: u32 = 0x8000_4005;
 const E_INVALIDARG: u32 = 0x8007_0057;
+const E_OUTOFMEMORY: u32 = 0x8007_000E;
 
 pub const CLSID_DirectMusicPerformance: GUID = GUID::new(
     0xd2ac_2881,
@@ -199,12 +200,12 @@ macro_rules! stub_out {
 }
 
 /// Allocate a bare COM object: one u32 pointing at the given vtable.
-fn new_object(ctx: &mut Context, vtable: u32) -> u32 {
+fn new_object(ctx: &mut Context, vtable: u32) -> Option<u32> {
     let kernel32 = kernel32::lock();
-    let addr = kernel32.process_heap.alloc(&mut ctx.memory, 4);
+    let addr = kernel32.process_heap.try_alloc(&mut ctx.memory, 4)?;
     drop(kernel32);
     ctx.memory.write(addr, vtable);
-    addr
+    Some(addr)
 }
 
 /// Build a guest vtable once per interface and register its stubs.
@@ -281,12 +282,15 @@ pub mod performance {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
         let pp_direct_music = ctx.memory.read::<u32>(esp + 8);
+        let mut ret = S_OK;
         if pp_direct_music != 0 {
             let vtable = super::directmusic::get_vtable(ctx);
-            let dmusic = new_object(ctx, vtable);
-            ctx.memory.write::<u32>(pp_direct_music, dmusic);
+            match new_object(ctx, vtable) {
+                Some(dmusic) => ctx.memory.write::<u32>(pp_direct_music, dmusic),
+                None => ret = E_OUTOFMEMORY,
+            }
         }
-        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp += 5 * 4;
         ctx.indirect(return_addr)
     }
@@ -471,7 +475,10 @@ pub mod performance {
             return E_NOINTERFACE;
         }
         let vtable = get_vtable(ctx);
-        let obj = new_object(ctx, vtable);
+        let Some(obj) = new_object(ctx, vtable) else {
+            ctx.memory.write::<u32>(ppv, 0);
+            return E_OUTOFMEMORY;
+        };
         ctx.memory.write::<u32>(ppv, obj);
         S_OK
     }
@@ -518,8 +525,10 @@ pub mod directmusic {
             ret = E_POINTER;
         } else {
             let vtable = super::port::get_vtable(ctx);
-            let port = new_object(ctx, vtable);
-            ctx.memory.write::<u32>(pp_port, port);
+            match new_object(ctx, vtable) {
+                Some(port) => ctx.memory.write::<u32>(pp_port, port),
+                None => ret = E_OUTOFMEMORY,
+            }
         }
         ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp += 6 * 4;
@@ -705,7 +714,10 @@ pub mod loader {
             return E_NOINTERFACE;
         }
         let vtable = get_vtable(ctx);
-        let obj = new_object(ctx, vtable);
+        let Some(obj) = new_object(ctx, vtable) else {
+            ctx.memory.write::<u32>(ppv, 0);
+            return E_OUTOFMEMORY;
+        };
         ctx.memory.write::<u32>(ppv, obj);
         S_OK
     }
@@ -779,7 +791,10 @@ pub mod composer {
             return E_NOINTERFACE;
         }
         let vtable = get_vtable(ctx);
-        let obj = new_object(ctx, vtable);
+        let Some(obj) = new_object(ctx, vtable) else {
+            ctx.memory.write::<u32>(ppv, 0);
+            return E_OUTOFMEMORY;
+        };
         ctx.memory.write::<u32>(ppv, obj);
         S_OK
     }

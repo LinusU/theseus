@@ -12,6 +12,7 @@ const E_POINTER: u32 = 0x8000_4003;
 const E_NOINTERFACE: u32 = 0x8000_4002;
 const E_NOTIMPL: u32 = 0x8000_4001;
 const E_FAIL: u32 = 0x8000_4005;
+const E_OUTOFMEMORY: u32 = 0x8007_000E;
 
 /// The canonical `IUnknown` IID (`00000000-0000-0000-C000-000000000046`).
 pub(crate) const IID_IUnknown: GUID = GUID::new(
@@ -137,10 +138,10 @@ pub mod IDirectPlayLobby3A {
         }
     }
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
@@ -165,7 +166,9 @@ pub mod IDirectPlayLobby3A {
         {
             unsafe { init_vtables(ctx) };
             let mut kernel32 = kernel32::lock();
-            let addr = new(ctx, &mut kernel32.process_heap);
+            let Some(addr) = new(ctx, &mut kernel32.process_heap) else {
+                return E_OUTOFMEMORY;
+            };
             drop(kernel32);
             ctx.memory.write::<u32>(ppv, addr);
             S_OK

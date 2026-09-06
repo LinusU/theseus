@@ -62,9 +62,8 @@ impl<T: zerocopy::IntoBytes + zerocopy::Immutable> Ptr<T> {
     }
 }
 
-impl<
-        T: zerocopy::FromBytes + zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
-    > Ptr<T>
+impl<T: zerocopy::FromBytes + zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout>
+    Ptr<T>
 {
     pub fn aligned_mut<'a>(&self, memory: &'a mut Memory) -> Option<&'a mut T> {
         let bytes = memory

@@ -352,7 +352,9 @@ pub fn DirectSoundCreate(ctx: &mut Context, lpGuid: u32, ppDS: u32, pUnkOuter: u
     init();
 
     let mut kernel32 = kernel32::lock();
-    let addr = IDirectSound::new(ctx, &mut kernel32.process_heap);
+    let Some(addr) = IDirectSound::new(ctx, &mut kernel32.process_heap) else {
+        return DSERR_OUTOFMEMORY;
+    };
     drop(kernel32);
     ctx.memory.write(ppDS, addr);
     DS_OK
@@ -457,7 +459,9 @@ pub mod IDirectSound {
         };
 
         let mut kernel32 = kernel32::lock();
-        let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
+        let Some(addr) = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap) else {
+            return DSERR_OUTOFMEMORY;
+        };
         drop(kernel32);
 
         let mut state = lock();
@@ -518,7 +522,9 @@ pub mod IDirectSound {
             return DSERR_INVALIDPARAM;
         }
         let mut kernel32 = kernel32::lock();
-        let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
+        let Some(addr) = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap) else {
+            return DSERR_OUTOFMEMORY;
+        };
         drop(kernel32);
 
         let mut state = lock();
@@ -578,10 +584,10 @@ pub mod IDirectSound {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -1001,10 +1007,10 @@ pub mod IDirectSoundBuffer {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 

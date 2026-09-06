@@ -99,7 +99,11 @@ pub mod IDirectDraw7 {
             }
             if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
                 let mut kernel32 = kernel32::lock();
-                let addr = crate::ddraw::d3d7::IDirect3D7::new(ctx, &mut kernel32.process_heap);
+                let Some(addr) =
+                    crate::ddraw::d3d7::IDirect3D7::new(ctx, &mut kernel32.process_heap)
+                else {
+                    return DD::ERR_OUTOFMEMORY;
+                };
                 drop(kernel32);
                 ctx.memory.write::<u32>(ppv, addr);
                 return DD::OK;
@@ -713,10 +717,10 @@ pub mod IDirectDraw7 {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -1698,9 +1702,9 @@ pub mod IDirectDrawSurface7 {
     }
 
     pub static mut VTABLE: u32 = 0;
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }

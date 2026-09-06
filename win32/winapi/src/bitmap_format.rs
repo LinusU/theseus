@@ -354,10 +354,16 @@ mod tests {
 
     fn core_header(bc_bit_count: u16) -> Vec<u8> {
         vec![
-            0x0c, 0x00, 0x00, 0x00, // bcSize = 12
-            0x01, 0x00, // bcWidth = 1
-            0x01, 0x00, // bcHeight = 1
-            0x01, 0x00, // bcPlanes = 1
+            0x0c,
+            0x00,
+            0x00,
+            0x00, // bcSize = 12
+            0x01,
+            0x00, // bcWidth = 1
+            0x01,
+            0x00, // bcHeight = 1
+            0x01,
+            0x00, // bcPlanes = 1
             bc_bit_count as u8,
             (bc_bit_count >> 8) as u8, // bcBitCount
         ]

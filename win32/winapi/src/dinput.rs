@@ -85,6 +85,7 @@ const fn make_dierror(win32_code: u32) -> u32 {
 const DIERR_DEVICENOTREG: u32 = 0x80040154;
 const DIERR_NOTACQUIRED: u32 = make_dierror(0x0c); // ERROR_INVALID_ACCESS
 const DIERR_INVALIDPARAM: u32 = make_dierror(0x57); // ERROR_INVALID_PARAMETER
+const DIERR_OUTOFMEMORY: u32 = make_dierror(0x0e); // ERROR_OUTOFMEMORY
 const E_POINTER: u32 = 0x80004003;
 const E_NOINTERFACE: u32 = 0x80004002;
 const E_NOTIMPL: u32 = 0x80004001;
@@ -239,7 +240,9 @@ pub fn DirectInputCreateA(
     _punkOuter: u32,
 ) -> u32 {
     let mut kernel32 = kernel32::lock();
-    let ptr = IDirectInput::new(ctx, &mut kernel32.process_heap);
+    let Some(ptr) = IDirectInput::new(ctx, &mut kernel32.process_heap) else {
+        return DIERR_OUTOFMEMORY;
+    };
     drop(kernel32);
     ctx.memory.write::<u32>(ppDI, ptr);
     DI_OK
@@ -261,10 +264,10 @@ pub mod IDirectInput {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 
     #[win32_derive::dllexport]
@@ -310,7 +313,9 @@ pub mod IDirectInput {
             return DIERR_DEVICENOTREG;
         };
         let mut kernel32 = kernel32::lock();
-        let device = IDirectInputDevice::new(ctx, &mut kernel32.process_heap);
+        let Some(device) = IDirectInputDevice::new(ctx, &mut kernel32.process_heap) else {
+            return DIERR_OUTOFMEMORY;
+        };
         drop(kernel32);
         lock().devices.insert(
             device,
@@ -405,10 +410,10 @@ pub mod IDirectInputDevice {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 
     /// The device behind an interface pointer, and whether it's acquired.

@@ -583,7 +583,9 @@ pub mod IDirect3D7 {
             return DD::ERR_INVALIDPARAMS;
         }
         let mut kernel32 = kernel32::lock();
-        let addr = IDirect3DDevice7::new(ctx, &mut kernel32.process_heap);
+        let Some(addr) = IDirect3DDevice7::new(ctx, &mut kernel32.process_heap) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         drop(kernel32);
         d3d_state()
             .devices
@@ -631,7 +633,9 @@ pub mod IDirect3D7 {
             return DD::ERR_GENERIC;
         };
         buf.fill(0);
-        let addr = IDirect3DVertexBuffer7::new(ctx, &mut kernel32.process_heap);
+        let Some(addr) = IDirect3DVertexBuffer7::new(ctx, &mut kernel32.process_heap) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         drop(kernel32);
         d3d_state().vertex_buffers.borrow_mut().insert(
             addr,
@@ -680,10 +684,10 @@ pub mod IDirect3D7 {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -1865,10 +1869,10 @@ pub mod IDirect3DDevice7 {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 
@@ -2020,10 +2024,10 @@ pub mod IDirect3DVertexBuffer7 {
 
     pub static mut VTABLE: u32 = 0;
 
-    pub fn new(ctx: &mut Context, heap: &mut Heap) -> u32 {
-        let addr = heap.alloc(&mut ctx.memory, 4);
+    pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
-        addr
+        Some(addr)
     }
 }
 

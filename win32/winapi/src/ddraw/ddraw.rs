@@ -49,7 +49,7 @@ impl DirectDraw {
     pub fn create_surface(
         &mut self,
         desc: &DDSURFACEDESC2,
-        new_pointer: &mut dyn FnMut() -> u32,
+        new_pointer: &mut dyn FnMut() -> Option<u32>,
     ) -> Option<Rc<RefCell<Surface>>> {
         let is_primary = desc.dwFlags.contains(DDSD::CAPS)
             && desc.ddsCaps.dwCaps.contains(DDSCAPS::PRIMARYSURFACE);
@@ -128,7 +128,7 @@ impl DirectDraw {
         };
 
         let surface = self.create_one_surface(
-            new_pointer(),
+            new_pointer()?,
             &SurfaceParams {
                 is_primary,
                 width,
@@ -164,7 +164,7 @@ impl DirectDraw {
             back_caps.dwCaps &= !DDSCAPS::PRIMARYSURFACE;
             back_caps.dwCaps |= DDSCAPS::BACKBUFFER;
             let back = self.create_one_surface(
-                new_pointer(),
+                new_pointer()?,
                 &SurfaceParams {
                     is_primary: false,
                     width,
@@ -192,7 +192,7 @@ impl DirectDraw {
                 w = (w / 2).max(1);
                 h = (h / 2).max(1);
                 let level = self.create_one_surface(
-                    new_pointer(),
+                    new_pointer()?,
                     &SurfaceParams {
                         is_primary: false,
                         width: w,
@@ -547,7 +547,7 @@ pub fn create_palette(
     flags: u32,
     lp_entries: u32,
     lplp_pal: u32,
-    new_pointer: impl FnOnce(&mut Context) -> u32,
+    new_pointer: impl FnOnce(&mut Context) -> Option<u32>,
 ) -> DD {
     if !guest_range(ctx, lplp_pal, 4) {
         return DD::ERR_INVALIDPARAMS;
@@ -584,7 +584,9 @@ pub fn create_palette(
             Err(_) => return DD::ERR_INVALIDPARAMS,
         }
     };
-    let ptr = new_pointer(ctx);
+    let Some(ptr) = new_pointer(ctx) else {
+        return DD::ERR_OUTOFMEMORY;
+    };
     state()
         .palette
         .borrow_mut()
@@ -636,13 +638,16 @@ pub fn DirectDrawCreateEx(
     }
 
     let mut kernel32 = kernel32::lock();
-    let addr: u32 = match iid {
+    let addr = match iid {
         None => ddraw1::IDirectDraw::new(ctx, &mut kernel32.process_heap),
         Some(ddraw7::IID_IDirectDraw7) => {
             ddraw7::IDirectDraw7::new(ctx, &mut kernel32.process_heap)
         }
         // The emulated object exposes only IDirectDraw and IDirectDraw7.
         Some(_) => return DD::E_NOINTERFACE,
+    };
+    let Some(addr) = addr else {
+        return DD::ERR_OUTOFMEMORY;
     };
 
     let mut ddraw = state().ddraw.borrow_mut();

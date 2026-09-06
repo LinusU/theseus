@@ -6,8 +6,8 @@ use std::{
 use runtime::Context;
 
 use crate::{
+    HANDLE, Ptr,
     kernel32::{self, Object},
-    Ptr, HANDLE,
 };
 
 struct CriticalSection {
