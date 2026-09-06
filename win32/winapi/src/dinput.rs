@@ -178,13 +178,13 @@ const DIDC_POLLEDDATAFORMAT: u32 = 0x00000008;
 const DIERR_OBJECTNOTFOUND: u32 = make_dierror(0x02);
 
 fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
-    // Ptr::write rejects the null page and out-of-bounds destinations; the
-    // caller is still expected to have validated the destination.
-    let _ = Ptr::<GUID>::new(addr).write(&mut ctx.memory, *guid);
+    if crate::ddraw::guest_range(ctx, addr, std::mem::size_of::<GUID>() as u32) {
+        let _ = Ptr::<GUID>::new(addr).write(&mut ctx.memory, *guid);
+    }
 }
 
 fn write_cstr(ctx: &mut Context, addr: u32, s: &[u8]) {
-    if addr < 0x1000 {
+    if !crate::ddraw::guest_range(ctx, addr, s.len() as u32 + 1) {
         return;
     }
     if let Some(dst) = ctx
