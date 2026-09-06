@@ -1821,10 +1821,10 @@ mod tests {
                 &[0xf3, 0x0f, 0x10, 0xc1][..],
                 "ctx.cpu.xmm.xmm0 = movss(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1[0]);",
             ),
-            // movss xmm0, [eax]
+            // movss xmm0, [eax] — a memory source zeroes the upper 96 bits.
             (
                 &[0xf3, 0x0f, 0x10, 0x00],
-                "ctx.cpu.xmm.xmm0 = movss(ctx.cpu.xmm.xmm0, ctx.memory.read::<u32>(ctx.cpu.regs.eax));",
+                "ctx.cpu.xmm.xmm0 = movd_to_xmm(ctx.memory.read::<u32>(ctx.cpu.regs.eax));",
             ),
             // movss [eax], xmm1
             (
@@ -3967,10 +3967,10 @@ mod tests {
                 &[0xf2, 0x0f, 0x10, 0xc1][..],
                 "ctx.cpu.xmm.xmm0 = movsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
             ),
-            // movsd xmm0, [eax]
+            // movsd xmm0, [eax] — a memory source zeroes the upper 64 bits.
             (
                 &[0xf2, 0x0f, 0x10, 0x00],
-                "ctx.cpu.xmm.xmm0 = movsd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+                "ctx.cpu.xmm.xmm0 = movq_to_xmm(ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
             ),
             // movsd [eax], xmm1
             (

@@ -260,14 +260,20 @@ impl<'a> CodeGen<'a> {
 
             // Scalar and cross-lane partial-width moves. MOVSS/MOVNTSS only
             // touch the low 32 bits; MOVHLPS/MOVLHPS move 64 bits between
-            // high/low qwords. MOVSD replaces the low 64 bits.
+            // high/low qwords. MOVSD replaces the low 64 bits. A memory
+            // source zeroes the destination's upper lanes; a register source
+            // preserves them.
             Movss | Movntss => {
                 let src = self.xmm_get_32(instr, 1);
                 let kind = instr.op_kind(0);
                 if kind == iced_x86::OpKind::Register {
-                    let dst = self.xmm_get(instr, 0);
                     let reg = instr.op_register(0);
-                    self.line(format!("{} = movss({}, {});", xmm_reg(reg), dst, src));
+                    if codegen::is_memory_op(instr.op_kind(1)) {
+                        self.line(format!("{} = movd_to_xmm({src});", xmm_reg(reg)));
+                    } else {
+                        let dst = self.xmm_get(instr, 0);
+                        self.line(format!("{} = movss({}, {});", xmm_reg(reg), dst, src));
+                    }
                 } else if codegen::is_memory_op(kind) {
                     let addr = self.gen_addr(instr);
                     self.line(codegen::set_mem("u32".into(), addr, src));
@@ -279,9 +285,13 @@ impl<'a> CodeGen<'a> {
                 let src = self.xmm_get_64(instr, 1);
                 let kind = instr.op_kind(0);
                 if kind == iced_x86::OpKind::Register {
-                    let dst = self.xmm_get(instr, 0);
                     let reg = instr.op_register(0);
-                    self.line(format!("{} = movsd({}, {});", xmm_reg(reg), dst, src));
+                    if codegen::is_memory_op(instr.op_kind(1)) {
+                        self.line(format!("{} = movq_to_xmm({src});", xmm_reg(reg)));
+                    } else {
+                        let dst = self.xmm_get(instr, 0);
+                        self.line(format!("{} = movsd({}, {});", xmm_reg(reg), dst, src));
+                    }
                 } else if codegen::is_memory_op(kind) {
                     let addr = self.gen_addr(instr);
                     self.line(codegen::set_mem("[u32; 2]".into(), addr, src));
