@@ -77,7 +77,11 @@ pub fn timeSetEvent(
     };
 
     let mut state = state();
-    assert!(state.timer.is_none());
+    if state.timer.is_some() {
+        // The emulated model supports a single timer; a second request
+        // reports creation failure rather than panicking the host.
+        return 0;
+    }
     state.timer = Some(Timer {
         period: uDelay,
         next: host::host().time() + uDelay,
@@ -113,6 +117,9 @@ mod tests {
     use crate::dllexport::FromABIParam;
     use runtime::{BlockCache, CPU, Context, Memory};
 
+    /// The timer slot is global, so tests that register one serialize.
+    static TIMER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn context() -> Context {
         Context {
             cpu: CPU::default(),
@@ -127,6 +134,7 @@ mod tests {
 
     #[test]
     fn time_kill_event_clears_only_the_registered_timer() {
+        let _guard = TIMER_LOCK.lock().unwrap();
         let mut ctx = context();
         assert_eq!(timeKillEvent(&mut ctx, 1), 5); // none registered
 
@@ -140,6 +148,27 @@ mod tests {
         assert_eq!(timeKillEvent(&mut ctx, 2), 5); // wrong id
         assert_eq!(timeKillEvent(&mut ctx, 1), 0);
         assert!(state().timer.is_none());
+    }
+
+    #[test]
+    fn time_set_event_fails_while_a_timer_is_registered() {
+        let _guard = TIMER_LOCK.lock().unwrap();
+        let mut ctx = context();
+        state().timer = Some(Timer {
+            period: 10,
+            next: 0,
+            periodic: true,
+            notify: Notify::Function(0),
+            user_data: 0,
+        });
+        // A second timer request reports failure instead of panicking, and
+        // the live registration is left alone.
+        assert_eq!(
+            timeSetEvent(&mut ctx, 10, 0, 0x1234, 0, TIME::from_abi(0)),
+            0
+        );
+        assert!(state().timer.is_some());
+        state().timer = None;
     }
 
     #[test]
