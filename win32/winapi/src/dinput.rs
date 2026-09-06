@@ -350,13 +350,54 @@ pub mod IDirectInput {
 
     #[win32_derive::dllexport]
     pub fn EnumDevices(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         _this: u32,
-        _dwDevType: u32,
-        _callback: u32,
-        _pvRef: u32,
+        dwDevType: u32,
+        lpCallback: u32,
+        pvRef: u32,
         _dwFlags: u32,
     ) -> u32 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpCallback < 0x1000 {
+            return DIERR_INVALIDPARAM;
+        }
+        // The callback returns DIENUM_STOP (0) to end enumeration.
+        for (kind, guid) in [
+            (DeviceKind::Keyboard, GUID_SysKeyboard),
+            (DeviceKind::Mouse, GUID_SysMouse),
+            (DeviceKind::Joystick, GUID_Joystick),
+        ] {
+            let devtype = match kind {
+                DeviceKind::Keyboard => DIDEVTYPE_KEYBOARD,
+                DeviceKind::Mouse => DIDEVTYPE_MOUSE,
+                DeviceKind::Joystick => DIDEVTYPE_JOYSTICK,
+            };
+            // dwDevType filters on the primary device type; 0 means all.
+            if dwDevType != 0 && dwDevType != devtype {
+                continue;
+            }
+            let Some(inst) = kernel32::lock()
+                .process_heap
+                .try_alloc(&mut ctx.memory, DIDEVICEINSTANCE_SIZE as u32)
+            else {
+                return DIERR_OUTOFMEMORY;
+            };
+            ctx.memory[inst..][..DIDEVICEINSTANCE_SIZE].fill(0);
+            IDirectInputDevice::write_device_instance(
+                ctx,
+                inst,
+                DIDEVICEINSTANCE_SIZE as u32,
+                kind,
+                &guid,
+            );
+            let callback = ctx.indirect(lpCallback);
+            ctx.call32_x86(callback, vec![inst, pvRef]);
+            let stop = ctx.cpu.regs.eax == 0;
+            kernel32::lock().process_heap.free(&mut ctx.memory, inst);
+            if stop {
+                break;
+            }
+        }
         DI_OK
     }
 
@@ -911,19 +952,16 @@ pub mod IDirectInputDevice {
         DIERR_OBJECTNOTFOUND
     }
 
-    #[win32_derive::dllexport]
-    pub fn GetDeviceInfo(ctx: &mut Context, this: u32, pdidi: u32) -> u32 {
-        let Some(size) = crate::Ptr::<u32>::new(pdidi).read(&ctx.memory) else {
-            return DIERR_INVALIDPARAM;
-        };
-        let size = size as usize;
-        if !(DIDEVICEINSTANCE_MIN_SIZE..=DIDEVICEINSTANCE_SIZE).contains(&size)
-            || pdidi as usize + size > ctx.memory.bytes.len()
-        {
-            return DIERR_INVALIDPARAM;
-        }
-        let (kind, _) = device(this);
-        let guid = device_guid(this);
+    /// Serialize a DIDEVICEINSTANCE for `kind` at `addr`, with `guid` as the
+    /// instance GUID. The caller has already zeroed and validated `size`
+    /// bytes at `addr`.
+    pub fn write_device_instance(
+        ctx: &mut Context,
+        addr: u32,
+        size: u32,
+        kind: DeviceKind,
+        guid: &GUID,
+    ) {
         let (product, devtype, instance, product_name): (&GUID, u32, &[u8], &[u8]) = match kind {
             DeviceKind::Keyboard => (
                 &GUID_SysKeyboard,
@@ -944,6 +982,28 @@ pub mod IDirectInputDevice {
                 b"Theseus Joystick",
             ),
         };
+        ctx.memory.write::<u32>(addr, size);
+        // The first GUID is the device instance, the second is the product.
+        write_guid(ctx, addr + 4, guid);
+        write_guid(ctx, addr + 20, product);
+        ctx.memory.write::<u32>(addr + 36, devtype);
+        write_cstr(ctx, addr + 40, instance);
+        write_cstr(ctx, addr + 40 + MAX_PATH as u32, product_name);
+    }
+
+    #[win32_derive::dllexport]
+    pub fn GetDeviceInfo(ctx: &mut Context, this: u32, pdidi: u32) -> u32 {
+        let Some(size) = crate::Ptr::<u32>::new(pdidi).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let size = size as usize;
+        if !(DIDEVICEINSTANCE_MIN_SIZE..=DIDEVICEINSTANCE_SIZE).contains(&size)
+            || pdidi as usize + size > ctx.memory.bytes.len()
+        {
+            return DIERR_INVALIDPARAM;
+        }
+        let (kind, _) = device(this);
+        let guid = device_guid(this);
         if let Some(dst) = ctx
             .memory
             .bytes
@@ -952,13 +1012,7 @@ pub mod IDirectInputDevice {
         {
             dst.fill(0);
         }
-        ctx.memory.write::<u32>(pdidi, size as u32);
-        // The first GUID is the device instance, the second is the product.
-        write_guid(ctx, pdidi + 4, &guid);
-        write_guid(ctx, pdidi + 20, product);
-        ctx.memory.write::<u32>(pdidi + 36, devtype);
-        write_cstr(ctx, pdidi + 40, instance);
-        write_cstr(ctx, pdidi + 40 + MAX_PATH as u32, product_name);
+        write_device_instance(ctx, pdidi, size as u32, kind, &guid);
         DI_OK
     }
 
