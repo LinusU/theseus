@@ -312,6 +312,36 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            // SSE3 duplicate loads. MOVDDUP loads a 64-bit source into both
+            // qwords; MOVSLDUP/MOVSHDUP load 128 bits and duplicate the
+            // even/odd dword lanes. (iced-x86 does not decode LDDQU's
+            // F3 0F F0 encoding, so no arm is needed for it.)
+            Movddup => {
+                let src = self.xmm_get_64(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("movddup({src})")));
+            }
+            Movsldup | Movshdup => {
+                let func = instr_name(instr);
+                let src = self.xmm_get(instr, 1);
+                self.line(self.xmm_set(instr, 0, format!("{func}({src})")));
+            }
+
+            // SSE3 horizontal add/sub and add-sub. HADD*/HSUB* combine
+            // adjacent lanes of each operand; ADDSUB* subtracts the even
+            // lanes and adds the odd lanes.
+            Haddps | Hsubps | Haddpd | Hsubpd | Addsubps | Addsubpd => {
+                let func = instr_name(instr);
+                self.line(self.xmm_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.xmm_get(instr, 0),
+                        self.xmm_get(instr, 1)
+                    ),
+                ));
+            }
+
             // Scalar single-precision arithmetic. Only the low 32-bit lane is
             // modified; the three high lanes are preserved.
             Addss | Subss | Mulss | Divss | Minss | Maxss => {

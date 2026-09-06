@@ -959,6 +959,83 @@ pub fn movhpd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     movhps(dst, src)
 }
 
+/// MOVDDUP (SSE3) duplicates the low qword of the source into both
+/// destination qwords.
+pub fn movddup(src: [u32; 2]) -> [u32; 4] {
+    [src[0], src[1], src[0], src[1]]
+}
+
+/// MOVSLDUP (SSE3) duplicates the even-indexed dword lanes.
+pub fn movsldup(src: [u32; 4]) -> [u32; 4] {
+    [src[0], src[0], src[2], src[2]]
+}
+
+/// MOVSHDUP (SSE3) duplicates the odd-indexed dword lanes.
+pub fn movshdup(src: [u32; 4]) -> [u32; 4] {
+    [src[1], src[1], src[3], src[3]]
+}
+
+/// HADDPS (SSE3) adds adjacent float lanes horizontally: the low half of
+/// the result sums adjacent pairs of `a`, the high half sums `b`'s pairs.
+pub fn haddps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let f = f32::from_bits;
+    [
+        (f(a[0]) + f(a[1])).to_bits(),
+        (f(a[2]) + f(a[3])).to_bits(),
+        (f(b[0]) + f(b[1])).to_bits(),
+        (f(b[2]) + f(b[3])).to_bits(),
+    ]
+}
+
+/// HSUBPS (SSE3) subtracts adjacent float lanes horizontally, in the same
+/// lane layout as HADDPS.
+pub fn hsubps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let f = f32::from_bits;
+    [
+        (f(a[0]) - f(a[1])).to_bits(),
+        (f(a[2]) - f(a[3])).to_bits(),
+        (f(b[0]) - f(b[1])).to_bits(),
+        (f(b[2]) - f(b[3])).to_bits(),
+    ]
+}
+
+/// HADDPD (SSE3) adds the two qword lanes of each source: low result is
+/// a0+a1, high result is b0+b1.
+pub fn haddpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    set_qword(&mut out, 0, qword(a, 0) + qword(a, 1));
+    set_qword(&mut out, 1, qword(b, 0) + qword(b, 1));
+    out
+}
+
+/// HSUBPD (SSE3) subtracts the two qword lanes of each source: low result
+/// is a0-a1, high result is b0-b1.
+pub fn hsubpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    set_qword(&mut out, 0, qword(a, 0) - qword(a, 1));
+    set_qword(&mut out, 1, qword(b, 0) - qword(b, 1));
+    out
+}
+
+/// ADDSUBPS (SSE3) subtracts the even float lanes and adds the odd lanes.
+pub fn addsubps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let f = f32::from_bits;
+    [
+        (f(a[0]) - f(b[0])).to_bits(),
+        (f(a[1]) + f(b[1])).to_bits(),
+        (f(a[2]) - f(b[2])).to_bits(),
+        (f(a[3]) + f(b[3])).to_bits(),
+    ]
+}
+
+/// ADDSUBPD (SSE3) subtracts the low qword lane and adds the high lane.
+pub fn addsubpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    set_qword(&mut out, 0, qword(a, 0) - qword(b, 0));
+    set_qword(&mut out, 1, qword(a, 1) + qword(b, 1));
+    out
+}
+
 pub fn low_qword(xmm: [u32; 4]) -> [u32; 2] {
     [xmm[0], xmm[1]]
 }
@@ -1823,5 +1900,34 @@ mod tests {
             pmaddwd_xmm(neg, y),
             [0xffff_fff4, 0xffff_fff4, 0xffff_fff4, 0xffff_fff4]
         );
+    }
+
+    #[test]
+    fn sse3_dup_moves_and_horizontal_ops() {
+        // MOVDDUP copies the low qword into both lanes.
+        assert_eq!(
+            movddup([0x1234_5678, 0x9abc_def0]),
+            [0x1234_5678, 0x9abc_def0, 0x1234_5678, 0x9abc_def0]
+        );
+        // MOVSLDUP/MOVSHDUP duplicate the even/odd dword lanes.
+        assert_eq!(movsldup([1, 2, 3, 4]), [1, 1, 3, 3]);
+        assert_eq!(movshdup([1, 2, 3, 4]), [2, 2, 4, 4]);
+
+        // HADDPS: [a0+a1, a2+a3, b0+b1, b2+b3].
+        let fa = |v: f32| v.to_bits();
+        let a = [fa(1.0), fa(2.0), fa(3.0), fa(4.0)];
+        let b = [fa(10.0), fa(20.0), fa(30.0), fa(40.0)];
+        assert_eq!(haddps(a, b), [fa(3.0), fa(7.0), fa(30.0), fa(70.0)]);
+        assert_eq!(hsubps(a, b), [fa(-1.0), fa(-1.0), fa(-10.0), fa(-10.0)]);
+
+        // HADDPD/HSUBPD: [a0±a1, b0±b1] as f64 lanes.
+        let da = dwords_array(1.5, 2.5);
+        let db = dwords_array(10.0, 20.0);
+        assert_eq!(haddpd(da, db), dwords_array(4.0, 30.0));
+        assert_eq!(hsubpd(da, db), dwords_array(-1.0, -10.0));
+
+        // ADDSUB*: even lanes subtract, odd lanes add.
+        assert_eq!(addsubps(a, b), [fa(-9.0), fa(22.0), fa(-27.0), fa(44.0)]);
+        assert_eq!(addsubpd(da, db), dwords_array(-8.5, 22.5));
     }
 }

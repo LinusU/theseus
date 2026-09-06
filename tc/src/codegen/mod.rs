@@ -4050,6 +4050,84 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_sse3_moves_and_horizontal_ops() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // movddup xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0x12, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = movddup(low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // movddup xmm0, [eax]
+            (
+                &[0xf2, 0x0f, 0x12, 0x00],
+                "ctx.cpu.xmm.xmm0 = movddup(ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movsldup xmm0, xmm1
+            (
+                &[0xf3, 0x0f, 0x12, 0xc1],
+                "ctx.cpu.xmm.xmm0 = movsldup(ctx.cpu.xmm.xmm1);",
+            ),
+            // movshdup xmm0, [eax]
+            (
+                &[0xf3, 0x0f, 0x16, 0x00],
+                "ctx.cpu.xmm.xmm0 = movshdup(ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // haddps xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0x7c, 0xc1],
+                "ctx.cpu.xmm.xmm0 = haddps(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // hsubps xmm0, [eax]
+            (
+                &[0xf2, 0x0f, 0x7d, 0x00],
+                "ctx.cpu.xmm.xmm0 = hsubps(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // haddpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x7c, 0xc1],
+                "ctx.cpu.xmm.xmm0 = haddpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // hsubpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x7d, 0xc1],
+                "ctx.cpu.xmm.xmm0 = hsubpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // addsubps xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0xd0, 0xc1],
+                "ctx.cpu.xmm.xmm0 = addsubps(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // addsubpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0xd0, 0xc1],
+                "ctx.cpu.xmm.xmm0 = addsubpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_sse2_packed_double_arithmetic() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
