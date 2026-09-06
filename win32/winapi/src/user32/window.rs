@@ -28,8 +28,15 @@ pub struct Window {
     pub surface: Option<host::Surface>,
 }
 
+/// The window's pixel buffer comes out of the 64 MiB process heap and the
+/// dims reach the host's real window, so bound them: 0x4000 per side is
+/// the largest square whose RGBA size still fits a u32.
+const MAX_WINDOW_DIM: u32 = 0x4000;
+
 impl Window {
     pub fn resize(&mut self, ctx: &mut Context, width: u32, height: u32) {
+        let width = width.min(MAX_WINDOW_DIM);
+        let height = height.min(MAX_WINDOW_DIM);
         self.width = width;
         self.height = height;
         self.host.resize(width, height);
@@ -49,12 +56,15 @@ impl Window {
         }
     }
 
-    pub fn ensure_pixels(&mut self, ctx: &mut Context) -> u32 {
-        *self.pixels.get_or_insert_with(|| {
-            kernel32::lock()
+    /// The guest address of the window's RGBA backing, allocated on first
+    /// use. `None` when the process heap cannot satisfy the request.
+    pub fn ensure_pixels(&mut self, ctx: &mut Context) -> Option<u32> {
+        if self.pixels.is_none() {
+            self.pixels = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, self.width * self.height * 4)
-        })
+                .try_alloc(&mut ctx.memory, self.width * self.height * 4);
+        }
+        self.pixels
     }
 
     pub fn flush(&mut self, ctx: &mut Context) {
@@ -115,8 +125,8 @@ impl std::fmt::Debug for CW {
 
 impl State {
     fn create_window(&self, args: CreateWindowArgs) -> HWND {
-        let width = args.width.unwrap_or(640);
-        let height = args.height.unwrap_or(480);
+        let width = args.width.unwrap_or(640).min(MAX_WINDOW_DIM);
+        let height = args.height.unwrap_or(480).min(MAX_WINDOW_DIM);
 
         let hwnd = HWND::from_raw(1);
         let window = Rc::new(RefCell::new(Window {
@@ -405,7 +415,9 @@ pub fn DefWindowProcW(
             let Some(color) = wndclass.background.as_ref().and_then(|b| b.0) else {
                 return 0;
             };
-            let pixels = window.ensure_pixels(ctx);
+            let Some(pixels) = window.ensure_pixels(ctx) else {
+                return 0;
+            };
             let pixel_count = (window.width * window.height) as usize;
             let Some(buf) = ctx
                 .memory
@@ -671,7 +683,9 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
         return HDC::null();
     }
 
-    let pixels = window.ensure_pixels(ctx);
+    let Some(pixels) = window.ensure_pixels(ctx) else {
+        return HDC::null();
+    };
     let bitmap = gdi32::Bitmap::new_simple(window.width, window.height, pixels);
 
     let mut lock = gdi32::lock();
