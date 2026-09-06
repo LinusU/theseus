@@ -16,7 +16,8 @@ pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX 
         16, 16, 12, 15, 18, 18, 8, 160, 24, 652, 492, 648, 460, 3, 0, 0, 0, 0, 4, 4, 0, 13, 13, 0,
         0, 1, 0, 0, 640, 480, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    METRICS[nIndex as usize]
+    // Out-of-range indices report 0 like Windows, not a host panic.
+    METRICS.get(nIndex as usize).copied().unwrap_or(0)
 }
 
 #[win32_derive::dllexport]
@@ -586,7 +587,7 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{wsprintfA, wsprintfW};
+    use super::{GetSystemMetrics, wsprintfA, wsprintfW};
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -653,6 +654,16 @@ mod tests {
             read_wstr(&ctx, 0x300),
             "val=42 hey".encode_utf16().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn get_system_metrics_rejects_out_of_range_indices() {
+        let mut ctx = context();
+        assert_eq!(GetSystemMetrics(&mut ctx, 0), 640); // SM_CXSCREEN
+        assert_eq!(GetSystemMetrics(&mut ctx, 1), 480); // SM_CYSCREEN
+        // Indices past the table report 0 like Windows, not a panic.
+        assert_eq!(GetSystemMetrics(&mut ctx, 100), 0);
+        assert_eq!(GetSystemMetrics(&mut ctx, u32::MAX), 0);
     }
 
     #[test]
