@@ -1213,7 +1213,10 @@ pub mod IDirectDrawSurface7 {
         let mut surface = surface.borrow_mut();
         let (width, height, bpp) = (surface.width, surface.height, surface.bytes_per_pixel);
         let bitmap = if bpp == 4 {
-            gdi32::Bitmap::new_simple(width, height, surface.lock(&mut ctx.memory))
+            let Some(pixels) = surface.lock(&mut ctx.memory) else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            gdi32::Bitmap::new_simple(width, height, pixels)
         } else {
             // GDI draws 32-bit, so a DC over a narrower surface gets a scratch
             // RGBA buffer that ReleaseDC converts back.
@@ -1360,7 +1363,9 @@ pub mod IDirectDrawSurface7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let mut surface = surface.borrow_mut();
-        let pixels = surface.lock(&mut ctx.memory);
+        let Some(pixels) = surface.lock(&mut ctx.memory) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         log::debug!(
             "Lock {this:#x} {}x{} {}bpp caps={:#x} -> {pixels:#x}",
             surface.width,
@@ -1411,8 +1416,9 @@ pub mod IDirectDrawSurface7 {
                 .map(|b| b.to_vec())
                 .unwrap_or_default();
             kernel32::lock().process_heap.free(&mut ctx.memory, scratch);
-            let dst = surface.lock(&mut ctx.memory);
-            surface.write_rgba(&mut ctx.memory, &rgba, dst);
+            if let Some(dst) = surface.lock(&mut ctx.memory) {
+                surface.write_rgba(&mut ctx.memory, &rgba, dst);
+            }
         }
         surface.unlock(&mut ctx.memory);
         DD::OK

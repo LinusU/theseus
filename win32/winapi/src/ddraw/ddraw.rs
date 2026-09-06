@@ -334,16 +334,33 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn lock(&mut self, mem: &mut Memory) -> u32 {
+    /// The guest address of the surface's pixels, allocating them from the
+    /// process heap on first use. `None` when the heap cannot satisfy the
+    /// request; surface dimensions are bounded at creation, so this only
+    /// fails when the heap is exhausted.
+    pub fn lock(&mut self, mem: &mut Memory) -> Option<u32> {
         match self.pixels {
-            Some(addr) => addr,
+            Some(addr) => Some(addr),
             None => {
                 let size = self.width * self.height * self.bytes_per_pixel;
-                let addr = kernel32::lock().process_heap.alloc(mem, size);
+                let Some(addr) = kernel32::lock().process_heap.try_alloc(mem, size) else {
+                    log::error!(
+                        "surface {}x{}x{} pixels do not fit the process heap",
+                        self.width,
+                        self.height,
+                        self.bytes_per_pixel
+                    );
+                    return None;
+                };
                 // scribble on pixels so we can see it
-                mem[addr..][..size as usize].fill(0x8F);
+                if let Some(buf) = mem
+                    .bytes
+                    .get_mut(addr as usize..addr as usize + size as usize)
+                {
+                    buf.fill(0x8F);
+                }
                 self.pixels = Some(addr);
-                addr
+                Some(addr)
             }
         }
     }
@@ -745,7 +762,9 @@ pub fn blit_copy(
 
     let (rows, row_bytes, row_count, bpp) = {
         let mut src = src_rc.borrow_mut();
-        let addr = src.lock(&mut ctx.memory);
+        let Some(addr) = src.lock(&mut ctx.memory) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         let bpp = src.bytes_per_pixel;
         let stride = src.width * bpp;
         let rect = src_rect
@@ -766,7 +785,9 @@ pub fn blit_copy(
         log::warn!("blit between different pixel formats");
         return DD::OK;
     }
-    let addr = dst.lock(&mut ctx.memory);
+    let Some(addr) = dst.lock(&mut ctx.memory) else {
+        return DD::ERR_OUTOFMEMORY;
+    };
     let stride = dst.width * bpp;
     let want = dst_rect.unwrap_or_else(|| RECT::from_size(dst.width, dst.height));
     let rect = want.clip_to_size(dst.width, dst.height);
@@ -853,7 +874,9 @@ pub fn blt(
         let rect = dst_rect
             .unwrap_or_else(|| RECT::from_size(dst.width, dst.height))
             .clip_to_size(dst.width, dst.height);
-        let addr = dst.lock(&mut ctx.memory);
+        let Some(addr) = dst.lock(&mut ctx.memory) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         let stride = dst.width * bpp;
         for y in rect.top..rect.bottom {
             let start = addr + y as u32 * stride + rect.left as u32 * bpp;

@@ -966,7 +966,9 @@ pub mod IDirectDrawSurface {
         // A non-null rect locks a subregion; we always hand out the whole
         // surface, matching the ddraw7 Lock below.
 
-        let pixels = surface.lock(&mut ctx.memory);
+        let Some(pixels) = surface.lock(&mut ctx.memory) else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         let desc = DDSURFACEDESC {
             dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
             lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,

@@ -1000,7 +1000,9 @@ pub mod IDirect3DDevice7 {
                     surf: &std::rc::Rc<RefCell<crate::ddraw::Surface>>,
                     write: &dyn Fn(&mut [u8])| {
             let mut surf = surf.borrow_mut();
-            let addr = surf.lock(&mut ctx.memory);
+            let Some(addr) = surf.lock(&mut ctx.memory) else {
+                return;
+            };
             let bpp = surf.bytes_per_pixel;
             let stride = surf.width * bpp;
             let write_range = |ctx: &mut Context, at: u32, len: usize, f: &dyn Fn(&mut [u8])| {
@@ -2528,7 +2530,7 @@ fn rasterize(
                 }
                 let _ = std::fs::write(&path, out);
             }
-            let addr = s.borrow_mut().lock(&mut ctx.memory);
+            let addr = s.borrow_mut().lock(&mut ctx.memory).unwrap_or(0);
             (w, h, bpp, addr)
         } else {
             (0, 0, 0, 0)
@@ -2563,9 +2565,9 @@ fn rasterize(
 
         // Lock the render target now so its pixel address is known.
         drop(rt);
-        let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory);
+        let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory).unwrap_or(0);
         let zbuf_addr = zbuf_surf
-            .map(|z| z.borrow_mut().lock(&mut ctx.memory))
+            .and_then(|z| z.borrow_mut().lock(&mut ctx.memory))
             .unwrap_or(0);
 
         break 'targets Targets {
