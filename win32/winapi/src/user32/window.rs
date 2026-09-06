@@ -520,7 +520,10 @@ pub struct WndClass {
 impl State {
     pub fn register_class(&self, mut wnd_class: WndClass) -> u16 {
         let atom = self.next_class_atom.get();
-        self.next_class_atom.set(atom + 1);
+        // Wrap within the class-atom range rather than overflowing the
+        // counter when a guest registers classes in a loop.
+        self.next_class_atom
+            .set(if atom == u16::MAX { 0xC000 } else { atom + 1 });
         wnd_class.atom = atom;
         *self.wndclass.borrow_mut() = Some(wnd_class);
         atom
