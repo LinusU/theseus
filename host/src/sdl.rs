@@ -677,6 +677,10 @@ fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
         0x28 => (0x50, true),  // VK_DOWN
         0x25 => (0x4b, true),  // VK_LEFT
         0x27 => (0x4d, true),  // VK_RIGHT
+        0x57 => (0x11, false), // 'W'
+        0x41 => (0x1e, false), // 'A'
+        0x53 => (0x1f, false), // 'S'
+        0x44 => (0x20, false), // 'D'
         _ => return None,
     };
     Some(host::KeyMessage {
