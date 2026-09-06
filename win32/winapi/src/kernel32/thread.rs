@@ -6,8 +6,8 @@ use std::{
 use runtime::Context;
 
 use crate::{
-    HANDLE, Ptr,
     kernel32::{self, Object},
+    Ptr, HANDLE,
 };
 
 struct CriticalSection {
@@ -77,13 +77,13 @@ pub struct TEB {
 #[allow(unused)]
 pub fn teb(ctx: &mut Context) -> &TEB {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
-    teb_ptr.aligned_ref(&ctx.memory)
+    teb_ptr.aligned_ref(&ctx.memory).unwrap()
 }
 
 #[allow(unused)]
 pub fn teb_mut(ctx: &mut Context) -> &mut TEB {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
-    teb_ptr.aligned_mut(&mut ctx.memory)
+    teb_ptr.aligned_mut(&mut ctx.memory).unwrap()
 }
 
 impl kernel32::State {
@@ -118,7 +118,9 @@ impl kernel32::State {
             format!("thread {} TEB", ctx.thread_id),
             std::mem::size_of::<TEB>() as u32,
         );
-        let teb = Ptr::<TEB>::new(teb_addr).aligned_mut(&mut ctx.memory);
+        let teb = Ptr::<TEB>::new(teb_addr)
+            .aligned_mut(&mut ctx.memory)
+            .unwrap();
         teb.Peb = peb_addr;
         teb.Tib._Self = teb_addr;
         ctx.cpu.regs.fs_base = teb_addr;

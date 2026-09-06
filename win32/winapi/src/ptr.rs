@@ -38,8 +38,12 @@ impl<T: zerocopy::FromBytes> Ptr<T> {
 }
 
 impl<T: zerocopy::FromBytes + zerocopy::Immutable + zerocopy::KnownLayout> Ptr<T> {
-    pub fn aligned_ref<'a>(&self, memory: &'a Memory) -> &'a T {
-        <T>::ref_from_bytes(&memory[self.addr..][..std::mem::size_of::<T>()]).unwrap()
+    pub fn aligned_ref<'a>(&self, memory: &'a Memory) -> Option<&'a T> {
+        let bytes = memory
+            .bytes
+            .get(self.addr as usize..)
+            .and_then(|bytes| bytes.get(..std::mem::size_of::<T>()))?;
+        <T>::ref_from_bytes(bytes).ok()
     }
 }
 
@@ -58,11 +62,16 @@ impl<T: zerocopy::IntoBytes + zerocopy::Immutable> Ptr<T> {
     }
 }
 
-impl<T: zerocopy::FromBytes + zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout>
-    Ptr<T>
+impl<
+        T: zerocopy::FromBytes + zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
+    > Ptr<T>
 {
-    pub fn aligned_mut<'a>(&self, memory: &'a mut Memory) -> &'a mut T {
-        <T>::mut_from_bytes(&mut memory[self.addr..][..std::mem::size_of::<T>()]).unwrap()
+    pub fn aligned_mut<'a>(&self, memory: &'a mut Memory) -> Option<&'a mut T> {
+        let bytes = memory
+            .bytes
+            .get_mut(self.addr as usize..)
+            .and_then(|bytes| bytes.get_mut(..std::mem::size_of::<T>()))?;
+        <T>::mut_from_bytes(bytes).ok()
     }
 }
 
