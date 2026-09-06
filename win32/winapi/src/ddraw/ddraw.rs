@@ -847,43 +847,107 @@ pub fn blit_copy(
     let stride = dst.width * bpp;
     let want = dst_rect.unwrap_or_else(|| RECT::from_size(dst.width, dst.height));
     let rect = want.clip_to_size(dst.width, dst.height);
+    let result = write_blit(
+        &mut ctx.memory,
+        addr,
+        stride,
+        &want,
+        &rect,
+        &rows,
+        row_bytes / bpp as usize,
+        row_count,
+        bpp,
+        color_key,
+    );
+    dst.present(&mut ctx.memory);
+    result
+}
+
+/// One pixel's value for color-key comparison.
+fn pixel_value(pixel: &[u8], bpp: u32) -> Option<u32> {
+    match bpp {
+        1 => Some(pixel[0] as u32),
+        2 => Some(u16::from_le_bytes(pixel.try_into().unwrap()) as u32),
+        4 => Some(u32::from_le_bytes(pixel.try_into().unwrap())),
+        _ => None,
+    }
+}
+
+/// Write the staged source rows into a destination surface. `want` is the
+/// requested destination rect, already clipped to `rect`; a different-size
+/// `want` stretches the source nearest-neighbor, matching what `Blt` does
+/// with unequal `lpSrcRect`/`lpDestRect`.
+#[allow(clippy::too_many_arguments)]
+fn write_blit(
+    memory: &mut Memory,
+    addr: u32,
+    pitch: u32,
+    want: &RECT,
+    rect: &RECT,
+    rows: &[u8],
+    src_w: usize,
+    src_h: usize,
+    bpp: u32,
+    color_key: Option<ColorKey>,
+) -> DD {
+    let row_bytes = src_w * bpp as usize;
+    let dst_w = (want.right - want.left).max(0) as i64;
+    let dst_h = (want.bottom - want.top).max(0) as i64;
+    if dst_w as usize != src_w || dst_h as usize != src_h {
+        if dst_w <= 0 || dst_h <= 0 || src_w == 0 || src_h == 0 {
+            return DD::OK;
+        }
+        for dy in rect.top..rect.bottom {
+            let sy = ((dy as i64 - want.top as i64) * src_h as i64 / dst_h) as usize;
+            for dx in rect.left..rect.right {
+                let sx = ((dx as i64 - want.left as i64) * src_w as i64 / dst_w) as usize;
+                let pixel = &rows[sy * row_bytes + sx * bpp as usize..][..bpp as usize];
+                if let Some(key) = &color_key {
+                    let Some(value) = pixel_value(pixel, bpp) else {
+                        log::warn!("colorkey blit at {bpp} bytes per pixel");
+                        return DD::OK;
+                    };
+                    if key.matches(value) {
+                        continue;
+                    }
+                }
+                let at = addr + dy as u32 * pitch + dx as u32 * bpp;
+                memory[at..][..bpp as usize].copy_from_slice(pixel);
+            }
+        }
+        return DD::OK;
+    }
+
     // Whatever the clip took off the top and left has to come off the
     // source as well, otherwise the image slides instead of being cropped.
     let skip_x = (rect.left - want.left).max(0) as usize * bpp as usize;
     let skip_y = (rect.top - want.top).max(0) as usize;
-    // No stretching: copy 1:1, clipped to both rects.
     let copy_bytes = row_bytes
         .saturating_sub(skip_x)
         .min(((rect.right - rect.left).max(0) as u32 * bpp) as usize);
-    let copy_rows = row_count
+    let copy_rows = src_h
         .saturating_sub(skip_y)
         .min((rect.bottom - rect.top).max(0) as usize);
     for i in 0..copy_rows {
-        let dst_start = addr + (rect.top + i as i32) as u32 * stride + rect.left as u32 * bpp;
+        let dst_start = addr + (rect.top + i as i32) as u32 * pitch + rect.left as u32 * bpp;
         let row = &rows[(i + skip_y) * row_bytes + skip_x..][..copy_bytes];
         match color_key {
-            None => ctx.memory[dst_start..][..copy_bytes].copy_from_slice(row),
+            None => memory[dst_start..][..copy_bytes].copy_from_slice(row),
             Some(key) => {
                 for (x, pixel) in row.chunks_exact(bpp as usize).enumerate() {
-                    let value = match bpp {
-                        1 => pixel[0] as u32,
-                        2 => u16::from_le_bytes(pixel.try_into().unwrap()) as u32,
-                        4 => u32::from_le_bytes(pixel.try_into().unwrap()),
-                        _ => {
-                            log::warn!("colorkey blit at {bpp} bytes per pixel");
-                            return DD::OK;
-                        }
+                    let Some(value) = pixel_value(pixel, bpp) else {
+                        log::warn!("colorkey blit at {bpp} bytes per pixel");
+                        return DD::OK;
                     };
                     if key.matches(value) {
                         continue;
                     }
                     let at = dst_start + x as u32 * bpp;
-                    ctx.memory[at..][..bpp as usize].copy_from_slice(pixel);
+                    memory[at..][..bpp as usize].copy_from_slice(pixel);
                 }
             }
         }
     }
-    dst.present(&mut ctx.memory);
     DD::OK
 }
 
@@ -1126,7 +1190,8 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PALETTEENTRY, RECT, expand_palettized, lock_offset};
+    use super::{PALETTEENTRY, RECT, expand_palettized, lock_offset, write_blit};
+    use crate::ddraw::types::DD;
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -1187,6 +1252,40 @@ mod tests {
         // An unreadable rect is an error, not the base pointer.
         let oob = ctx.memory.bytes.len() as u32;
         assert_eq!(lock_offset(&ctx, oob, 4, 4, 4, 0x4000), None);
+    }
+
+    #[test]
+    fn write_blit_stretches_a_different_size_rect() {
+        let mut ctx = context();
+        // A 2x1 32bpp source stretched into a 4x1 destination rect doubles
+        // each pixel.
+        let rows = [0x11, 0, 0, 0, 0x22, 0, 0, 0];
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 4,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(4, 1);
+        assert_eq!(
+            write_blit(
+                &mut ctx.memory,
+                0x4000,
+                16,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                4,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0x11);
+        assert_eq!(ctx.memory.read::<u32>(0x4004), 0x11);
+        assert_eq!(ctx.memory.read::<u32>(0x4008), 0x22);
+        assert_eq!(ctx.memory.read::<u32>(0x400c), 0x22);
     }
 
     #[test]
