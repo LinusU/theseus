@@ -261,7 +261,11 @@ pub fn UnhandledExceptionFilter(_ctx: &mut Context, _ExceptionInfo: Ptr<()>) -> 
 pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, lpTopLevelExceptionFilter: Ptr<()>) -> u32 {
     let mut state = lock();
     let previous = state.unhandled_exception_filter;
-    state.unhandled_exception_filter = lpTopLevelExceptionFilter.addr;
+    state.unhandled_exception_filter = if lpTopLevelExceptionFilter.addr >= 0x1000 {
+        lpTopLevelExceptionFilter.addr
+    } else {
+        0
+    };
     previous
 }
 
@@ -269,12 +273,14 @@ pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, lpTopLevelExceptionFilter
 pub fn SetConsoleCtrlHandler(_ctx: &mut Context, HandlerRoutine: Ptr<()>, Add: bool) -> bool {
     let mut state = lock();
     if Add {
-        if HandlerRoutine.addr != 0 && !state.console_ctrl_handlers.contains(&HandlerRoutine.addr) {
+        if HandlerRoutine.addr >= 0x1000
+            && !state.console_ctrl_handlers.contains(&HandlerRoutine.addr)
+        {
             state.console_ctrl_handlers.push(HandlerRoutine.addr);
         }
     } else if HandlerRoutine.addr == 0 {
         state.console_ctrl_handlers.clear();
-    } else {
+    } else if HandlerRoutine.addr >= 0x1000 {
         state
             .console_ctrl_handlers
             .retain(|handler| *handler != HandlerRoutine.addr);
@@ -426,8 +432,8 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GetComputerNameA, GetPrivateProfileStringW, SYSTEM_INFO, lstrcpyW, lstrlenW,
-        processor_feature_present,
+        GetComputerNameA, GetPrivateProfileStringW, SYSTEM_INFO, SetConsoleCtrlHandler,
+        SetUnhandledExceptionFilter, lstrcpyW, lstrlenW, processor_feature_present,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -544,6 +550,26 @@ mod tests {
         );
         assert_eq!(got, 3);
         assert_eq!(&ctx.memory[0x2000..0x2008], b"f\0a\0l\0\0\0");
+    }
+
+    #[test]
+    fn low_pointer_exception_and_console_handlers_are_ignored() {
+        crate::kernel32::ensure_test_state();
+        let mut ctx = context();
+        assert_eq!(SetUnhandledExceptionFilter(&mut ctx, Ptr::new(0x2000)), 0);
+        assert_eq!(
+            SetUnhandledExceptionFilter(&mut ctx, Ptr::new(0x500)),
+            0x2000
+        );
+        assert_eq!(crate::kernel32::lock().unhandled_exception_filter, 0);
+        SetUnhandledExceptionFilter(&mut ctx, Ptr::new(0x3000));
+        assert_eq!(crate::kernel32::lock().unhandled_exception_filter, 0x3000);
+
+        assert!(SetConsoleCtrlHandler(&mut ctx, Ptr::new(0x4000), true));
+        assert!(SetConsoleCtrlHandler(&mut ctx, Ptr::new(0x500), true));
+        assert!(SetConsoleCtrlHandler(&mut ctx, Ptr::new(0x4000), false));
+        assert!(SetConsoleCtrlHandler(&mut ctx, Ptr::new(0x500), false));
+        assert!(crate::kernel32::lock().console_ctrl_handlers.is_empty());
     }
 }
 
