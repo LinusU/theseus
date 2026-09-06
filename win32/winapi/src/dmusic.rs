@@ -11,7 +11,7 @@
 //! arguments; the return address is popped on top of that. i64 arguments count
 //! as two slots.
 
-use runtime::{ContFn, Context};
+use runtime::{ContFn, Context, Memory};
 
 use crate::{
     ddraw::GUID,
@@ -107,6 +107,15 @@ const DMUS_PORT_USER_MODE_SYNTH: u32 = 1;
 
 /// Serialize the emulated port's DMUS_PORTCAPS. The caller initializes
 /// dwSize; fields past the caller's struct size are left alone.
+fn fill_zero(memory: &mut Memory, addr: u32, len: u32) {
+    let Some(end) = (addr as usize).checked_add(len as usize) else {
+        return;
+    };
+    if let Some(dst) = memory.bytes.get_mut(addr as usize..end) {
+        dst.fill(0);
+    }
+}
+
 fn write_port_caps(ctx: &mut Context, caps: u32) -> u32 {
     if caps == 0 {
         return E_POINTER;
@@ -117,8 +126,8 @@ fn write_port_caps(ctx: &mut Context, caps: u32) -> u32 {
     if size < PORTCAPS_FIXED || caps as usize + size as usize > ctx.memory.bytes.len() {
         return E_INVALIDARG;
     }
-    let write = size.min(PORTCAPS_SIZE) as usize;
-    ctx.memory[caps..][..write].fill(0);
+    let write = size.min(PORTCAPS_SIZE);
+    fill_zero(&mut ctx.memory, caps, write);
     ctx.memory.write::<u32>(
         caps + 4,
         DMUS_PC_DLS | DMUS_PC_SOFTWARESYNTH | DMUS_PC_SHAREABLE,
@@ -132,7 +141,7 @@ fn write_port_caps(ctx: &mut Context, caps: u32) -> u32 {
     ctx.memory.write::<u32>(caps + 40, 128); // dwMaxVoices
     ctx.memory.write::<u32>(caps + 44, 32); // dwMaxAudioChannels
     // dwEffectFlags at 48 stays zero: the emulated port has no effects.
-    if write >= PORTCAPS_SIZE as usize {
+    if write >= PORTCAPS_SIZE {
         // MM2 matches on this exact name when looking for the software synth.
         let desc = "Microsoft Synthesizer";
         for (i, unit) in desc.encode_utf16().chain(std::iter::once(0)).enumerate() {
