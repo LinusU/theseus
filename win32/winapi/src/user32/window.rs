@@ -692,6 +692,10 @@ fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u
     if wndclass.lpfnWndProc < 0x1000 {
         return 0;
     }
+    // lpszClassName is required; a null class name fails registration.
+    if wndclass.lpszClassName == 0 {
+        return 0;
+    }
     let background = if wndclass.hbrBackground.is_null() {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {
@@ -707,9 +711,7 @@ fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u
         }
     };
     // lpszClassName is a string pointer, or an atom in the low word.
-    let name = if wndclass.lpszClassName == 0 {
-        None
-    } else if wndclass.lpszClassName >> 16 == 0 {
+    let name = if wndclass.lpszClassName >> 16 == 0 {
         Some(ClassName::Atom(wndclass.lpszClassName as u16))
     } else if wide {
         Some(ClassName::Name(
@@ -1349,6 +1351,11 @@ mod tests {
 
         // Low but non-zero window procedure.
         ctx.memory.write::<u32>(WNDCLASS_ADDR + 4, 0x500);
+        assert_eq!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
+
+        // A valid window procedure with a null class name also fails.
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 4, 0x3000);
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 0x24, 0);
         assert_eq!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
     }
 
