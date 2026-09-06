@@ -6,6 +6,7 @@ use runtime::Context;
 
 const MMSYSERR_NOERROR: u32 = 0;
 const MMSYSERR_NOTSUPPORTED: u32 = 8;
+const MMSYSERR_INVALPARAM: u32 = 11;
 
 #[derive(Debug, PartialEq, Eq, win32_derive::ABIEnum)]
 pub enum ACM_METRIC {
@@ -41,10 +42,12 @@ pub fn acmMetrics(
             return MMSYSERR_NOTSUPPORTED;
         }
     };
-    if pMetric != 0 {
-        // An out-of-range out-pointer truncates the result rather than
-        // panicking the host.
-        let _ = crate::Ptr::<u32>::new(pMetric).write(&mut ctx.memory, value);
+    if pMetric != 0
+        && crate::Ptr::<u32>::new(pMetric)
+            .write(&mut ctx.memory, value)
+            .is_none()
+    {
+        return MMSYSERR_INVALPARAM;
     }
     MMSYSERR_NOERROR
 }
