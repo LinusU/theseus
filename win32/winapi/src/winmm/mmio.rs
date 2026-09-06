@@ -132,12 +132,19 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
     let mut winmm = super::state();
     let mmio = winmm.mmio();
     let file = mmio.files.get(&hmmio)?;
-    let (buffer, pos, len) = (file.buffer, file.pos as u32, file.data.len() as u32);
+    let Ok(len) = u32::try_from(file.data.len()) else {
+        // A file larger than the guest address space cannot be exposed
+        // through a 32-bit direct buffer.
+        return None;
+    };
+    let (buffer, pos) = (file.buffer, file.pos as u32);
     if buffer != 0 {
         return Some((buffer, pos, len));
     }
 
-    let addr = mmio.heap().alloc(&mut ctx.memory, len.max(1));
+    // Out of guest buffer space: the callers report open failures rather
+    // than panicking the host.
+    let addr = mmio.heap().try_alloc(&mut ctx.memory, len.max(1))?;
     let file = mmio.files.get_mut(&hmmio)?;
     ctx.memory[addr..][..file.data.len()].copy_from_slice(&file.data);
     file.buffer = addr;
@@ -454,5 +461,30 @@ mod tests {
         assert_eq!(mmioSetInfo(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
         assert_eq!(mmioAdvance(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
         assert_eq!(mmioGetInfo(&mut ctx, 7, 0x1000, 0), MMIOERR_CANNOTOPEN);
+    }
+
+    #[test]
+    fn mmio_get_info_reports_failure_when_the_buffer_heap_is_exhausted() {
+        let mut ctx = context();
+        {
+            let mut winmm = crate::winmm::state();
+            let mmio = winmm.mmio();
+            mmio.heap = Some(Heap::new(0x1000, 0x10));
+            mmio.files.insert(
+                9,
+                File {
+                    data: vec![0xAA; 0x40],
+                    pos: 0,
+                    buffer: 0,
+                },
+            );
+        }
+        // The 16-byte heap cannot hold the file; the call must report an
+        // error rather than panicking on the allocation.
+        assert_eq!(mmioGetInfo(&mut ctx, 9, 0x2000, 0), MMIOERR_CANNOTOPEN);
+        let mut winmm = crate::winmm::state();
+        let mmio = winmm.mmio();
+        mmio.files.remove(&9);
+        mmio.heap = None;
     }
 }
