@@ -690,7 +690,7 @@ impl Host {
                 let at = at_ms + key as u32 * 300 + if down { 0 } else { 100 };
                 if self.time() >= at {
                     PHASE.store(phase as u8 + 1, Relaxed);
-                    let msg = inject_vkey(vkeys[key]).unwrap();
+                    let msg = inject_vkey(vkeys[key])?;
                     return Some(if down {
                         host::Message::KeyDown(msg)
                     } else {
@@ -798,7 +798,7 @@ impl Host {
                 let (at, vkey, down) = events[phase];
                 if self.time() >= at {
                     HOLD_PHASE.store((phase + 1) as u16, Relaxed);
-                    let msg = inject_vkey(vkey).unwrap();
+                    let msg = inject_vkey(vkey)?;
                     return Some(if down {
                         host::Message::KeyDown(msg)
                     } else {
