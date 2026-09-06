@@ -66,13 +66,11 @@ pub fn timeSetEvent(
     dwUser: u32,
     fuEvent: TIME,
 ) -> u32 {
-    if !fuEvent.valid {
+    if !fuEvent.valid || lpTimeProc < 0x1000 {
         return 0;
     }
 
     let notify = match fuEvent.event_pulse {
-        // A null callback would panic the timer thread at indirect().
-        None if lpTimeProc == 0 => return 0,
         None => Notify::Function(lpTimeProc),
         Some(pulse) => Notify::Event {
             handle: lpTimeProc,
@@ -211,5 +209,25 @@ mod tests {
         assert!(!TIME::from_abi(0x30).valid);
         assert!(TIME::from_abi(0x11).valid); // periodic | EVENT_SET
         assert!(TIME::from_abi(0x21).valid); // periodic | EVENT_PULSE
+    }
+
+    #[test]
+    fn time_set_event_rejects_null_and_low_pointers() {
+        let _guard = TIMER_LOCK.lock().unwrap();
+        let mut ctx = context();
+        state().thread_running = true;
+
+        assert_eq!(timeSetEvent(&mut ctx, 10, 0, 0, 0, TIME::from_abi(0)), 0);
+        assert_eq!(
+            timeSetEvent(&mut ctx, 10, 0, 0x500, 0, TIME::from_abi(0)),
+            0
+        );
+        assert_eq!(
+            timeSetEvent(&mut ctx, 10, 0, 0x500, 0, TIME::from_abi(0x11)),
+            0
+        );
+        assert!(state().timers.is_empty());
+
+        state().thread_running = false;
     }
 }
