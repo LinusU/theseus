@@ -617,9 +617,12 @@ pub mod IDirect3D7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let mut kernel32 = kernel32::lock();
-        let data = kernel32
+        let Some(data) = kernel32
             .process_heap
-            .alloc(&mut ctx.memory, data_len.max(4));
+            .try_alloc(&mut ctx.memory, data_len.max(4))
+        else {
+            return DD::ERR_OUTOFMEMORY;
+        };
         let Some(buf) = ctx
             .memory
             .bytes

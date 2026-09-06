@@ -81,6 +81,20 @@ impl DirectDraw {
             self.bytes_per_pixel
         };
 
+        // Surface pixels come out of the 64 MiB process heap on first Lock,
+        // and a non-32bpp DC needs a width*height*4 scratch buffer, so
+        // reject dimensions that can never be backed rather than panicking
+        // on an out-of-memory or overflowing allocation later.
+        const MAX_SURFACE_BYTES: u64 = 64 << 20;
+        let pixels = width as u64 * height as u64;
+        let worst = pixels * u64::from(bytes_per_pixel.max(4));
+        if worst > MAX_SURFACE_BYTES {
+            log::warn!(
+                "ddraw: rejecting {width}x{height}x{bytes_per_pixel} surface needing {worst} bytes"
+            );
+            return None;
+        }
+
         let caps = if desc.dwFlags.contains(DDSD::CAPS) {
             desc.ddsCaps
         } else if is_primary {

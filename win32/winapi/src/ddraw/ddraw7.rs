@@ -1220,9 +1220,14 @@ pub mod IDirectDrawSurface7 {
             let rgba = surface
                 .to_rgba(&ctx.memory, &surface.palette)
                 .map(|px| px.into_owned());
-            let scratch = kernel32::lock()
+            // Surface dimensions are bounded at creation, so only heap
+            // exhaustion can fail this allocation.
+            let Some(scratch) = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, width * height * 4);
+                .try_alloc(&mut ctx.memory, width * height * 4)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             if let Some(rgba) = rgba
                 && let Some(buf) = ctx
                     .memory

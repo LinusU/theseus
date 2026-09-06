@@ -140,7 +140,9 @@ mod tests {
         // A 2x2 32bpp bitmap at 0x3FFC needs 16 bytes, extending past 0x4000.
         let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3FFC);
         let hdc = gdi32::lock().new_memory_dc(bitmap);
-        assert!(!StretchBlt(&mut ctx, hdc, 0, 0, 1, 1, hdc, 0, 0, 1, 1, 0xcc0020));
+        assert!(!StretchBlt(
+            &mut ctx, hdc, 0, 0, 1, 1, hdc, 0, 0, 1, 1, 0xcc0020
+        ));
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
@@ -179,11 +181,20 @@ mod tests {
 
 #[win32_derive::dllexport]
 pub fn CreateCompatibleBitmap(ctx: &mut Context, _hdc: HDC, cx: i32, cy: i32) -> HBITMAP {
-    let w = cx as u32;
-    let h = cy as u32;
-    let pixels = kernel32::lock()
+    // Negative or zero dimensions and overflowing or unallocatable sizes
+    // all report failure with a null bitmap handle.
+    let (Ok(w), Ok(h)) = (u32::try_from(cx), u32::try_from(cy)) else {
+        return HANDLE::null();
+    };
+    let Some(size) = w.checked_mul(h).and_then(|px| px.checked_mul(4)) else {
+        return HANDLE::null();
+    };
+    let Some(pixels) = kernel32::lock()
         .process_heap
-        .alloc(&mut ctx.memory, w * h * 4);
+        .try_alloc(&mut ctx.memory, size.max(4))
+    else {
+        return HANDLE::null();
+    };
     let bitmap = Bitmap::new_simple(w, h, pixels);
     gdi32::lock().new_bitmap_handle(bitmap).0
 }
