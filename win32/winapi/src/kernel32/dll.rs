@@ -167,9 +167,10 @@ pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
         return hmodule;
     }
 
-    // Try to load a resource-only DLL from the current working directory.
-    let path = std::env::current_dir().unwrap_or_default().join(&filename);
-    let Ok(buf) = std::fs::read(&path) else {
+    // Try to load a resource-only DLL from the current working directory,
+    // using the same case-insensitive resolution the rest of file I/O gets.
+    let path = crate::kernel32::resolve_path(&filename);
+    let Ok(buf) = host::fs::read(&path) else {
         log::warn!("LoadLibrary({filename}): not supported, returning null");
         return 0;
     };
