@@ -579,7 +579,12 @@ pub mod IDirectInputDevice {
             let Some(field) = pdiph.checked_add(DIPROPDWORD_DWDATA) else {
                 return DIERR_INVALIDPARAM;
             };
-            let _ = crate::Ptr::<u32>::new(field).write(&mut ctx.memory, size as u32);
+            if crate::Ptr::<u32>::new(field)
+                .write(&mut ctx.memory, size as u32)
+                .is_none()
+            {
+                return E_POINTER;
+            }
             return DI_OK;
         }
         let state = lock();
@@ -1151,6 +1156,13 @@ mod tests {
             E_POINTER
         );
         assert_eq!(&ctx.memory.bytes[0x500..0x508], &[0xCD; 8]);
+
+        // GetProperty (BUFFERSIZE branch) must fail when the dwData field
+        // is out of range instead of silently losing the result.
+        assert_eq!(
+            IDirectInputDevice::GetProperty(&mut ctx, 0x2200, DIPROP_BUFFERSIZE, 0x3FF0),
+            E_POINTER
+        );
     }
 
     #[test]
