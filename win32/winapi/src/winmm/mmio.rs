@@ -159,14 +159,39 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
 
 #[win32_derive::dllexport]
 pub fn mciSendCommandA(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     _mciId: u32,
     uMsg: u32,
-    _dwParam1: u32,
-    _dwParam2: u32,
+    dwParam1: u32,
+    dwParam2: u32,
 ) -> u32 {
     // CD audio etc.; pretend success and play nothing.
     log::debug!("mciSendCommandA(msg={uMsg:#x}): no-op");
+
+    // MCI_STATUS queries write their answer into MCI_STATUS_PARMS.dwReturn;
+    // leaving it stale hands the caller whatever the buffer already held.
+    const MCI_STATUS: u32 = 0x814;
+    if uMsg == MCI_STATUS {
+        const MCI_STATUS_ITEM: u32 = 0x100;
+        const MCI_STATUS_MODE: u32 = 4;
+        const MCI_MODE_STOP: u32 = 527;
+        // dwItem sits past dwCallback and dwReturn; a device that plays
+        // nothing is stopped, and every other item reads as zero.
+        let value = if dwParam1 & MCI_STATUS_ITEM != 0 {
+            match dwParam2
+                .checked_add(8)
+                .and_then(|a| crate::Ptr::<u32>::new(a).read(&ctx.memory))
+            {
+                Some(MCI_STATUS_MODE) => MCI_MODE_STOP,
+                _ => 0,
+            }
+        } else {
+            0
+        };
+        if let Some(field) = dwParam2.checked_add(4) {
+            let _ = crate::Ptr::<u32>::new(field).write(&mut ctx.memory, value);
+        }
+    }
     0
 }
 
@@ -454,6 +479,22 @@ mod tests {
             cache: BlockCache::default(),
             recent: [Context::return_from_x86; 4],
         }
+    }
+
+    #[test]
+    fn mci_status_writes_the_return_field() {
+        let mut ctx = context();
+        // MCI_STATUS_PARMS at 0x1000: dwCallback, dwReturn, dwItem, dwTrack.
+        ctx.memory.write::<u32>(0x1000 + 8, 4); // dwItem = MCI_STATUS_MODE
+        assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, 0x1000), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 4), 527); // MCI_MODE_STOP
+        // A non-MODE item reads as zero.
+        ctx.memory.write::<u32>(0x1000 + 8, 2); // MCI_STATUS_POSITION
+        assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, 0x1000), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 4), 0);
+        // An unusable params pointer is ignored rather than panicking.
+        let oob = ctx.memory.bytes.len() as u32;
+        assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, oob), 0);
     }
 
     #[test]
