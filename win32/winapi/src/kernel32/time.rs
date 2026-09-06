@@ -3,7 +3,7 @@ use runtime::Context;
 use crate::Ptr;
 
 #[repr(C)]
-#[derive(Debug, Default, zerocopy::IntoBytes, zerocopy::Immutable)]
+#[derive(Debug, Default, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct SYSTEMTIME {
     pub wYear: u16,
     pub wMonth: u16,
@@ -15,11 +15,9 @@ pub struct SYSTEMTIME {
     pub wMilliseconds: u16,
 }
 
-fn current_system_time() -> SYSTEMTIME {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let seconds = now.as_secs() as i64;
+/// The civil-from-days conversion (Howard Hinnant's algorithm) shared by
+/// GetSystemTime/GetLocalTime and FileTimeToSystemTime.
+fn civil_from_unix(seconds: i64, millis: u16) -> SYSTEMTIME {
     let days = seconds.div_euclid(86_400);
     let day_seconds = seconds.rem_euclid(86_400);
     let z = days + 719_468;
@@ -40,8 +38,15 @@ fn current_system_time() -> SYSTEMTIME {
         wHour: (day_seconds / 3_600) as u16,
         wMinute: (day_seconds / 60 % 60) as u16,
         wSecond: (day_seconds % 60) as u16,
-        wMilliseconds: (now.subsec_millis()) as u16,
+        wMilliseconds: millis,
     }
+}
+
+fn current_system_time() -> SYSTEMTIME {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    civil_from_unix(now.as_secs() as i64, now.subsec_millis() as u16)
 }
 
 #[win32_derive::dllexport]
@@ -105,28 +110,78 @@ pub fn FileTimeToLocalFileTime(
 #[win32_derive::dllexport]
 pub fn FileTimeToSystemTime(
     ctx: &mut Context,
-    _lpFileTime: crate::Ptr<u64>,
-    lpSystemTime: crate::Ptr<u8>,
+    lpFileTime: crate::Ptr<u64>,
+    lpSystemTime: crate::Ptr<SYSTEMTIME>,
 ) -> bool {
-    // SYSTEMTIME is 16 bytes; the game only shows these values incidentally.
-    let Some(buf) = ctx
-        .memory
-        .bytes
-        .get_mut(lpSystemTime.addr as usize..)
-        .and_then(|buf| buf.get_mut(..16))
-    else {
+    let Some(filetime) = lpFileTime.read(&ctx.memory) else {
         return false;
     };
-    buf.fill(0);
-    true
+    // A FILETIME counts 100ns ticks since 1601-01-01, which is
+    // 11644473600 seconds before the unix epoch.
+    let seconds = (filetime / 10_000_000) as i64 - 11_644_473_600;
+    let millis = ((filetime / 10_000) % 1_000) as u16;
+    lpSystemTime
+        .write(&mut ctx.memory, civil_from_unix(seconds, millis))
+        .is_some()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SYSTEMTIME;
+    use super::{FileTimeToSystemTime, SYSTEMTIME};
+    use crate::Ptr;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
 
     #[test]
     fn system_time_matches_win32_abi() {
         assert_eq!(std::mem::size_of::<SYSTEMTIME>(), 16);
+    }
+
+    #[test]
+    fn filetime_to_system_time_converts_known_dates() {
+        let mut ctx = context();
+        // 2000-01-01 00:00:00 UTC, a Saturday.
+        ctx.memory.write::<u64>(0x1000, 125_911_584_000_000_000);
+        assert!(FileTimeToSystemTime(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x2000)
+        ));
+        let st = ctx.memory.read::<SYSTEMTIME>(0x2000);
+        assert_eq!(
+            (st.wYear, st.wMonth, st.wDay, st.wDayOfWeek),
+            (2000, 1, 1, 6)
+        );
+
+        // FILETIME 0 is 1601-01-01, a Monday.
+        ctx.memory.write::<u64>(0x1000, 0);
+        assert!(FileTimeToSystemTime(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x2000)
+        ));
+        let st = ctx.memory.read::<SYSTEMTIME>(0x2000);
+        assert_eq!(
+            (st.wYear, st.wMonth, st.wDay, st.wDayOfWeek),
+            (1601, 1, 1, 1)
+        );
+
+        // An unreadable input pointer fails without writing.
+        assert!(!FileTimeToSystemTime(
+            &mut ctx,
+            Ptr::new(0xffff_ff00),
+            Ptr::new(0x2000)
+        ));
     }
 }
