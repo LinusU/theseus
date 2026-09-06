@@ -75,7 +75,7 @@ pub fn GetEnvironmentVariableA(
     lpBuffer: Ptr<u8>,
     nSize: u32,
 ) -> u32 {
-    if lpName.addr == 0 {
+    if lpName.addr < 0x1000 {
         if let Some(teb) = teb_mut(ctx) {
             teb.LastErrorValue = ERROR_INVALID_PARAMETER;
         }
@@ -122,7 +122,7 @@ pub fn GetEnvironmentVariableA(
 
 #[win32_derive::dllexport]
 pub fn SetEnvironmentVariableA(ctx: &mut Context, lpName: Ptr<u8>, lpValue: Ptr<u8>) -> bool {
-    if lpName.addr == 0 {
+    if lpName.addr < 0x1000 {
         if let Some(teb) = teb_mut(ctx) {
             teb.LastErrorValue = ERROR_INVALID_PARAMETER;
         }
@@ -143,6 +143,12 @@ pub fn SetEnvironmentVariableA(ctx: &mut Context, lpName: Ptr<u8>, lpValue: Ptr<
             kernel32.env.remove(i);
         }
         return true;
+    }
+    if lpValue.addr < 0x1000 {
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
+        return false;
     }
     let value = ctx.memory.read_str(lpValue.addr).to_string();
     match find(&kernel32.env, &name) {
@@ -249,5 +255,33 @@ mod tests {
         let expected = b"Foo=42\0Bar=42\0\0";
         assert_eq!(&ctx.memory[block..][..expected.len()], expected);
         assert!(FreeEnvironmentStringsA(&mut ctx, Ptr::new(block)));
+
+        // Null and sub-0x1000 name/value pointers are rejected as invalid.
+        assert_eq!(
+            GetEnvironmentVariableA(&mut ctx, Ptr::new(0x500), Ptr::new(0), 0),
+            0
+        );
+        assert_eq!(
+            crate::kernel32::teb(&mut ctx).unwrap().LastErrorValue,
+            ERROR_INVALID_PARAMETER
+        );
+        assert!(!SetEnvironmentVariableA(
+            &mut ctx,
+            Ptr::new(0x500),
+            Ptr::new(0)
+        ));
+        assert_eq!(
+            crate::kernel32::teb(&mut ctx).unwrap().LastErrorValue,
+            ERROR_INVALID_PARAMETER
+        );
+        assert!(!SetEnvironmentVariableA(
+            &mut ctx,
+            Ptr::new(0x3000),
+            Ptr::new(0x500)
+        ));
+        assert_eq!(
+            crate::kernel32::teb(&mut ctx).unwrap().LastErrorValue,
+            ERROR_INVALID_PARAMETER
+        );
     }
 }
