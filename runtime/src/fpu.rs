@@ -251,7 +251,7 @@ impl FPU {
         }
         let exp = val.abs().log2().floor();
         let sig = val / 2f64.powi(exp as i32);
-        self.set(0, exp.copysign(val));
+        self.set(0, exp);
         self.push(sig);
     }
 
@@ -710,7 +710,7 @@ mod tests {
         fpu.push(-12.0); // -1.5 * 2^3
         fpu.extract();
         assert!((fpu.get(0) - -1.5).abs() < 1e-15);
-        assert_eq!(fpu.get(1), -3.0);
+        assert_eq!(fpu.get(1), 3.0);
 
         fpu.init();
         fpu.push(0.0);
