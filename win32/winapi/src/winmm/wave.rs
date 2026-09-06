@@ -342,12 +342,6 @@ pub fn waveOutOpen(
         return WAVERR_BADFORMAT;
     }
 
-    // WAVE_FORMAT_QUERY (also part of WAVE_FORMAT_DIRECT_QUERY) asks
-    // whether the format is supported without opening the device.
-    if fdwOpen & 0x0001 != 0 {
-        return MMSYSERR_NOERROR;
-    }
-
     // The remaining known flags (WAVE_ALLOWSYNC, WAVE_FORMAT_DIRECT,
     // WAVE_MAPPED) don't affect the emulated stream.
     if fdwOpen & !0x000F_001B != 0 {
@@ -359,6 +353,15 @@ pub fn waveOutOpen(
     if matches!(callback, CALLBACK::WINDOW | CALLBACK::EVENT) {
         // The emulated stream only delivers function callbacks.
         return MMSYSERR_NOTSUPPORTED;
+    }
+    if dwCallback < 0x1000 && callback != CALLBACK::NULL {
+        return MMSYSERR_INVALPARAM;
+    }
+
+    // WAVE_FORMAT_QUERY (also part of WAVE_FORMAT_DIRECT_QUERY) asks
+    // whether the format is supported without opening the device.
+    if fdwOpen & 0x0001 != 0 {
+        return MMSYSERR_NOERROR;
     }
     if !usable_range(ctx, phwo, 4) {
         return MMSYSERR_INVALPARAM;
@@ -554,5 +557,30 @@ mod tests {
         assert_eq!(waveOutWrite(&mut ctx, 1, 0x1000, hdr), 34); // not prepared
         assert_eq!(waveOutPrepareHeader(&mut ctx, 1, 0x1000, hdr), 5);
         assert_eq!(waveOutUnprepareHeader(&mut ctx, 1, 0x1000, hdr - 1), 5);
+    }
+
+    #[test]
+    fn wave_out_open_rejects_low_callback_pointer() {
+        let mut ctx = context();
+        ctx.memory.write::<u16>(0x1000, 1); // wFormatTag = WAVE_FORMAT_PCM
+        ctx.memory.write::<u16>(0x1002, 1); // nChannels = 1
+        ctx.memory.write::<u32>(0x1004, 22050); // nSamplesPerSec
+        ctx.memory.write::<u32>(0x1008, 44100); // nAvgBytesPerSec
+        ctx.memory.write::<u16>(0x100c, 2); // nBlockAlign
+        ctx.memory.write::<u16>(0x100e, 16); // wBitsPerSample
+
+        // Query with a low function-callback pointer is rejected.
+        assert_eq!(
+            waveOutOpen(
+                &mut ctx,
+                0x2000,
+                0,
+                0x1000,
+                0x500,
+                0,
+                0x0001 | CALLBACK::FUNCTION as u32
+            ),
+            MMSYSERR_INVALPARAM
+        );
     }
 }
