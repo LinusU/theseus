@@ -41,8 +41,15 @@ pub fn __getmainargs(
     let Some(name) = kernel32.process_heap.try_alloc(&mut ctx.memory, name_len) else {
         return -1;
     };
-    ctx.memory[name..][..exe.len()].copy_from_slice(exe.as_bytes());
-    ctx.memory[name + exe.len() as u32] = 0;
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(name as usize..)
+        .and_then(|b| b.get_mut(..exe.len()))
+    {
+        dst.copy_from_slice(exe.as_bytes());
+    }
+    ctx.memory.write::<u8>(name + exe.len() as u32, 0);
     let Some(argv_buf) = kernel32.process_heap.try_alloc(&mut ctx.memory, 8) else {
         return -1;
     };
