@@ -19,6 +19,11 @@ pub struct Window {
     pub title: String,
     /// Keyboard/mouse input enable state from EnableWindow.
     pub enabled: bool,
+    /// GWL_USERDATA slot, arbitrary per-window data the app stores.
+    pub user_data: u32,
+    /// A wndproc installed by SetWindowLong(GWL_WNDPROC) subclassing; when
+    /// set it wins over the class wndproc at dispatch time.
+    pub subclass_proc: Option<u32>,
     pub x: i32,
     pub y: i32,
     pub width: u32,
@@ -147,6 +152,8 @@ impl State {
             dirty: true,
             title: args.name.clone(),
             enabled: true,
+            user_data: 0,
+            subclass_proc: None,
             x: args.x,
             y: args.y,
             width,
@@ -225,11 +232,27 @@ pub fn IsWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
         .is_some_and(|window| window.borrow().hwnd == hWnd)
 }
 
+const GWL_WNDPROC: i32 = -4;
+const GWL_STYLE: i32 = -16;
+const GWL_EXSTYLE: i32 = -20;
+const GWL_USERDATA: i32 = -21;
+
+/// The guest address of the window's effective wndproc: the subclass proc
+/// when one was installed, else the class's registered proc.
+fn current_wndproc_addr(window: &Window) -> u32 {
+    if let Some(addr) = window.subclass_proc {
+        return addr;
+    }
+    state()
+        .wndclass
+        .borrow()
+        .as_ref()
+        .map(|wndclass| wndclass.wndproc_addr)
+        .unwrap_or(0)
+}
+
 #[win32_derive::dllexport]
 pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
-    const GWL_STYLE: i32 = -16;
-    const GWL_EXSTYLE: i32 = -20;
-
     let window = state().window.borrow();
     let Some(window) = window.as_ref() else {
         return 0;
@@ -240,8 +263,10 @@ pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
     }
 
     match nIndex {
+        GWL_WNDPROC => current_wndproc_addr(&window) as i32,
         GWL_STYLE => window.style as i32,
         GWL_EXSTYLE => window.ex_style as i32,
+        GWL_USERDATA => window.user_data as i32,
         _ => {
             log::warn!("GetWindowLongA: unsupported index {nIndex}");
             0
@@ -251,9 +276,6 @@ pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
 
 #[win32_derive::dllexport]
 pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: i32) -> i32 {
-    const GWL_STYLE: i32 = -16;
-    const GWL_EXSTYLE: i32 = -20;
-
     let window = state().window.borrow();
     let Some(window) = window.as_ref() else {
         return 0;
@@ -264,8 +286,14 @@ pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: i3
     }
 
     match nIndex {
+        GWL_WNDPROC => {
+            let previous = current_wndproc_addr(&window);
+            window.subclass_proc = Some(dwNewLong as u32);
+            previous as i32
+        }
         GWL_STYLE => std::mem::replace(&mut window.style, dwNewLong as u32) as i32,
         GWL_EXSTYLE => std::mem::replace(&mut window.ex_style, dwNewLong as u32) as i32,
+        GWL_USERDATA => std::mem::replace(&mut window.user_data, dwNewLong as u32) as i32,
         _ => {
             log::warn!("SetWindowLongA: unsupported index {nIndex}");
             0
@@ -509,6 +537,9 @@ pub enum ClassName {
 
 pub struct WndClass {
     pub wndproc: runtime::Cont,
+    /// The guest address of the registered wndproc, reported back by
+    /// GetWindowLong/SetWindowLong(GWL_WNDPROC).
+    pub wndproc_addr: u32,
     pub background: Option<gdi32::Brush>,
     /// The name or atom the class was registered under, so GetClassName and
     /// UnregisterClass can match it.
@@ -626,6 +657,7 @@ fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u
     };
     state().register_class(WndClass {
         wndproc: ctx.indirect(wndclass.lpfnWndProc),
+        wndproc_addr: wndclass.lpfnWndProc,
         background,
         name,
         atom: 0,
@@ -1236,6 +1268,8 @@ mod tests {
             dirty: false,
             title: "Initial".into(),
             enabled: true,
+            user_data: 0,
+            subclass_proc: None,
             x: 0,
             y: 0,
             width: 1,

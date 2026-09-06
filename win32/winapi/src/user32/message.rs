@@ -555,7 +555,14 @@ pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
         let window = state().window.borrow();
         let wndclass = state().wndclass.borrow();
         match (window.as_ref(), wndclass.as_ref()) {
-            (Some(window), Some(wndclass)) if window.borrow().hwnd == msg.hwnd => wndclass.wndproc,
+            (Some(window), Some(wndclass)) if window.borrow().hwnd == msg.hwnd => {
+                // A SetWindowLong(GWL_WNDPROC) subclass wins over the
+                // class's registered procedure.
+                match window.borrow().subclass_proc {
+                    Some(addr) => ctx.indirect(addr),
+                    None => wndclass.wndproc,
+                }
+            }
             // Thread messages and messages for windows we do not model have
             // no window procedure to dispatch to.
             _ => return 0,
@@ -746,14 +753,25 @@ pub fn SendMessageW(
         let Some(window) = window.as_ref() else {
             return 0;
         };
-        if window.borrow().hwnd != hWnd {
-            return 0;
-        }
-        let wndclass = state().wndclass.borrow();
-        let Some(wndclass) = wndclass.as_ref() else {
-            return 0;
+        let subclass = {
+            let window = window.borrow();
+            if window.hwnd != hWnd {
+                return 0;
+            }
+            window.subclass_proc
         };
-        wndclass.wndproc
+        // A SetWindowLong(GWL_WNDPROC) subclass wins over the class's
+        // registered procedure.
+        match subclass {
+            Some(addr) => ctx.indirect(addr),
+            None => {
+                let wndclass = state().wndclass.borrow();
+                let Some(wndclass) = wndclass.as_ref() else {
+                    return 0;
+                };
+                wndclass.wndproc
+            }
+        }
     };
     ctx.call32_x86(wndproc, vec![hWnd.to_raw(), Msg, wParam, lParam]);
     ctx.cpu.regs.eax
