@@ -662,6 +662,9 @@ pub fn FindFirstFileA(
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     if entries.is_empty() {
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 2; // ERROR_FILE_NOT_FOUND
+        }
         return crate::HANDLE::invalid();
     }
     if lpFindFileData
@@ -684,9 +687,17 @@ pub fn FindNextFileA(
     let mut kernel32 = lock();
     let Some(Object::FindHandle(find)) = kernel32.objects.get_mut(hFindFile) else {
         log::warn!("FindNextFileA({hFindFile:?}): unknown handle");
+        drop(kernel32);
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 6; // ERROR_INVALID_HANDLE
+        }
         return false;
     };
     let Some(entry) = find.entries.get(find.index) else {
+        drop(kernel32);
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 18; // ERROR_NO_MORE_FILES
+        }
         return false;
     };
     let data = find_data(entry);
@@ -704,8 +715,8 @@ pub fn FindClose(_ctx: &mut Context, hFindFile: crate::HANDLE) -> bool {
 mod tests {
     use super::{
         DRIVE_FIXED, DRIVE_NO_ROOT_DIR, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-        INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER, MoveMethod, SetFilePointer, drive_type,
-        file_attributes, initial_cwd, resolve_path, wildcard_match,
+        FindNextFileA, INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER, MoveMethod,
+        SetFilePointer, drive_type, file_attributes, initial_cwd, resolve_path, wildcard_match,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -781,6 +792,18 @@ mod tests {
         );
         let teb = crate::kernel32::teb(&mut ctx).unwrap();
         assert_eq!(teb.LastErrorValue, 131); // ERROR_NEGATIVE_SEEK
+    }
+
+    #[test]
+    fn find_next_reports_error_codes() {
+        let mut ctx = context();
+        assert!(!FindNextFileA(
+            &mut ctx,
+            crate::HANDLE::from_raw(0xdead),
+            Ptr::new(0x3000)
+        ));
+        let teb = crate::kernel32::teb(&mut ctx).unwrap();
+        assert_eq!(teb.LastErrorValue, 6); // ERROR_INVALID_HANDLE
     }
 
     #[test]
