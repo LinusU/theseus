@@ -3008,7 +3008,7 @@ mod tests {
             ),
             (
                 &[0xdd, 0x08][..],
-                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, ctx.cpu.fpu.to_int(ctx.cpu.fpu.get(0), true, 64) as u64);",
+                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, ctx.cpu.fpu.to_int(ctx.cpu.fpu.get(0), true, 64));",
             ),
             (
                 &[0xdf, 0x08][..],

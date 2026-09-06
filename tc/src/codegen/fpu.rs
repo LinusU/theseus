@@ -56,6 +56,15 @@ impl<'a> CodeGen<'a> {
         format!("ctx.cpu.fpu.set({index}, {expr});")
     }
 
+    /// `to_int` already returns `u64`, so only the 16- and 32-bit stores need a cast.
+    fn fpu_to_int_expr(&self, reg: String, truncate: bool, size: usize) -> String {
+        if size == 64 {
+            format!("ctx.cpu.fpu.to_int({reg}, {truncate}, {size})")
+        } else {
+            format!("ctx.cpu.fpu.to_int({reg}, {truncate}, {size}) as u{size}")
+        }
+    }
+
     fn fpu_get_op(&self, instr: &iced_x86::Instruction, n: u32) -> String {
         use iced_x86::OpKind::*;
         let kind = instr.op_kind(n);
@@ -120,10 +129,7 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(
                     instr,
                     0,
-                    format!(
-                        "ctx.cpu.fpu.to_int({}, false, {size}) as u{size}",
-                        self.fpu_get_reg(0)
-                    ),
+                    self.fpu_to_int_expr(self.fpu_get_reg(0), false, size),
                 ));
                 if instr.mnemonic() == Fistp {
                     self.line("ctx.cpu.fpu.pop();");
@@ -134,10 +140,7 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(
                     instr,
                     0,
-                    format!(
-                        "ctx.cpu.fpu.to_int({}, true, {size}) as u{size}",
-                        self.fpu_get_reg(0)
-                    ),
+                    self.fpu_to_int_expr(self.fpu_get_reg(0), true, size),
                 ));
                 self.line("ctx.cpu.fpu.pop();");
             }
