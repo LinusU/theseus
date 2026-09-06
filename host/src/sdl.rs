@@ -485,8 +485,11 @@ impl MainThread {
             };
         }
         unsafe {
+            // The title comes from the guest; an interior NUL gets an
+            // empty title rather than a host panic.
+            let title = CString::new(title).unwrap_or_default();
             let window = sdl::video::SDL_CreateWindow(
-                CString::new(title).unwrap().as_ptr(),
+                title.as_ptr(),
                 width as i32,
                 height as i32,
                 sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY,
