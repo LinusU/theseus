@@ -380,6 +380,17 @@ pub fn SetTimer(
     )
 }
 
+/// Read one u32 off the guest stack without panicking on a bad stack
+/// pointer; unlike `Ptr::read` this does not reject the null page, since
+/// a cdecl-varargs caller's frame is whatever the guest made it.
+fn read_stack_u32(ctx: &Context, addr: u32) -> Option<u32> {
+    ctx.memory
+        .bytes
+        .get(addr as usize..)
+        .and_then(|b| b.get(..4))
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+}
+
 /// Read a NUL-terminated byte string without the UTF-8 check.
 fn read_bytes0(ctx: &Context, addr: u32) -> Vec<u8> {
     let Some(buf) = ctx.memory.bytes.get(addr as usize..) else {
@@ -446,8 +457,17 @@ fn wsprintf_impl(ctx: &mut Context, fmt: &[u16], mut arg_addr: u32, wide: bool) 
         let spec = at(i).unwrap_or(b'%');
         i += 1;
         let mut next_arg = || {
-            let value = ctx.memory.read::<u32>(arg_addr);
-            arg_addr += 4;
+            // A format with more specifiers than the caller pushed args
+            // walks arg_addr off emulated memory; read 0 rather than
+            // panicking.
+            let value = ctx
+                .memory
+                .bytes
+                .get(arg_addr as usize..)
+                .and_then(|b| b.get(..4))
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .unwrap_or(0);
+            arg_addr = arg_addr.wrapping_add(4);
             value
         };
         let formatted: Vec<u16> = match spec {
@@ -503,10 +523,14 @@ fn wsprintf_impl(ctx: &mut Context, fmt: &[u16], mut arg_addr: u32, wide: bool) 
 pub fn wsprintfW(ctx: &mut Context) -> i32 {
     // Cdecl varargs, see wsprintfA.
     let esp = ctx.cpu.regs.esp;
-    let dst = ctx.memory.read::<u32>(esp + 4);
-    let fmt_addr = ctx.memory.read::<u32>(esp + 8);
+    let Some(dst) = read_stack_u32(ctx, esp.wrapping_add(4)) else {
+        return 0;
+    };
+    let Some(fmt_addr) = read_stack_u32(ctx, esp.wrapping_add(8)) else {
+        return 0;
+    };
     let fmt = ctx.memory.read_wstr(fmt_addr).as_slice().to_vec();
-    let out = wsprintf_impl(ctx, &fmt, esp + 12, true);
+    let out = wsprintf_impl(ctx, &fmt, esp.wrapping_add(12), true);
     // wsprintf takes no size; a destination at the edge of emulated memory
     // would panic the host, so write only what fits.
     if let Some(buf) = ctx.memory.bytes.get_mut(dst as usize..) {
@@ -531,13 +555,17 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     // stack alone; read everything manually.
     // [esp] = return addr, [esp+4] = dst, [esp+8] = fmt, [esp+12...] = args.
     let esp = ctx.cpu.regs.esp;
-    let dst = ctx.memory.read::<u32>(esp + 4);
-    let fmt_addr = ctx.memory.read::<u32>(esp + 8);
+    let Some(dst) = read_stack_u32(ctx, esp.wrapping_add(4)) else {
+        return 0;
+    };
+    let Some(fmt_addr) = read_stack_u32(ctx, esp.wrapping_add(8)) else {
+        return 0;
+    };
     let fmt = read_bytes0(ctx, fmt_addr)
         .iter()
         .map(|&b| b as u16)
         .collect::<Vec<_>>();
-    let out = wsprintf_impl(ctx, &fmt, esp + 12, false);
+    let out = wsprintf_impl(ctx, &fmt, esp.wrapping_add(12), false);
 
     let bytes: Vec<u8> = out.iter().map(|&c| c as u8).collect();
     // wsprintf takes no size; a destination at the edge of emulated memory
