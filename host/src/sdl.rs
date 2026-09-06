@@ -345,12 +345,14 @@ impl Surface {
             return;
         }
         unsafe {
-            check(sdl::render::SDL_UpdateTexture(
+            if !sdl::render::SDL_UpdateTexture(
                 self.texture,
                 std::ptr::null(),
                 pixels.as_ptr() as *const _,
                 stride as i32,
-            ));
+            ) {
+                log::warn!("SDL_UpdateTexture failed ({}); ignoring", sdl_error());
+            }
         }
     }
 
