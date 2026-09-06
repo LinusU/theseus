@@ -21,9 +21,10 @@ fn read_c_string(ctx: &Context, addr: u32) -> Option<Vec<u8>> {
 }
 
 fn range_fits(ctx: &Context, addr: u32, len: usize) -> bool {
-    (addr as usize)
-        .checked_add(len)
-        .is_some_and(|end| end <= ctx.memory.bytes.len())
+    (addr >= 0x1000)
+        && (addr as usize)
+            .checked_add(len)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
 }
 
 #[win32_derive::dllexport]
@@ -237,6 +238,10 @@ mod tests {
         ctx.memory[0x3ff0..].fill(0xff);
         assert_eq!(lstrlenA(&mut ctx, Ptr::new(0x3ff0)), 0);
         assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0x1200), Ptr::new(0x3ff0)), 0);
+
+        assert_eq!(lstrcpyA(&mut ctx, Ptr::new(0), Ptr::new(0x1000)), 0);
+        assert_eq!(lstrcatA(&mut ctx, Ptr::new(0), Ptr::new(0x1100)), 0);
+        assert_eq!(&ctx.memory.bytes[0..3], &[0, 0, 0]);
     }
 
     #[test]
