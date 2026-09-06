@@ -272,17 +272,19 @@ impl FPU {
 
     /// FBSTP: store ST(0) as an 80-bit packed BCD integer, then pop.
     pub fn bstp(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
-        const MAX_BCD: f64 = 999_999_999_999_999_999.0;
+        // The packed-BCD field holds 18 digits, so the largest storable
+        // magnitude is 999999999999999999. (An f64 literal for that value
+        // would itself round to 1e18, so compare against 1e18 instead.)
+        const MAX_BCD: f64 = 1.0e18;
         let val = self.round(self.get(0));
+        // Non-finite values and finite magnitudes too large for 18 packed
+        // digits store the packed-BCD indefinite encoding (all 0xff bytes),
+        // matching masked invalid-operation behavior on real hardware.
         let mut bytes = [0xffu8; 10];
-        if val.is_finite() {
+        if val.is_finite() && val.abs() < MAX_BCD {
             let sign = val.is_sign_negative();
-            let mut abs = val.abs().clamp(0.0, MAX_BCD).floor();
-            if abs < 1.0 {
-                // Round-to-zero/negative small magnitudes become 0.
-                abs = 0.0;
-            }
-            let mut ival = abs as u64;
+            // `val` is already integral after `round`.
+            let mut ival = val.abs() as u64;
             bytes = [0u8; 10];
             for byte in bytes[..9].iter_mut() {
                 let low = (ival % 10) as u8;
@@ -737,6 +739,39 @@ mod tests {
         // Out-of-range read returns 0.
         fpu.bld(&memory, 0x1000);
         assert_eq!(fpu.get(0), 0.0);
+    }
+
+    #[test]
+    fn fbstp_stores_indefinite_for_non_finite_and_too_large_values() {
+        let mut memory = crate::Memory::leak_new(0x100);
+        let mut fpu = FPU::default();
+
+        // Values that do not fit in 18 packed BCD digits — whether finite
+        // or not — produce the all-0xff indefinite encoding.
+        for val in [f64::NAN, f64::INFINITY, 2.0e18, -2.0e18] {
+            memory.bytes[0x30..0x3a].fill(0);
+            fpu.push(val);
+            fpu.bstp(&mut memory, 0x30);
+            assert_eq!(
+                &memory.bytes[0x30..0x3a],
+                &[0xff; 10],
+                "value {val} should store indefinite"
+            );
+        }
+
+        // 1e18 is already too large for the 18-digit field.
+        memory.bytes[0x30..0x3a].fill(0);
+        fpu.push(1.0e18);
+        fpu.bstp(&mut memory, 0x30);
+        assert_eq!(&memory.bytes[0x30..0x3a], &[0xff; 10]);
+
+        // A comfortably in-range value still encodes normally: 42.
+        memory.bytes[0x30..0x3a].fill(0);
+        fpu.push(42.0);
+        fpu.bstp(&mut memory, 0x30);
+        let mut expected = [0u8; 10];
+        expected[0] = 0x42;
+        assert_eq!(&memory.bytes[0x30..0x3a], &expected);
     }
 
     #[test]
