@@ -355,11 +355,19 @@ pub fn VirtualAlloc(
 #[win32_derive::dllexport]
 pub fn VirtualFree(
     _ctx: &mut Context,
-    _lpAddress: Ptr<()>,
-    _dwSize: u32,
-    _dwFreeType: u32, /* VIRTUAL_FREE_TYPE */
+    lpAddress: Ptr<()>,
+    dwSize: u32,
+    dwFreeType: u32, /* VIRTUAL_FREE_TYPE */
 ) -> bool {
-    true // success
+    const MEM_DECOMMIT: u32 = 0x4000;
+    const MEM_RELEASE: u32 = 0x8000;
+    match dwFreeType {
+        // All emulated memory is always committed; decommit is a no-op.
+        MEM_DECOMMIT => true,
+        // MEM_RELEASE releases the whole region and requires dwSize == 0.
+        MEM_RELEASE => dwSize == 0 && lpAddress.addr != 0 && lock().mappings.free(lpAddress.addr),
+        _ => false,
+    }
 }
 
 #[win32_derive::dllexport]

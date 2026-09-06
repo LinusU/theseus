@@ -135,6 +135,20 @@ impl Mappings {
         self.mappings.len()
     }
 
+    /// Release a dynamically created mapping by its base address, as
+    /// VirtualFree's MEM_RELEASE does. Mappings created from the loaded
+    /// image (`section`) cannot be released.
+    pub fn free(&mut self, addr: u32) -> bool {
+        let Some(i) = self.mappings.iter().position(|m| m.addr == addr) else {
+            return false;
+        };
+        if self.mappings[i].section {
+            return false;
+        }
+        self.mappings.remove(i);
+        true
+    }
+
     pub fn dump(&self) {
         println!("{:#x?}", self.mappings);
     }
@@ -228,5 +242,22 @@ mod tests {
             mappings.try_alloc("tail".into(), 0x7000, 0x12000),
             Some(0xa000)
         );
+    }
+
+    #[test]
+    fn free_releases_allocations_but_not_sections() {
+        let mut mappings = Mappings::from(vec![
+            Mapping {
+                desc: "image".into(),
+                addr: 0x1000,
+                size: 0x1000,
+                section: true,
+            },
+            mapping(0x9000, 0x1000),
+        ]);
+        assert!(!mappings.free(0x1000)); // a loaded section
+        assert!(!mappings.free(0x5000)); // no mapping starts there
+        assert!(mappings.free(0x9000));
+        assert_eq!(mappings.vec().len(), 1);
     }
 }
