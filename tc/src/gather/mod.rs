@@ -357,9 +357,8 @@ impl<'a> Traverse<'a> {
             }
             log::info!("scanning mapping {:?}", mapping);
             let data = self.mem.slice(mapping.addr, mapping.size);
-            for ofs in 0..data.len().saturating_sub(4) {
-                let value =
-                    u32::from_le_bytes([data[ofs], data[ofs + 1], data[ofs + 2], data[ofs + 3]]);
+            for window in data.windows(4) {
+                let value = u32::from_le_bytes(window.try_into().unwrap());
                 if code.contains(&value) {
                     found.push(value);
                 }
