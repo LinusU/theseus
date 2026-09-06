@@ -403,7 +403,19 @@ impl Surface {
     ) -> Option<std::borrow::Cow<'a, [u8]>> {
         let addr = self.pixels?;
         let size = self.width * self.height * self.bytes_per_pixel;
-        let pixels = &mem[addr..][..size as usize];
+        let Some(pixels) = mem
+            .bytes
+            .get(addr as usize..)
+            .and_then(|b| b.get(..size as usize))
+        else {
+            log::warn!(
+                "surface {}x{}x{} pixels at {addr:#x} out of range",
+                self.width,
+                self.height,
+                self.bytes_per_pixel
+            );
+            return None;
+        };
         Some(match self.bytes_per_pixel {
             1 => {
                 let palette = palette.as_ref()?;
