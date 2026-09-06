@@ -553,7 +553,7 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn GetProperty(ctx: &mut Context, this: u32, rguidProp: u32, pdiph: u32) -> u32 {
-        if pdiph == 0 {
+        if pdiph < 0x1000 {
             return E_POINTER;
         }
         if rguidProp == DIPROP_BUFFERSIZE {
@@ -589,7 +589,7 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn SetProperty(ctx: &mut Context, this: u32, rguidProp: u32, pdiph: u32) -> u32 {
-        if pdiph == 0 {
+        if pdiph < 0x1000 {
             return DIERR_INVALIDPARAM;
         }
         if rguidProp == DIPROP_BUFFERSIZE {
@@ -1054,6 +1054,44 @@ mod tests {
             IDirectInputDevice::GetProperty(&mut ctx, 0x2100, DIPROP_SATURATION, 0x1100),
             DIERR_INVALIDPARAM
         );
+    }
+
+    #[test]
+    fn set_and_get_property_reject_null_pointers() {
+        let mut ctx = context();
+        lock().devices.insert(
+            0x2100,
+            Device {
+                kind: DeviceKind::Joystick,
+                acquired: false,
+                guid: GUID_Joystick,
+                properties: HashMap::new(),
+                refcount: 1,
+            },
+        );
+
+        // SetProperty must not read or store from a null-page pdiph.
+        ctx.memory[0x500..][..20].fill(0xAB);
+        assert_eq!(
+            IDirectInputDevice::SetProperty(&mut ctx, 0x2100, DIPROP_DEADZONE, 0x500),
+            DIERR_INVALIDPARAM
+        );
+        assert!(
+            !lock()
+                .devices
+                .get(&0x2100)
+                .unwrap()
+                .properties
+                .contains_key(&DIPROP_DEADZONE)
+        );
+
+        // GetProperty (BUFFERSIZE branch) must not write through a null-page pdiph.
+        ctx.memory[0x500..][..8].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetProperty(&mut ctx, 0x2100, DIPROP_BUFFERSIZE, 0x500),
+            E_POINTER
+        );
+        assert_eq!(&ctx.memory.bytes[0x500..0x508], &[0xCD; 8]);
     }
 
     #[test]
