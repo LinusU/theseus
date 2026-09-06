@@ -294,4 +294,24 @@ mod tests {
         assert_eq!(HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(0x40), 8), 0);
         lock().heaps.remove(&hheap);
     }
+
+    #[test]
+    fn heap_alloc_rejects_overflowing_sizes() {
+        kernel32::ensure_test_state();
+        let mut ctx = context();
+        let heap = crate::heap::Heap::new(0x100_000, 0x10_000);
+        let hheap = heap.addr;
+        lock().heaps.insert(hheap, heap);
+
+        // A request whose size+4 header adjustment overflows must fail
+        // rather than panic on the ZERO_MEMORY fill or vend a tiny block
+        // the guest believes is nearly 4 GiB.
+        assert_eq!(
+            HeapAlloc(&mut ctx, hheap, HEAP_FLAGS::ZERO_MEMORY, u32::MAX - 3),
+            0
+        );
+        assert_eq!(HeapAlloc(&mut ctx, hheap, HEAP_FLAGS::empty(), u32::MAX), 0);
+        assert_eq!(GlobalAlloc(&mut ctx, GMEM::ZEROINIT, u32::MAX - 3), 0);
+        lock().heaps.remove(&hheap);
+    }
 }

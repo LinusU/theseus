@@ -79,7 +79,10 @@ impl FreeList {
 
     fn alloc(&mut self, mem: &mut Memory, size: u32) -> Option<u32> {
         // TODO: align
-        let size = size + 4;
+        // The 4-byte header must not wrap the request size: a guest asking
+        // for u32::MAX - 3 would otherwise be handed a tiny live block it
+        // believes is nearly 4 GiB.
+        let size = size.checked_add(4)?;
         let i = self.nodes.iter().position(|f| f.size >= size)?;
         let free = &mut self.nodes[i];
         let addr = free.addr;
@@ -193,6 +196,18 @@ mod tests {
         assert_eq!(list.nodes[0].addr, 0x4000);
         assert_eq!(list.nodes[0].size, 0x300);
         assert_eq!(list.alloc(&mut mem, 0x2fc), Some(0x4004));
+    }
+
+    #[test]
+    fn alloc_rejects_sizes_that_overflow_the_header() {
+        let mut mem = Memory::leak_new(0x10_000);
+        let mut list = FreeList::new(0x4000, 0x300);
+        // A request whose size+4 header adjustment wraps to a small value
+        // must fail instead of vending a tiny live block.
+        assert_eq!(list.alloc(&mut mem, u32::MAX - 3), None);
+        assert_eq!(list.alloc(&mut mem, u32::MAX), None);
+        // The free list is untouched and still serves normal requests.
+        assert_eq!(list.alloc(&mut mem, 0xfc), Some(0x4004));
     }
 
     #[test]
