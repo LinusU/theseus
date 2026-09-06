@@ -143,7 +143,12 @@ impl kernel32::State {
         self.process_heap = process_heap;
 
         let peb_addr = (peb as *const _ as usize - origin) as u32;
-        self.init_thread(ctx, peb_addr);
+        // The initial thread is fatal on failure: the guest cannot run
+        // without a TEB and a stack.
+        assert!(
+            self.init_thread(ctx, peb_addr),
+            "initial thread setup failed"
+        );
     }
 }
 

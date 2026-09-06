@@ -92,7 +92,7 @@ impl kernel32::State {
         ctx: &mut Context,
         name: String,
         proc: impl FnOnce(&mut Context) + Send + 'static,
-    ) {
+    ) -> bool {
         let handle = self.objects.add(Object::Thread);
         let mut new_ctx = Context {
             cpu: runtime::CPU::default(),
@@ -105,43 +105,55 @@ impl kernel32::State {
             recent: [Context::return_from_x86; 4],
         };
         self.next_thread_id += 1;
-        self.init_thread(&mut new_ctx, teb(ctx).Peb);
-        std::thread::Builder::new()
+        // Mapping or spawn exhaustion turns into a null handle rather
+        // than a host panic: a guest that spams CreateThread only DoSes
+        // itself.
+        if !self.init_thread(&mut new_ctx, teb(ctx).Peb) {
+            self.objects.remove(handle);
+            return false;
+        }
+        if let Err(err) = std::thread::Builder::new()
             .name(name)
             .spawn(move || proc(&mut new_ctx))
-            .unwrap();
+        {
+            log::warn!("create_thread: host spawn failed: {err}");
+            self.objects.remove(handle);
+            return false;
+        }
+        true
     }
 
     // shared between the process initial thread and create_thread
-    pub fn init_thread(&mut self, ctx: &mut Context, peb_addr: u32) {
+    pub fn init_thread(&mut self, ctx: &mut Context, peb_addr: u32) -> bool {
         let memory_size = ctx.memory.bytes.len() as u32;
-        let teb_addr = self
-            .mappings
-            .try_alloc(
-                format!("thread {} TEB", ctx.thread_id),
-                std::mem::size_of::<TEB>() as u32,
-                memory_size,
-            )
-            .expect("thread TEB mapping could not be allocated");
-        let teb = Ptr::<TEB>::new(teb_addr)
-            .aligned_mut(&mut ctx.memory)
-            .unwrap();
+        let Some(teb_addr) = self.mappings.try_alloc(
+            format!("thread {} TEB", ctx.thread_id),
+            std::mem::size_of::<TEB>() as u32,
+            memory_size,
+        ) else {
+            log::warn!("thread TEB mapping could not be allocated");
+            return false;
+        };
+        let Some(teb) = Ptr::<TEB>::new(teb_addr).aligned_mut(&mut ctx.memory) else {
+            return false;
+        };
         teb.Peb = peb_addr;
         teb.Tib._Self = teb_addr;
         ctx.cpu.regs.fs_base = teb_addr;
 
         let stack_size = 64 << 10;
-        let stack_addr = self
-            .mappings
-            .try_alloc(
-                format!("thread {} stack", ctx.thread_id),
-                stack_size,
-                memory_size,
-            )
-            .expect("thread stack mapping could not be allocated");
+        let Some(stack_addr) = self.mappings.try_alloc(
+            format!("thread {} stack", ctx.thread_id),
+            stack_size,
+            memory_size,
+        ) else {
+            log::warn!("thread stack mapping could not be allocated");
+            return false;
+        };
         let stack_pointer = stack_addr + stack_size;
         ctx.cpu.regs.esp = stack_pointer;
         ctx.cpu.regs.ebp = stack_pointer;
+        true
     }
 }
 
@@ -158,11 +170,15 @@ pub fn CreateThread(
     let mut lock = kernel32::lock();
     let id = lock.next_thread_id;
     let name = format!("thread {}@{:x}", id, lpStartAddress.addr);
-    lock.create_thread(ctx, name, move |ctx| {
+    let spawned = lock.create_thread(ctx, name, move |ctx| {
         let f = ctx.indirect(lpStartAddress.addr);
         ctx.call32_x86(f, vec![lpParameter.addr]);
     });
-    HANDLE::from_raw(id)
+    if spawned {
+        HANDLE::from_raw(id)
+    } else {
+        HANDLE::null()
+    }
 }
 
 #[win32_derive::dllexport]
