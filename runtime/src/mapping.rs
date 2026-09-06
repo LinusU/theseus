@@ -43,24 +43,9 @@ impl Mappings {
         addr
     }
 
-    pub fn alloc(&mut self, desc: String, size: u32) -> u32 {
-        let size = round_to_page(size);
-        let mut new_mapping = Mapping {
-            desc,
-            addr: 0,
-            section: false,
-            size,
-        };
-
-        let index = self.insert_index(&mut new_mapping);
-        let addr = new_mapping.addr;
-        self.mappings.insert(index, new_mapping);
-        addr
-    }
-
-    /// Like `alloc`, but bounded by `limit` (typically the size of emulated
-    /// memory): returns `None` when no gap can hold the mapping rather than
-    /// handing out an address that cannot be backed.
+    /// Allocate a guest-visible mapping, bounded by `limit` (typically the size
+    /// of emulated memory). Returns `None` when no gap can hold the mapping
+    /// rather than handing out an address that cannot be backed.
     pub fn try_alloc(&mut self, desc: String, size: u32, limit: u32) -> Option<u32> {
         let size = round_to_page(size);
         let mut prev_end = 0u64;
