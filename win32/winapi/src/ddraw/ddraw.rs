@@ -462,7 +462,13 @@ impl Surface {
         };
         let width = self.width;
         match &mut self.target {
-            Target::Window(_) => unreachable!(),
+            // A window-target surface has no texture of its own; present()
+            // borrows the back buffer's. AddAttachedSurface can make such a
+            // surface another surface's flip link, so this is a soft no-op
+            // rather than a panic — flip() reports ERR_INVALIDSURFACETYPE.
+            Target::Window(_) => {
+                log::debug!("update_texture on a window-target surface; nothing to upload")
+            }
             Target::Texture(texture) => {
                 texture.set_pixels(&pixels, width * 4);
             }
