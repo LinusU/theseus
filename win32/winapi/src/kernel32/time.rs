@@ -77,6 +77,13 @@ pub fn GetTickCount(_ctx: &mut Context) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn QueryPerformanceCounter(ctx: &mut Context, lpPerformanceCount: crate::Ptr<u64>) -> bool {
+    if !crate::ddraw::guest_range(
+        ctx,
+        lpPerformanceCount.addr,
+        std::mem::size_of::<u64>() as u32,
+    ) {
+        return false;
+    }
     lpPerformanceCount
         .write(&mut ctx.memory, host::host().time() as u64)
         .is_some()
@@ -84,6 +91,9 @@ pub fn QueryPerformanceCounter(ctx: &mut Context, lpPerformanceCount: crate::Ptr
 
 #[win32_derive::dllexport]
 pub fn QueryPerformanceFrequency(ctx: &mut Context, lpFrequency: crate::Ptr<u64>) -> bool {
+    if !crate::ddraw::guest_range(ctx, lpFrequency.addr, std::mem::size_of::<u64>() as u32) {
+        return false;
+    }
     lpFrequency.write(&mut ctx.memory, 1_000).is_some()
 }
 
@@ -141,7 +151,8 @@ pub fn FileTimeToSystemTime(
 #[cfg(test)]
 mod tests {
     use super::{
-        FileTimeToLocalFileTime, FileTimeToSystemTime, GetLocalTime, GetSystemTime, SYSTEMTIME,
+        FileTimeToLocalFileTime, FileTimeToSystemTime, GetLocalTime, GetSystemTime,
+        QueryPerformanceCounter, QueryPerformanceFrequency, SYSTEMTIME,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -176,6 +187,19 @@ mod tests {
         GetSystemTime(&mut ctx, Ptr::new(0x2000));
         let year = ctx.memory.read::<u16>(0x2000);
         assert!((2000..3000).contains(&year));
+    }
+
+    #[test]
+    fn query_performance_pointers_reject_bad_output_pointers() {
+        let mut ctx = context();
+        // Low and far out-of-range output pointers return false without panic.
+        assert!(!QueryPerformanceCounter(&mut ctx, Ptr::new(0x500)));
+        assert!(!QueryPerformanceFrequency(&mut ctx, Ptr::new(0xffff_fff0)));
+        // Valid pointers write the expected values.
+        assert!(QueryPerformanceCounter(&mut ctx, Ptr::new(0x1000)));
+        assert!(ctx.memory.read::<u64>(0x1000) > 0);
+        assert!(QueryPerformanceFrequency(&mut ctx, Ptr::new(0x2000)));
+        assert_eq!(ctx.memory.read::<u64>(0x2000), 1_000);
     }
 
     #[test]
