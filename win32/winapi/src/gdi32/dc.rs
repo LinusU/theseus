@@ -436,13 +436,21 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
     };
 
     // Bresenham rasterization covering horizontal, vertical, and
-    // diagonal segments, with per-pixel clipping.
-    let mut x0 = dc.pos.x;
-    let mut y0 = dc.pos.y;
-    let dx = (x - x0).abs();
-    let sx = if x0 < x { 1 } else { -1 };
-    let dy = -(y - y0).abs();
-    let sy = if y0 < y { 1 } else { -1 };
+    // diagonal segments, with per-pixel clipping. Off-screen pixels are
+    // discarded anyway, so the walk's endpoints are clamped to just past
+    // the bitmap edges: without that a distant endpoint would walk
+    // billions of off-screen steps (and the i32 deltas could overflow).
+    // `dc.pos` still records the real endpoint.
+    let max_x = width.min(i32::MAX as u32) as i32;
+    let max_y = height.min(i32::MAX as u32) as i32;
+    let mut x0 = dc.pos.x.clamp(-1, max_x);
+    let mut y0 = dc.pos.y.clamp(-1, max_y);
+    let x_end = x.clamp(-1, max_x);
+    let y_end = y.clamp(-1, max_y);
+    let dx = (x_end - x0).abs();
+    let sx = if x0 < x_end { 1 } else { -1 };
+    let dy = -(y_end - y0).abs();
+    let sy = if y0 < y_end { 1 } else { -1 };
     let mut err = dx + dy;
 
     let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
@@ -456,7 +464,7 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
                 .and_then(|b| b.try_into().ok())
                 .map(u32::from_le_bytes)
             else {
-                continue;
+                break;
             };
             if let Some(v) = rop(d)
                 && let Some(dst) = pixels.get_mut(i..i + 4)
@@ -464,7 +472,7 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
                 dst.copy_from_slice(&((v & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
             }
         }
-        if x0 == x && y0 == y {
+        if x0 == x_end && y0 == y_end {
             break;
         }
         let e2 = 2 * err;
@@ -532,7 +540,7 @@ pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{COLORREF, Font, SIZE, SetPixel, text_extent};
+    use super::{COLORREF, Font, LineTo, SIZE, SetPixel, text_extent};
     use crate::gdi32;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -572,5 +580,19 @@ mod tests {
         let hdc = gdi32::lock().new_memory_dc(bitmap);
         let result = SetPixel(&mut ctx, hdc, 0, 0, COLORREF::from_rgb(0, 0, 0));
         assert_eq!(result.as_win32(), 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn line_to_clamps_far_offscreen_endpoints() {
+        let mut ctx = context();
+        let bitmap = gdi32::Bitmap::new_simple(4, 4, 0x3000);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        // A distant endpoint would walk billions of off-screen steps
+        // without clamping; the clamped walk still draws the visible
+        // diagonal, and the current position records the real endpoint.
+        assert!(LineTo(&mut ctx, hdc, i32::MAX, i32::MAX));
+        let pos = gdi32::lock().dcs.get(hdc).map(|dc| dc.pos);
+        assert_eq!(pos.map(|p| (p.x, p.y)), Some((i32::MAX, i32::MAX)));
+        assert_ne!(ctx.memory.read::<u32>(0x3000), 0);
     }
 }
