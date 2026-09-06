@@ -771,14 +771,16 @@ pub mod IDirectInputDevice {
         }
         user32::pump_host_input();
 
+        // The in/out count pointer must be readable so we can write the count
+        // back even when the caller just wants the number of pending events.
+        let Some(capacity) = crate::Ptr::<u32>::new(pdwInOut).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
         // A null array means the caller wants the pending events discarded,
         // or, with DIGDD_PEEK, just counted.
         let capacity = if rgdod == 0 {
             usize::MAX
         } else {
-            let Some(capacity) = crate::Ptr::<u32>::new(pdwInOut).read(&ctx.memory) else {
-                return DIERR_INVALIDPARAM;
-            };
             capacity as usize
         };
         let peek = dwFlags & DIGDD_PEEK != 0;
