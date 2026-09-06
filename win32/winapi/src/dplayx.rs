@@ -151,7 +151,7 @@ pub mod IDirectPlayLobby3A {
     }
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return E_POINTER;
         }
         if riid == 0 {
@@ -186,7 +186,7 @@ pub mod IDirectPlayLobby3A {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return E_POINTER;
         }
         if riid == 0 {
@@ -232,7 +232,7 @@ pub mod IDirectPlayLobby3A {
         _pUnkOuter: u32,
     ) -> u32 {
         if lplpDP2 != 0 {
-            _ctx.memory.write::<u32>(lplpDP2, 0);
+            let _ = crate::Ptr::<u32>::new(lplpDP2).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }
@@ -249,7 +249,7 @@ pub mod IDirectPlayLobby3A {
         lpdwAddressBufferSize: u32,
     ) -> u32 {
         if lpdwAddressBufferSize != 0 {
-            _ctx.memory.write::<u32>(lpdwAddressBufferSize, 0);
+            let _ = crate::Ptr::<u32>::new(lpdwAddressBufferSize).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }
@@ -300,7 +300,7 @@ pub mod IDirectPlayLobby3A {
         if lpdwSize == 0 {
             return E_POINTER;
         }
-        _ctx.memory.write::<u32>(lpdwSize, 0);
+        let _ = crate::Ptr::<u32>::new(lpdwSize).write(&mut _ctx.memory, 0);
         E_FAIL
     }
 
@@ -315,10 +315,10 @@ pub mod IDirectPlayLobby3A {
         lpdwDataSize: u32,
     ) -> u32 {
         if lpdwMessageFlags != 0 {
-            _ctx.memory.write::<u32>(lpdwMessageFlags, 0);
+            let _ = crate::Ptr::<u32>::new(lpdwMessageFlags).write(&mut _ctx.memory, 0);
         }
         if lpdwDataSize != 0 {
-            _ctx.memory.write::<u32>(lpdwDataSize, 0);
+            let _ = crate::Ptr::<u32>::new(lpdwDataSize).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }
@@ -333,7 +333,7 @@ pub mod IDirectPlayLobby3A {
         _hReceiveEvent: u32,
     ) -> u32 {
         if lpdwAppID != 0 {
-            _ctx.memory.write::<u32>(lpdwAppID, 0);
+            let _ = crate::Ptr::<u32>::new(lpdwAppID).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }
@@ -382,7 +382,7 @@ pub mod IDirectPlayLobby3A {
         lpdwAddressSize: u32,
     ) -> u32 {
         if lpdwAddressSize != 0 {
-            _ctx.memory.write::<u32>(lpdwAddressSize, 0);
+            let _ = crate::Ptr::<u32>::new(lpdwAddressSize).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }
@@ -397,7 +397,7 @@ pub mod IDirectPlayLobby3A {
         _pUnkOuter: u32,
     ) -> u32 {
         if lplpDP3 != 0 {
-            _ctx.memory.write::<u32>(lplpDP3, 0);
+            let _ = crate::Ptr::<u32>::new(lplpDP3).write(&mut _ctx.memory, 0);
         }
         E_FAIL
     }

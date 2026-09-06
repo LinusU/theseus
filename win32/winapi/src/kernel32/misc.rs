@@ -60,7 +60,8 @@ pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -
     let name = b"THESEUS";
     let size = nSize.read(&ctx.memory).unwrap_or(0);
     let output_len = name.len() + 1;
-    if (size as usize) < output_len
+    if lpBuffer.addr < 0x1000
+        || (size as usize) < output_len
         || (lpBuffer.addr as usize)
             .checked_add(output_len)
             .is_none_or(|end| end > ctx.memory.bytes.len())
@@ -132,7 +133,9 @@ pub fn CreateProcessA(
 
 #[win32_derive::dllexport]
 pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
-    let size = ctx.memory.read::<u32>(lpStartupInfo.addr);
+    let Some(size) = crate::Ptr::<u32>::new(lpStartupInfo.addr).read(&ctx.memory) else {
+        return;
+    };
     if size > 0 && size < std::mem::size_of::<STARTUPINFOA>() as u32 {
         log::error!("GetStartupInfoA: undersized buffer");
         return;
@@ -609,12 +612,14 @@ fn read_ini(path: &str) -> Option<Vec<(String, String, String)>> {
 /// Write a UTF-16 string into a caller buffer with the profile-API contract:
 /// truncated to `nSize - 1`, NUL-terminated, returns the count excluding NUL.
 fn write_wstr(ctx: &mut Context, addr: u32, value: &str, nSize: u32) -> u32 {
-    if nSize == 0 || addr == 0 {
+    if nSize == 0 || addr < 0x1000 {
         return 0;
     }
     let units: Vec<u16> = value.encode_utf16().collect();
     let copy = (nSize as usize - 1).min(units.len());
-    let end = addr as usize + (copy + 1) * 2;
+    let Some(end) = (addr as usize).checked_add((copy + 1) * 2) else {
+        return 0;
+    };
     if end > ctx.memory.bytes.len() {
         return 0;
     }
@@ -637,6 +642,14 @@ fn write_wstr_multi(ctx: &mut Context, addr: u32, entries: &[String], nSize: u32
         out.push(0);
     }
     out.push(0);
+    // Both branches below write at most this many u16 units at `addr`.
+    let units = out.len().min(nSize as usize);
+    let Some(end) = (addr as usize).checked_add(units * 2) else {
+        return 0;
+    };
+    if addr < 0x1000 || end > ctx.memory.bytes.len() {
+        return 0;
+    }
     if out.len() <= nSize as usize {
         for (i, c) in out.iter().enumerate() {
             ctx.memory.write::<u16>(addr + i as u32 * 2, *c);
