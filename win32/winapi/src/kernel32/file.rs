@@ -196,10 +196,15 @@ pub fn CreateFileA(
     dwDesiredAccess: u32,
     _dwShareMode: u32,
     _lpSecurityAttributes: Ptr<()>,
-    dwCreationDisposition: CreationDisposition,
+    dwCreationDisposition: u32,
     _dwFlagsAndAttributes: u32,
     _hTemplateFile: u32,
 ) -> crate::HANDLE {
+    let Ok(dwCreationDisposition) = CreationDisposition::try_from(dwCreationDisposition) else {
+        log::warn!("CreateFileA: unknown creation disposition {dwCreationDisposition}");
+        crate::kernel32::teb_mut(ctx).LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        return crate::HANDLE::invalid();
+    };
     let name = ctx.memory.read_str(lpFileName.addr).to_owned();
     let path = resolve_path(&name);
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
