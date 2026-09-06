@@ -283,7 +283,14 @@ pub fn ReadFile(
         log::warn!("ReadFile({hFile:?}): unknown handle");
         return false;
     };
-    let buf = &mut ctx.memory[lpBuffer.addr..][..nNumberOfBytesToRead as usize];
+    let Some(buf) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..nNumberOfBytesToRead as usize))
+    else {
+        return false;
+    };
     let mut total = 0;
     while total < buf.len() {
         match file.read(&mut buf[total..]) {
@@ -323,7 +330,14 @@ pub fn WriteFile(
         return 0;
     }
     if hFile == STDOUT_HFILE || hFile == STDERR_HFILE {
-        let buf = &ctx.memory[lpBuffer.addr..][..nNumberOfBytesToWrite as usize];
+        let Some(buf) = ctx
+            .memory
+            .bytes
+            .get(lpBuffer.addr as usize..)
+            .and_then(|b| b.get(..nNumberOfBytesToWrite as usize))
+        else {
+            return 0;
+        };
         host::host().console_write(buf);
         if lpNumberOfBytesWritten.addr != 0 {
             let _ = lpNumberOfBytesWritten.write(&mut ctx.memory, nNumberOfBytesToWrite);
@@ -336,7 +350,14 @@ pub fn WriteFile(
         log::warn!("WriteFile({hFile:x}): unknown handle");
         return 0;
     };
-    let buf = &ctx.memory[lpBuffer.addr..][..nNumberOfBytesToWrite as usize];
+    let Some(buf) = ctx
+        .memory
+        .bytes
+        .get(lpBuffer.addr as usize..)
+        .and_then(|b| b.get(..nNumberOfBytesToWrite as usize))
+    else {
+        return 0;
+    };
     match file.write_all(buf) {
         Ok(()) => {
             drop(kernel32);
@@ -493,7 +514,14 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
     if !crate::ddraw::guest_range(ctx, lpBuffer.addr, bytes.len() as u32 + 1) {
         return 0;
     }
-    ctx.memory[lpBuffer.addr..][..bytes.len()].copy_from_slice(bytes);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..bytes.len()))
+    {
+        dst.copy_from_slice(bytes);
+    }
     ctx.memory
         .write::<u8>(lpBuffer.addr + bytes.len() as u32, 0);
     bytes.len() as u32
