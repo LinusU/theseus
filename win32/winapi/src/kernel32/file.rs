@@ -325,8 +325,12 @@ pub fn ReadFile(
         }
     }
     drop(kernel32);
-    if lpNumberOfBytesRead.addr != 0 {
-        let _ = lpNumberOfBytesRead.write(&mut ctx.memory, total as u32);
+    if lpNumberOfBytesRead.addr != 0
+        && lpNumberOfBytesRead
+            .write(&mut ctx.memory, total as u32)
+            .is_none()
+    {
+        return false;
     }
     true
 }
@@ -742,11 +746,13 @@ mod tests {
         CreateDirectoryA, CreateFileA, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DeleteFileA,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FindFirstFileA, FindNextFileA,
         GetDriveTypeA, GetFileAttributesA, INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER,
-        MoveMethod, SetCurrentDirectoryA, SetFilePointer, drive_type, file_attributes, initial_cwd,
-        resolve_path, wildcard_match,
+        MoveMethod, Object, ReadFile, SetCurrentDirectoryA, SetFilePointer, drive_type,
+        file_attributes, initial_cwd, lock, resolve_path, wildcard_match,
     };
     use crate::Ptr;
+    use host::fs::OpenOptions;
     use runtime::{BlockCache, CPU, Context, Memory};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn context() -> Context {
         crate::kernel32::ensure_test_state();
@@ -886,5 +892,56 @@ mod tests {
         let teb = crate::kernel32::teb(&mut ctx).unwrap();
         assert_eq!(teb.LastErrorValue, 87); // ERROR_INVALID_PARAMETER
         assert!(created.is_invalid());
+    }
+
+    static NEXT_READ_ID: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn read_file_rejects_a_bad_output_count_pointer() {
+        crate::kernel32::ensure_test_state();
+
+        let id = NEXT_READ_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("mm2_readfile_test_{id}.txt"));
+        std::fs::write(&path, b"hello world").unwrap();
+
+        let file = OpenOptions {
+            read: true,
+            write: false,
+            create: false,
+            create_new: false,
+            truncate: false,
+        }
+        .open(&path)
+        .unwrap();
+        let handle = lock().objects.add(Object::File(file));
+
+        let mut ctx = context();
+        ctx.memory.write::<u32>(0x1000, 0);
+
+        // First read succeeds and reports the bytes consumed.
+        assert!(ReadFile(
+            &mut ctx,
+            handle,
+            Ptr::new(0x2000),
+            5,
+            Ptr::new(0x1000),
+            Ptr::new(0)
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x1000), 5);
+        assert_eq!(&ctx.memory.bytes[0x2000..0x2005], b"hello");
+
+        // A non-null but unreadable output count pointer makes the call fail.
+        assert!(!ReadFile(
+            &mut ctx,
+            handle,
+            Ptr::new(0x2000),
+            5,
+            Ptr::new(0xffff_ff00),
+            Ptr::new(0)
+        ));
+        // The previous count is left in place; no out-of-bounds write occurred.
+        assert_eq!(ctx.memory.read::<u32>(0x1000), 5);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
