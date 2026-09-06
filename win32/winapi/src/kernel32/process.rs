@@ -169,18 +169,22 @@ pub fn GetExitCodeProcess(ctx: &mut Context, hProcess: HANDLE, lpExitCode: Ptr<u
 }
 
 #[allow(unused)]
-fn peb_mut(ctx: &mut Context) -> &mut PEB {
-    let peb_addr = teb(ctx).Peb;
+fn peb_mut(ctx: &mut Context) -> Option<&mut PEB> {
+    let teb = teb(ctx)?;
+    let peb_addr = teb.Peb;
     let Some(end) = peb_addr.checked_add(std::mem::size_of::<PEB>() as u32) else {
-        panic!("PEB address overflow");
+        log::warn!("peb_mut: PEB address overflow");
+        return None;
     };
     let Some(peb_bytes) = ctx.memory.bytes.get_mut(peb_addr as usize..end as usize) else {
-        panic!("PEB {peb_addr:#x}..{end:#x} out of bounds");
+        log::warn!("peb_mut: PEB {peb_addr:#x}..{end:#x} out of bounds");
+        return None;
     };
     let Ok((peb, _)) = PEB::mut_from_prefix(peb_bytes) else {
-        panic!("PEB at {peb_addr:#x} is too small");
+        log::warn!("peb_mut: PEB at {peb_addr:#x} is too small");
+        return None;
     };
-    peb
+    Some(peb)
 }
 
 #[win32_derive::dllexport]

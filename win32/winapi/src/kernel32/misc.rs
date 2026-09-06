@@ -7,12 +7,14 @@ use crate::{
 
 #[win32_derive::dllexport]
 pub fn GetLastError(ctx: &mut Context) -> u32 {
-    teb(ctx).LastErrorValue
+    teb(ctx).map_or(0, |teb| teb.LastErrorValue)
 }
 
 #[win32_derive::dllexport]
 pub fn SetLastError(ctx: &mut Context, error: u32) {
-    teb_mut(ctx).LastErrorValue = error;
+    if let Some(teb) = teb_mut(ctx) {
+        teb.LastErrorValue = error;
+    }
 }
 
 #[repr(C)]

@@ -69,7 +69,9 @@ pub fn GetEnvironmentVariableA(
     nSize: u32,
 ) -> u32 {
     if lpName.addr == 0 {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return 0;
     }
     let name = ctx.memory.read_str(lpName.addr).to_string();
@@ -80,7 +82,9 @@ pub fn GetEnvironmentVariableA(
         .find(|(n, _)| n.eq_ignore_ascii_case(&name))
         .map(|(_, v)| v)
     else {
-        teb_mut(ctx).LastErrorValue = ERROR_ENVVAR_NOT_FOUND;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_ENVVAR_NOT_FOUND;
+        }
         return 0;
     };
     let len = value.len() as u32;
@@ -103,12 +107,16 @@ pub fn GetEnvironmentVariableA(
 #[win32_derive::dllexport]
 pub fn SetEnvironmentVariableA(ctx: &mut Context, lpName: Ptr<u8>, lpValue: Ptr<u8>) -> bool {
     if lpName.addr == 0 {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
     let name = ctx.memory.read_str(lpName.addr).to_string();
     if name.is_empty() || name.contains('=') {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
     let mut kernel32 = lock();
@@ -202,7 +210,7 @@ mod tests {
         let got = GetEnvironmentVariableA(&mut ctx, Ptr::new(0x3200), Ptr::new(0x4000), 16);
         assert_eq!(got, 0);
         assert_eq!(
-            crate::kernel32::teb(&mut ctx).LastErrorValue,
+            crate::kernel32::teb(&mut ctx).unwrap().LastErrorValue,
             ERROR_ENVVAR_NOT_FOUND
         );
 

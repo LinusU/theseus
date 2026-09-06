@@ -202,7 +202,9 @@ pub fn CreateFileA(
 ) -> crate::HANDLE {
     let Ok(dwCreationDisposition) = CreationDisposition::try_from(dwCreationDisposition) else {
         log::warn!("CreateFileA: unknown creation disposition {dwCreationDisposition}");
-        crate::kernel32::teb_mut(ctx).LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        }
         return crate::HANDLE::invalid();
     };
     let name = ctx.memory.read_str(lpFileName.addr).to_owned();
@@ -360,7 +362,9 @@ pub fn SetFilePointer(
 ) -> u32 {
     let Ok(dwMoveMethod) = MoveMethod::try_from(dwMoveMethod) else {
         log::warn!("SetFilePointer({hFile:?}, {dwMoveMethod}): unknown move method");
-        crate::kernel32::teb_mut(ctx).LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        }
         return INVALID_SET_FILE_POINTER;
     };
     let distance = if lpDistanceToMoveHigh.addr != 0 {
@@ -377,7 +381,9 @@ pub fn SetFilePointer(
             // pointer stays put; casting it to u64 would wrap to a huge
             // offset instead.
             if distance < 0 {
-                crate::kernel32::teb_mut(ctx).LastErrorValue = 131;
+                if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+                    teb.LastErrorValue = 131;
+                }
                 return INVALID_SET_FILE_POINTER;
             }
             SeekFrom::Start(distance as u64)
@@ -739,9 +745,7 @@ mod tests {
             ),
             INVALID_SET_FILE_POINTER
         );
-        let teb = crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
-            .aligned_ref(&ctx.memory)
-            .unwrap();
+        let teb = crate::kernel32::teb(&mut ctx).unwrap();
         assert_eq!(teb.LastErrorValue, 131); // ERROR_NEGATIVE_SEEK
     }
 

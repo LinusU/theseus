@@ -74,16 +74,14 @@ pub struct TEB {
     pub TlsSlots: [u32; 64],
 }
 
-#[allow(unused)]
-pub fn teb(ctx: &mut Context) -> &TEB {
+pub fn teb(ctx: &mut Context) -> Option<&TEB> {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
-    teb_ptr.aligned_ref(&ctx.memory).unwrap()
+    teb_ptr.aligned_ref(&ctx.memory)
 }
 
-#[allow(unused)]
-pub fn teb_mut(ctx: &mut Context) -> &mut TEB {
+pub fn teb_mut(ctx: &mut Context) -> Option<&mut TEB> {
     let teb_ptr = Ptr::<TEB>::new(ctx.cpu.regs.fs_base);
-    teb_ptr.aligned_mut(&mut ctx.memory).unwrap()
+    teb_ptr.aligned_mut(&mut ctx.memory)
 }
 
 impl kernel32::State {
@@ -113,8 +111,14 @@ impl kernel32::State {
         self.next_thread_id += 1;
         // Mapping or spawn exhaustion turns into a null handle rather
         // than a host panic: a guest that spams CreateThread only DoSes
-        // itself.
-        if !self.init_thread(&mut new_ctx, teb(ctx).Peb) {
+        // itself.  A missing or corrupt TEB on the parent thread also
+        // prevents spawning a valid child.
+        let Some(parent_teb) = teb(ctx) else {
+            log::warn!("create_thread: parent TEB is missing or corrupt");
+            self.objects.remove(handle);
+            return None;
+        };
+        if !self.init_thread(&mut new_ctx, parent_teb.Peb) {
             self.objects.remove(handle);
             return None;
         }
@@ -227,26 +231,40 @@ pub fn TlsAlloc(_ctx: &mut Context) -> u32 {
 #[win32_derive::dllexport]
 pub fn TlsGetValue(ctx: &mut Context, dwTlsIndex: u32) -> u32 {
     if dwTlsIndex >= 64 {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return 0;
     }
-    teb(ctx).TlsSlots[dwTlsIndex as usize]
+    let Some(teb) = teb(ctx) else {
+        log::warn!("TlsGetValue: TEB is missing or corrupt");
+        return 0;
+    };
+    teb.TlsSlots[dwTlsIndex as usize]
 }
 
 #[win32_derive::dllexport]
 pub fn TlsSetValue(ctx: &mut Context, dwTlsIndex: u32, lpTlsValue: u32) -> bool {
     if dwTlsIndex >= 64 {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
-    teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = lpTlsValue;
+    let Some(teb) = teb_mut(ctx) else {
+        log::warn!("TlsSetValue: TEB is missing or corrupt");
+        return false;
+    };
+    teb.TlsSlots[dwTlsIndex as usize] = lpTlsValue;
     true
 }
 
 #[win32_derive::dllexport]
 pub fn TlsFree(ctx: &mut Context, dwTlsIndex: u32) -> bool {
     if dwTlsIndex >= 64 {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
     let allocated = {
@@ -257,11 +275,15 @@ pub fn TlsFree(ctx: &mut Context, dwTlsIndex: u32) -> bool {
         allocated
     };
     if !allocated {
-        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        if let Some(teb) = teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
     // Windows zeroes the slot of the calling thread on free.
-    teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = 0;
+    if let Some(teb) = teb_mut(ctx) {
+        teb.TlsSlots[dwTlsIndex as usize] = 0;
+    }
     true
 }
 
@@ -406,10 +428,7 @@ mod tests {
     }
 
     fn teb_last_error(ctx: &mut Context) -> u32 {
-        crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
-            .aligned_ref(&ctx.memory)
-            .unwrap()
-            .LastErrorValue
+        crate::kernel32::teb(ctx).unwrap().LastErrorValue
     }
 
     #[test]
@@ -422,11 +441,12 @@ mod tests {
         };
         assert!(crate::kernel32::lock().init_thread(&mut ctx, 0));
 
-        let teb = crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
-            .aligned_ref(&ctx.memory)
-            .unwrap();
-        assert_eq!(teb.Tib._Self, ctx.cpu.regs.fs_base);
-        assert_eq!(teb.Tib.StackBase, ctx.cpu.regs.esp);
-        assert_eq!(teb.Tib.StackLimit + (64 << 10), teb.Tib.StackBase);
+        let (tib_self, stack_base, stack_limit) = {
+            let teb = crate::kernel32::teb(&mut ctx).unwrap();
+            (teb.Tib._Self, teb.Tib.StackBase, teb.Tib.StackLimit)
+        };
+        assert_eq!(tib_self, ctx.cpu.regs.fs_base);
+        assert_eq!(stack_base, ctx.cpu.regs.esp);
+        assert_eq!(stack_limit + (64 << 10), stack_base);
     }
 }
