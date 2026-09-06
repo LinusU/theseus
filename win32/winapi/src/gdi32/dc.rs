@@ -220,8 +220,13 @@ fn fill_pixels(
     height: i32,
     color: [u8; 4],
 ) {
-    for py in y..y.saturating_add(height) {
-        for px in x..x.saturating_add(width) {
+    // Clip the rect to the bitmap before looping: out-of-bounds pixels
+    // are discarded anyway, and a hostile rect would otherwise spin
+    // through billions of no-op iterations.
+    let max_x = bitmap.width.min(i32::MAX as u32) as i32;
+    let max_y = bitmap.height.min(i32::MAX as u32) as i32;
+    for py in y.max(0)..y.saturating_add(height).min(max_y) {
+        for px in x.max(0)..x.saturating_add(width).min(max_x) {
             draw_pixel(pixels, bitmap, px, py, color);
         }
     }
@@ -262,6 +267,12 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
     };
     for (index, character) in string.into_iter().enumerate() {
         let origin_x = x.saturating_add(size.cx.saturating_mul(index as i32));
+        // Characters only advance right; once the origin is past the
+        // bitmap's right edge nothing further can draw, which also bounds
+        // the loop for a pathologically large `c`.
+        if size.cx > 0 && origin_x >= bitmap.width.min(i32::MAX as u32) as i32 {
+            break;
+        }
         if opaque {
             fill_pixels(pixels, &bitmap, origin_x, y, size.cx, size.cy, bk_color);
         }
@@ -318,11 +329,15 @@ pub fn Rectangle(
         fill_pixels(pixels, &bitmap, left, top, width, height, fill);
     }
     if let Some(border) = border {
-        for x in left..right {
+        // Clip the border walks to the bitmap the same way fill_pixels
+        // does; the far edges can sit at extreme guest coordinates.
+        let max_x = bitmap.width.min(i32::MAX as u32) as i32;
+        let max_y = bitmap.height.min(i32::MAX as u32) as i32;
+        for x in left.max(0)..right.min(max_x) {
             draw_pixel(pixels, &bitmap, x, top, border);
             draw_pixel(pixels, &bitmap, x, bottom - 1, border);
         }
-        for y in top..bottom {
+        for y in top.max(0)..bottom.min(max_y) {
             draw_pixel(pixels, &bitmap, left, y, border);
             draw_pixel(pixels, &bitmap, right - 1, y, border);
         }
@@ -540,7 +555,7 @@ pub fn SetPixel(ctx: &mut Context, hdc: HDC, x: i32, y: i32, color: COLORREF) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{COLORREF, Font, LineTo, SIZE, SetPixel, text_extent};
+    use super::{COLORREF, Font, LineTo, Rectangle, SIZE, SetPixel, text_extent};
     use crate::gdi32;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -594,5 +609,26 @@ mod tests {
         let pos = gdi32::lock().dcs.get(hdc).map(|dc| dc.pos);
         assert_eq!(pos.map(|p| (p.x, p.y)), Some((i32::MAX, i32::MAX)));
         assert_ne!(ctx.memory.read::<u32>(0x3000), 0);
+    }
+
+    #[test]
+    fn rectangle_clips_extreme_coordinates_to_the_bitmap() {
+        let mut ctx = context();
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3000);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        // A rect spanning far past the bitmap fills only the visible
+        // pixels instead of iterating its full guest extent; the border
+        // edges sit off-screen, so the default white brush lands.
+        assert!(Rectangle(
+            &mut ctx,
+            hdc,
+            i32::MIN / 2,
+            i32::MIN / 2,
+            i32::MAX / 2,
+            i32::MAX / 2
+        ));
+        for px in 0..4u32 {
+            assert_eq!(ctx.memory.read::<u32>(0x3000 + px * 4), 0xffff_ffff);
+        }
     }
 }
