@@ -158,6 +158,13 @@ pub fn CreateProcessA(
 
 #[win32_derive::dllexport]
 pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
+    if !crate::ddraw::guest_range(
+        ctx,
+        lpStartupInfo.addr,
+        std::mem::size_of::<STARTUPINFOA>() as u32,
+    ) {
+        return;
+    }
     let Some(size) = crate::Ptr::<u32>::new(lpStartupInfo.addr).read(&ctx.memory) else {
         return;
     };
@@ -167,6 +174,7 @@ pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
     }
 
     let info = STARTUPINFOA {
+        cb: std::mem::size_of::<STARTUPINFOA>() as u32,
         ..Default::default()
     };
     let _ = lpStartupInfo.write(&mut ctx.memory, info);
@@ -455,9 +463,9 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GetComputerNameA, GetPrivateProfileStringW, GetSystemInfo, GlobalMemoryStatus,
-        MEMORYSTATUS, SYSTEM_INFO, SetConsoleCtrlHandler, SetUnhandledExceptionFilter, lstrcpyW,
-        lstrlenW, processor_feature_present,
+        GetComputerNameA, GetPrivateProfileStringW, GetStartupInfoA, GetSystemInfo,
+        GlobalMemoryStatus, MEMORYSTATUS, STARTUPINFOA, SYSTEM_INFO, SetConsoleCtrlHandler,
+        SetUnhandledExceptionFilter, lstrcpyW, lstrlenW, processor_feature_present,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -504,6 +512,19 @@ mod tests {
             ctx.memory.read::<u32>(0x1000 + 8),
             ctx.memory.bytes.len() as u32
         );
+    }
+
+    #[test]
+    fn startup_info_rejects_bad_output_pointers() {
+        let mut ctx = context();
+        let size = std::mem::size_of::<STARTUPINFOA>() as u32;
+        // Low and far out-of-range output pointers are rejected without panic.
+        GetStartupInfoA(&mut ctx, Ptr::new(0x500));
+        GetStartupInfoA(&mut ctx, Ptr::new(0xffff_fff0));
+        // A valid pointer writes the cb field to the structure size.
+        ctx.memory.write::<u32>(0x1000, size);
+        GetStartupInfoA(&mut ctx, Ptr::new(0x1000));
+        assert_eq!(ctx.memory.read::<u32>(0x1000), size);
     }
 
     #[test]
