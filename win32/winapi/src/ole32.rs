@@ -20,6 +20,11 @@ pub fn CoCreateInstance(
     ppv: Ptr<u32>,
 ) -> u32 /* HRESULT */ {
     const REGDB_E_CLASSNOTREG: u32 = 0x8004_0154;
+    const E_INVALIDARG: u32 = 0x8007_0057;
+
+    if ppv.addr < 0x1000 || !crate::ddraw::guest_range(ctx, ppv.addr, 4) {
+        return E_INVALIDARG;
+    }
 
     if _rclsid != 0
         && let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory)
