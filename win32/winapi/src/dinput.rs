@@ -755,7 +755,9 @@ pub mod IDirectInputDevice {
         pdwInOut: u32,
         dwFlags: u32,
     ) -> u32 {
-        if pdwInOut == 0 {
+        // The count out-param is required; a low non-null event array would
+        // scribble into the null page.
+        if pdwInOut < 0x1000 || (rgdod != 0 && rgdod < 0x1000) {
             return DIERR_INVALIDPARAM;
         }
         let (kind, acquired) = device(this);
@@ -1054,6 +1056,20 @@ mod tests {
             IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0),
             E_POINTER
         );
+    }
+
+    #[test]
+    fn get_device_data_rejects_null_page_pointers() {
+        let mut ctx = context();
+        // The count out-param is required and must be out of the null page;
+        // a low non-null event array is likewise rejected. Both checks run
+        // before device lookup, so an unknown `this` does not matter.
+        for (rgdod, pdw_in_out) in [(0x2000, 0), (0x2000, 0x500), (0x500, 0x2000)] {
+            assert_eq!(
+                IDirectInputDevice::GetDeviceData(&mut ctx, 0x2100, 16, rgdod, pdw_in_out, 0),
+                DIERR_INVALIDPARAM
+            );
+        }
     }
 
     #[test]
