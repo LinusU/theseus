@@ -96,6 +96,26 @@ pub fn DrawTextA(
     line_height.saturating_mul(line_count)
 }
 
+// DEVMODEA field offsets (dmDeviceName is 32 bytes, then the printer fields
+// and dmFormName pad to here). All offsets are u32-aligned.
+const DM_SIZE: u32 = 0x24;
+const DM_FIELDS: u32 = 0x28;
+const DM_BITSPERPEL_OFS: u32 = 0x68;
+const DM_PELSWIDTH_OFS: u32 = 0x6c;
+const DM_PELSHEIGHT_OFS: u32 = 0x70;
+const DM_DISPLAYFREQUENCY_OFS: u32 = 0x78;
+const DEVMODE_LEN: u32 = DM_DISPLAYFREQUENCY_OFS + 4;
+
+/// The display modes a fixed 32bpp/60Hz adapter can offer, in the order
+/// EnumDisplaySettings is expected to enumerate them.
+const DISPLAY_MODES: [(u32, u32); 5] = [
+    (640, 480),
+    (800, 600),
+    (1024, 768),
+    (1280, 1024),
+    (1600, 1200),
+];
+
 #[win32_derive::dllexport]
 pub fn EnumDisplaySettingsA(
     ctx: &mut Context,
@@ -110,23 +130,32 @@ pub fn EnumDisplaySettingsA(
     const DM_PELSHEIGHT: u32 = 0x0010_0000;
     const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
 
-    if !matches!(iModeNum, ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS)
-        || !crate::ddraw::guest_range(ctx, lpDevMode.addr, 0x78)
-    {
+    // Negative-one-sentinel indices query the current/registry mode; small
+    // indices enumerate the list. Anything else reports the list exhausted.
+    let (width, height) = match iModeNum {
+        ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS => DISPLAY_MODES[0],
+        index if (index as usize) < DISPLAY_MODES.len() => DISPLAY_MODES[index as usize],
+        _ => return false,
+    };
+    if !crate::ddraw::guest_range(ctx, lpDevMode.addr, DEVMODE_LEN) {
         return false;
     }
-    if ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94 {
+    if ctx.memory.read::<u16>(lpDevMode.addr + DM_SIZE) < 0x94 {
         return false;
     }
 
     ctx.memory.write::<u32>(
-        lpDevMode.addr + 0x28,
+        lpDevMode.addr + DM_FIELDS,
         DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY,
     );
-    ctx.memory.write::<u32>(lpDevMode.addr + 0x64, 32);
-    ctx.memory.write::<u32>(lpDevMode.addr + 0x68, 640);
-    ctx.memory.write::<u32>(lpDevMode.addr + 0x6c, 480);
-    ctx.memory.write::<u32>(lpDevMode.addr + 0x74, 60);
+    ctx.memory
+        .write::<u32>(lpDevMode.addr + DM_BITSPERPEL_OFS, 32);
+    ctx.memory
+        .write::<u32>(lpDevMode.addr + DM_PELSWIDTH_OFS, width);
+    ctx.memory
+        .write::<u32>(lpDevMode.addr + DM_PELSHEIGHT_OFS, height);
+    ctx.memory
+        .write::<u32>(lpDevMode.addr + DM_DISPLAYFREQUENCY_OFS, 60);
     true
 }
 
@@ -144,39 +173,45 @@ pub fn ChangeDisplaySettingsA(ctx: &mut Context, lpDevMode: Ptr<u8>, _dwFlags: u
     if lpDevMode.addr == 0 {
         return DISP_CHANGE_SUCCESSFUL;
     }
-    if !crate::ddraw::guest_range(ctx, lpDevMode.addr, 0x7c)
-        || ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94
+    if !crate::ddraw::guest_range(ctx, lpDevMode.addr, DEVMODE_LEN)
+        || ctx.memory.read::<u16>(lpDevMode.addr + DM_SIZE) < 0x94
     {
         return DISP_CHANGE_BADMODE;
     }
 
-    let fields = ctx.memory.read::<u32>(lpDevMode.addr + 0x28);
+    let fields = ctx.memory.read::<u32>(lpDevMode.addr + DM_FIELDS);
     if fields & !SUPPORTED_FIELDS != 0 {
         return DISP_CHANGE_BADMODE;
     }
 
     let bits_per_pixel = if fields & DM_BITSPERPEL != 0 {
-        ctx.memory.read::<u32>(lpDevMode.addr + 0x68)
+        ctx.memory.read::<u32>(lpDevMode.addr + DM_BITSPERPEL_OFS)
     } else {
         32
     };
     let width = if fields & DM_PELSWIDTH != 0 {
-        ctx.memory.read::<u32>(lpDevMode.addr + 0x6c)
+        ctx.memory.read::<u32>(lpDevMode.addr + DM_PELSWIDTH_OFS)
     } else {
         640
     };
     let height = if fields & DM_PELSHEIGHT != 0 {
-        ctx.memory.read::<u32>(lpDevMode.addr + 0x70)
+        ctx.memory.read::<u32>(lpDevMode.addr + DM_PELSHEIGHT_OFS)
     } else {
         480
     };
     let frequency = if fields & DM_DISPLAYFREQUENCY != 0 {
-        ctx.memory.read::<u32>(lpDevMode.addr + 0x78)
+        ctx.memory
+            .read::<u32>(lpDevMode.addr + DM_DISPLAYFREQUENCY_OFS)
     } else {
         60
     };
 
-    if width != 640 || height != 480 || !matches!(bits_per_pixel, 8 | 16 | 32) || frequency != 60 {
+    // Only modes EnumDisplaySettings advertises can succeed; the others are
+    // reported unsupported rather than resized to a shape nothing can show.
+    if !DISPLAY_MODES.contains(&(width, height))
+        || !matches!(bits_per_pixel, 8 | 16 | 32)
+        || frequency != 60
+    {
         return DISP_CHANGE_BADMODE;
     }
 
@@ -587,7 +622,10 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{GetSystemMetrics, wsprintfA, wsprintfW};
+    use super::{
+        ChangeDisplaySettingsA, EnumDisplaySettingsA, GetSystemMetrics, wsprintfA, wsprintfW,
+    };
+    use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -664,6 +702,33 @@ mod tests {
         // Indices past the table report 0 like Windows, not a panic.
         assert_eq!(GetSystemMetrics(&mut ctx, 100), 0);
         assert_eq!(GetSystemMetrics(&mut ctx, u32::MAX), 0);
+    }
+
+    #[test]
+    fn display_settings_enumerate_then_change() {
+        let mut ctx = context();
+        let devmode = || Ptr::<u8>::new(0x1000);
+        // dmSize must cover the fields the APIs touch.
+        ctx.memory.write::<u16>(0x1000 + 0x24, 0x9c);
+
+        // Indexed enumeration walks the advertised list, then stops.
+        assert!(EnumDisplaySettingsA(&mut ctx, Ptr::new(0), 0, devmode()));
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x68), 32); // dmBitsPerPel
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x6c), 640); // dmPelsWidth
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x70), 480); // dmPelsHeight
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x78), 60); // dmDisplayFrequency
+        assert!(EnumDisplaySettingsA(&mut ctx, Ptr::new(0), 4, devmode()));
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x6c), 1600);
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 0x70), 1200);
+        assert!(!EnumDisplaySettingsA(&mut ctx, Ptr::new(0), 5, devmode()));
+
+        // An enumerated DEVMODE goes straight back to ChangeDisplaySettings.
+        assert_eq!(ChangeDisplaySettingsA(&mut ctx, devmode(), 0), 0);
+
+        // A resolution we never advertised is rejected, not resized to.
+        ctx.memory.write::<u32>(0x1000 + 0x6c, 720);
+        ctx.memory.write::<u32>(0x1000 + 0x70, 576);
+        assert_eq!(ChangeDisplaySettingsA(&mut ctx, devmode(), 0), -2);
     }
 
     #[test]
