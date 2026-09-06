@@ -199,8 +199,11 @@ impl Regs {
         self.eax = val as u32;
     }
 
+    /// The 32-bit DX:AX pair used by 16-bit multiply/divide: only the low
+    /// words participate, so garbage in the high halves of EAX/EDX (routine
+    /// in 32-bit code) must not leak into the dividend.
     pub fn get_dx_ax(&self) -> u32 {
-        (self.edx << 16) | self.eax
+        ((self.edx & 0xffff) << 16) | (self.eax & 0xffff)
     }
 
     pub fn set_dx_ax(&mut self, val: u32) {
@@ -220,5 +223,27 @@ impl Regs {
             "cs={:04x} ds={:04x} es={:04x} fs={:04x} gs={:04x} ss={:04x}",
             self.cs, self.ds, self.es, self.fs, self.gs, self.ss
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dx_ax_ignores_the_high_words_of_edx_and_eax() {
+        // 16-bit div/idiv read DX:AX; 32-bit code routinely leaves data in
+        // the high halves of EAX/EDX, which must not enter the dividend.
+        let mut regs = Regs::default();
+        regs.eax = 0xdead_5678;
+        regs.edx = 0xbeef_1234;
+        assert_eq!(regs.get_dx_ax(), 0x1234_5678);
+
+        regs.set_dx_ax(0xabcd_9abc);
+        assert_eq!(regs.get_dx(), 0xabcd);
+        assert_eq!(regs.get_ax(), 0x9abc);
+        // set_dx_ax leaves the high halves alone.
+        assert_eq!(regs.eax, 0xdead_9abc);
+        assert_eq!(regs.edx, 0xbeef_abcd);
     }
 }
