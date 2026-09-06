@@ -29,6 +29,12 @@ pub fn CoCreateInstance(
     if _rclsid != 0
         && let Some(clsid) = Ptr::<GUID>::new(_rclsid).read(&ctx.memory)
     {
+        let iid = if _riid != 0 {
+            Ptr::<GUID>::new(_riid).read(&ctx.memory)
+        } else {
+            None
+        };
+        log::debug!("CoCreateInstance clsid={clsid:?} riid={_riid:#x} iid={iid:?}");
         if clsid == dplayx::CLSID_DirectPlayLobby {
             return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
         }
@@ -42,7 +48,9 @@ pub fn CoCreateInstance(
             return dmusic::composer::create(ctx, _riid, ppv.addr);
         }
         if clsid == dmusic::CLSID_DirectMusicSegment {
-            return dmusic::segment::create(ctx, _riid, ppv.addr);
+            let ret = dmusic::segment::create(ctx, _riid, ppv.addr);
+            log::debug!("CoCreateInstance(CLSID_DirectMusicSegment) = {ret:#x}");
+            return ret;
         }
         log::debug!("CoCreateInstance: unregistered class {clsid:?}");
     }

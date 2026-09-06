@@ -55,7 +55,7 @@ pub const CLSID_DirectMusicSegment: GUID = GUID::new(
 );
 
 const IID_IDirectMusicObject: GUID = GUID::new(
-    0xd2ac_2880,
+    0xd2ac_28b5,
     0xb39b,
     0x11d1,
     [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
@@ -113,6 +113,18 @@ const IID_IDirectMusicSegment8: GUID = GUID::new(
     0x41a3,
     0x418f,
     [0xaa, 0x15, 0xb3, 0x50, 0x93, 0xba, 0x42, 0xd4],
+);
+const IID_IPersist: GUID = GUID::new(
+    0x0000_010c,
+    0x0000,
+    0x0000,
+    [0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
+);
+const IID_IPersistStream: GUID = GUID::new(
+    0x0000_0109,
+    0x0000,
+    0x0000,
+    [0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
 );
 
 /// The GUID the single emulated port reports through `EnumPort` and
@@ -776,7 +788,7 @@ pub mod port {
 pub mod music_object {
     use super::*;
 
-    const DMUS_OBJECTDESC_CLASS_OFFSET: u32 = 32;
+    const DMUS_OBJECTDESC_CLASS_OFFSET: u32 = 24;
 
     /// Fill a `DMUS_OBJECTDESC` with the segment class when the caller has
     /// supplied a valid descriptor pointer. The descriptor `dwSize` field at
@@ -840,6 +852,8 @@ pub mod music_object {
                 ],
             ) {
                 ret = super::segment::create(ctx, riid, ppv);
+            } else if iid == IID_IPersistStream || iid == IID_IPersist {
+                ret = super::persist_stream::create(ctx, riid, ppv);
             } else {
                 if crate::Ptr::<u32>::new(ppv)
                     .write(&mut ctx.memory, 0)
@@ -929,6 +943,193 @@ pub mod music_object {
             ],
         ) {
             super::segment::create(ctx, riid, ppv)
+        } else if iid == IID_IPersistStream {
+            super::persist_stream::create(ctx, riid, ppv)
+        } else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            E_NOINTERFACE
+        }
+    }
+}
+
+pub mod persist_stream {
+    use super::*;
+
+    /// GetClassID(this, pClassID): report the segment class.
+    #[allow(non_snake_case)]
+    pub fn GetClassID_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let p_classid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let mut ret = S_OK;
+        if !crate::ddraw::guest_range(ctx, p_classid, 16)
+            || crate::Ptr::<GUID>::new(p_classid)
+                .write(&mut ctx.memory, CLSID_DirectMusicSegment)
+                .is_none()
+        {
+            ret = E_POINTER;
+        }
+        log::debug!("dmusic persist_stream GetClassID (ret={return_addr:#x}) = {ret:#x}");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// IsDirty(this): not dirty.
+    #[allow(non_snake_case)]
+    pub fn IsDirty_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        log::debug!("dmusic persist_stream IsDirty (ret={return_addr:#x}) = S_FALSE");
+        ctx.cpu.regs.eax = S_FALSE;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(2 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// Load(this, pStm): ignore the missing stream and succeed.
+    #[allow(non_snake_case)]
+    pub fn Load_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let pstm = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        log::debug!("dmusic persist_stream Load pstm={pstm:#x} (ret={return_addr:#x}) = S_OK");
+        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// Save(this, pStm, fClearDirty): no-op.
+    #[allow(non_snake_case)]
+    pub fn Save_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        log::debug!("dmusic persist_stream Save (ret={return_addr:#x}) = S_OK");
+        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// GetSizeMax(this, pcbSize): report zero.
+    #[allow(non_snake_case)]
+    pub fn GetSizeMax_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let pcb_size = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let mut ret = S_OK;
+        if pcb_size != 0
+            && (!crate::ddraw::guest_range(ctx, pcb_size, 8)
+                || crate::Ptr::<u32>::new(pcb_size)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+                || crate::Ptr::<u32>::new(pcb_size.wrapping_add(4))
+                    .write(&mut ctx.memory, 0)
+                    .is_none())
+        {
+            ret = E_POINTER;
+        }
+        log::debug!("dmusic persist_stream GetSizeMax (ret={return_addr:#x}) = {ret:#x}");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn QueryInterface_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        let riid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let ppv = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let mut ret = S_OK;
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            ret = E_POINTER;
+        } else if let Some(iid) = read_guid(ctx, riid) {
+            if iid == IID_IPersistStream
+                || iid == IID_IPersist
+                || iid_matches(&iid, &[IID_IUnknown])
+            {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, this)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                }
+            } else if iid_matches(
+                &iid,
+                &[
+                    IID_IDirectMusicSegment,
+                    IID_IDirectMusicSegment2,
+                    IID_IDirectMusicSegment8,
+                ],
+            ) {
+                ret = super::segment::create(ctx, riid, ppv);
+            } else if iid == IID_IDirectMusicObject {
+                ret = super::music_object::create(ctx, riid, ppv);
+            } else {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                } else {
+                    ret = E_NOINTERFACE;
+                }
+            }
+        } else {
+            if crate::Ptr::<u32>::new(ppv)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+            {
+                ret = E_POINTER;
+            } else {
+                ret = E_NOINTERFACE;
+            }
+        }
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    stub!(AddRef_stub, 1, 1);
+    stub!(Release_stub, 1, 0);
+
+    vtable!(
+        PERSIST_STREAM_VTABLE,
+        get_vtable,
+        0xfafc_8000,
+        [
+            QueryInterface_stub,
+            AddRef_stub,
+            Release_stub,
+            GetClassID_stub,
+            IsDirty_stub,
+            Load_stub,
+            Save_stub,
+            GetSizeMax_stub,
+        ]
+    );
+
+    pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            return E_POINTER;
+        }
+        let Some(iid) = read_guid(ctx, riid) else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            return E_NOINTERFACE;
+        };
+        if iid == IID_IPersistStream || iid == IID_IPersist || iid_matches(&iid, &[IID_IUnknown]) {
+            super::create(ctx, riid, ppv, &[IID_IPersistStream], get_vtable)
+        } else if iid_matches(
+            &iid,
+            &[
+                IID_IDirectMusicSegment,
+                IID_IDirectMusicSegment2,
+                IID_IDirectMusicSegment8,
+            ],
+        ) {
+            super::segment::create(ctx, riid, ppv)
+        } else if iid == IID_IDirectMusicObject {
+            super::music_object::create(ctx, riid, ppv)
         } else {
             let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
             E_NOINTERFACE
@@ -969,6 +1170,8 @@ pub mod segment {
                 }
             } else if iid == IID_IDirectMusicObject {
                 ret = super::music_object::create(ctx, riid, ppv);
+            } else if iid == IID_IPersistStream || iid == IID_IPersist {
+                ret = super::persist_stream::create(ctx, riid, ppv);
             } else {
                 if crate::Ptr::<u32>::new(ppv)
                     .write(&mut ctx.memory, 0)
@@ -1002,7 +1205,7 @@ pub mod segment {
     stub!(SetRepeats_stub, 2);
     stub_out!(GetDefaultResolution_stub, 2, 1, S_OK, u32);
     stub!(SetDefaultResolution_stub, 2);
-    stub_out!(GetTrack_stub, 5, 4, S_OK, u32);
+    stub_out!(GetTrack_stub, 5, 4, S_FALSE, u32);
     stub_out!(GetTrackGroup_stub, 3, 2, S_OK, u32);
     stub!(InsertTrack_stub, 3);
     stub!(RemoveTrack_stub, 2);
@@ -1138,6 +1341,8 @@ pub mod segment {
             )
         } else if iid == IID_IDirectMusicObject {
             super::music_object::create(ctx, riid, ppv)
+        } else if iid == IID_IPersistStream || iid == IID_IPersist {
+            super::persist_stream::create(ctx, riid, ppv)
         } else {
             let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
             E_NOINTERFACE
@@ -1162,7 +1367,15 @@ pub mod loader {
         let p_desc = ctx.memory.read::<u32>(esp.wrapping_add(8));
         let riid = ctx.memory.read::<u32>(esp.wrapping_add(12));
         let ppv = ctx.memory.read::<u32>(esp.wrapping_add(16));
+        let iid = if riid != 0 {
+            crate::Ptr::<GUID>::new(riid).read(&ctx.memory)
+        } else {
+            None
+        };
         let mut ret = E_FAIL;
+        log::debug!(
+            "dmusic loader GetObject p_desc={p_desc:#x} riid={riid:#x} iid={iid:?} ppv={ppv:#x}"
+        );
 
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             ret = E_POINTER;
@@ -1171,7 +1384,10 @@ pub mod loader {
             if let Some(iid) = read_guid(ctx, riid)
                 && (iid == IID_IDirectMusicSegment
                     || iid == IID_IDirectMusicSegment2
-                    || iid == IID_IDirectMusicSegment8)
+                    || iid == IID_IDirectMusicSegment8
+                    || iid == IID_IDirectMusicObject
+                    || iid == IID_IPersistStream
+                    || iid == IID_IPersist)
             {
                 wants_segment = true;
             }
