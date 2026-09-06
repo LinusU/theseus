@@ -54,8 +54,8 @@ impl RECT {
 
     pub fn size(&self) -> POINT {
         POINT {
-            x: self.right - self.left,
-            y: self.bottom - self.top,
+            x: self.right.wrapping_sub(self.left),
+            y: self.bottom.wrapping_sub(self.top),
         }
     }
 
@@ -65,10 +65,10 @@ impl RECT {
 
     pub fn add(&self, delta: POINT) -> RECT {
         RECT {
-            left: self.left + delta.x,
-            top: self.top + delta.y,
-            right: self.right + delta.x,
-            bottom: self.bottom + delta.y,
+            left: self.left.wrapping_add(delta.x),
+            top: self.top.wrapping_add(delta.y),
+            right: self.right.wrapping_add(delta.x),
+            bottom: self.bottom.wrapping_add(delta.y),
         }
     }
 }

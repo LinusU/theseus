@@ -8,10 +8,10 @@ pub fn OffsetRect(ctx: &mut Context, lprc: Ptr<RECT>, dx: i32, dy: i32) -> bool 
     let Some(mut rect) = lprc.read(&ctx.memory) else {
         return false;
     };
-    rect.left += dx;
-    rect.right += dx;
-    rect.top += dy;
-    rect.bottom += dy;
+    rect.left = rect.left.wrapping_add(dx);
+    rect.right = rect.right.wrapping_add(dx);
+    rect.top = rect.top.wrapping_add(dy);
+    rect.bottom = rect.bottom.wrapping_add(dy);
     lprc.write(&mut ctx.memory, rect).is_some()
 }
 
