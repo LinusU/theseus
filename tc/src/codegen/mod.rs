@@ -2522,6 +2522,25 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fxtract() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+        let bytes = [0xd9, 0xf4];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+
+        codegen.gen_instr(&instr).unwrap();
+        assert!(codegen.buf.contains("ctx.cpu.fpu.extract();"));
+    }
+
+    #[test]
     fn codegen_handles_fscale() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),

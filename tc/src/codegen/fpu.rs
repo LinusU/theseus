@@ -257,6 +257,7 @@ impl<'a> CodeGen<'a> {
             Fcos => {
                 self.line(self.fpu_set_reg(0, format!("{}.cos()", self.fpu_get_reg(0))));
             }
+            Fxtract => self.line("ctx.cpu.fpu.extract();"),
             Fsincos => {
                 self.line("let fsincos_t = ctx.cpu.fpu.get(0);");
                 self.line("ctx.cpu.fpu.set(0, fsincos_t.sin());");

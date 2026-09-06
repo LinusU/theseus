@@ -237,6 +237,24 @@ impl FPU {
             | (((q & 0b001) as u16) << 9); // Q0 -> C1
     }
 
+    /// FXTRACT: decompose ST(0) into exponent (as an integer real) and
+    /// significand such that `ST(0) == significand * 2^exponent` and
+    /// `1 <= |significand| < 2` (or 0 for a zero input).  After the
+    /// instruction ST(0) holds the significand and ST(1) the exponent.
+    pub fn extract(&mut self) {
+        let val = self.get(0);
+        if !val.is_finite() || val == 0.0 {
+            // For zero, infinity and NaN, both results carry the source sign.
+            self.set(0, val);
+            self.push(val);
+            return;
+        }
+        let exp = val.abs().log2().floor();
+        let sig = val / 2f64.powi(exp as i32);
+        self.set(0, exp.copysign(val));
+        self.push(sig);
+    }
+
     pub fn compare(&mut self, left: f64, right: f64) {
         let Some(cmp) = left.partial_cmp(&right) else {
             self.cmp = std::cmp::Ordering::Equal;
@@ -592,6 +610,27 @@ mod tests {
         assert_eq!(fpu.truncate(-1.9), -1.0);
         assert_eq!(fpu.truncate(1.1), 1.0);
         assert_eq!(fpu.truncate(-1.1), -1.0);
+    }
+
+    #[test]
+    fn fxtract_decomposes_magnitude_and_significand() {
+        let mut fpu = FPU::default();
+        fpu.push(6.0); // 1.5 * 2^2
+        fpu.extract();
+        assert!((fpu.get(0) - 1.5).abs() < 1e-15);
+        assert_eq!(fpu.get(1), 2.0);
+
+        fpu.init();
+        fpu.push(-12.0); // -1.5 * 2^3
+        fpu.extract();
+        assert!((fpu.get(0) - -1.5).abs() < 1e-15);
+        assert_eq!(fpu.get(1), -3.0);
+
+        fpu.init();
+        fpu.push(0.0);
+        fpu.extract();
+        assert_eq!(fpu.get(0), 0.0);
+        assert_eq!(fpu.get(1), 0.0);
     }
 
     #[test]
