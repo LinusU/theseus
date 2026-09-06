@@ -258,11 +258,22 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 self.traverse.queue.enqueue(ip)
             }
             iced_x86::OpKind::FarBranch16 => {
-                let ip = IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into());
+                // In a flat module the selector is a code-segment selector
+                // with base 0, so the target is the offset alone; treating
+                // it as seg:ofs decodes a garbage low-memory address.
+                let ip = if self.traverse.module.segment_addressed() {
+                    IP::Seg((instr.far_branch_selector(), instr.far_branch16()).into())
+                } else {
+                    IP::Flat(instr.far_branch16() as u32)
+                };
                 self.traverse.queue.enqueue(ip);
             }
             iced_x86::OpKind::FarBranch32 => {
-                let ip = IP::Flat(instr.far_branch32());
+                let ip = if self.traverse.module.segment_addressed() {
+                    IP::Seg((instr.far_branch_selector(), instr.far_branch32() as u16).into())
+                } else {
+                    IP::Flat(instr.far_branch32())
+                };
                 self.traverse.queue.enqueue(ip);
             }
             iced_x86::OpKind::Memory => self.control_flow_indirect(ip, new_instr)?,
