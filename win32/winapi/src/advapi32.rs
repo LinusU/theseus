@@ -70,10 +70,8 @@ fn write_out<T>(ctx: &mut Context, addr: u32, value: T)
 where
     T: zerocopy::IntoBytes + zerocopy::Immutable + zerocopy::KnownLayout,
 {
-    if addr != 0 {
-        // An out-of-range out-pointer loses the result rather than
-        // panicking the host.
-        let _ = crate::Ptr::<T>::new(addr).write(&mut ctx.memory, value);
+    if crate::ddraw::guest_range(ctx, addr, std::mem::size_of::<T>() as u32) {
+        crate::Ptr::<T>::new(addr).write(&mut ctx.memory, value);
     }
 }
 
