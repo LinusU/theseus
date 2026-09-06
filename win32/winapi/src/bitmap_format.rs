@@ -178,7 +178,11 @@ impl Bitmap {
                 let Some((header, _)) = BITMAPINFOHEADER::read_from_prefix(buf).ok() else {
                     return Self::degenerate();
                 };
-                Self::parseBMPv3(&header, &buf[header_size as usize..])
+                // A malformed file may declare a header past the buffer's end.
+                let Some(rest) = buf.get(header_size as usize..) else {
+                    return Self::degenerate();
+                };
+                Self::parseBMPv3(&header, rest)
             }
             _ => {
                 log::warn!("unsupported bitmap header size {header_size}");
