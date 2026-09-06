@@ -1396,7 +1396,15 @@ pub mod IDirectDrawSurface7 {
             // GetDC gave the game a 32-bit scratch buffer; convert it back to
             // the surface's depth now.
             let (width, height) = (surface.width, surface.height);
-            let rgba = ctx.memory[scratch..][..(width * height * 4) as usize].to_vec();
+            let len = (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|n| n.checked_mul(4));
+            let start = scratch as usize;
+            let end = len.and_then(|len| start.checked_add(len));
+            let rgba = end
+                .and_then(|end| ctx.memory.bytes.get(start..end))
+                .map(|b| b.to_vec())
+                .unwrap_or_default();
             kernel32::lock().process_heap.free(&mut ctx.memory, scratch);
             let dst = surface.lock(&mut ctx.memory);
             surface.write_rgba(&mut ctx.memory, &rgba, dst);
