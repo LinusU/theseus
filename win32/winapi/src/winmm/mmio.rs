@@ -225,12 +225,16 @@ pub fn mmioRead(ctx: &mut Context, hmmio: u32, pch: u32, cch: u32) -> i32 {
     let Some(file) = winmm.mmio().files.get_mut(&hmmio) else {
         return MMIO_FAILURE;
     };
-    let end = (file.pos + cch as usize).min(file.data.len());
-    let read = end - file.pos;
-    if read > 0 && !guest_fits(ctx, pch, read as u32) {
-        return MMIO_FAILURE;
+    // Descending into a truncated container chunk can leave file.pos past
+    // EOF, and a zero-length read must not touch the guest pointer at all.
+    let end = file.pos.saturating_add(cch as usize).min(file.data.len());
+    let read = end.saturating_sub(file.pos);
+    if read > 0 {
+        if !guest_fits(ctx, pch, read as u32) {
+            return MMIO_FAILURE;
+        }
+        ctx.memory[pch..][..read].copy_from_slice(&file.data[file.pos..end]);
     }
-    ctx.memory[pch..][..read].copy_from_slice(&file.data[file.pos..end]);
     file.pos = end;
     read as i32
 }
@@ -470,6 +474,35 @@ mod tests {
         assert_eq!(mmioSetInfo(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
         assert_eq!(mmioAdvance(&mut ctx, 7, oob, 0), MMIOERR_CANNOTOPEN);
         assert_eq!(mmioGetInfo(&mut ctx, 7, 0x1000, 0), MMIOERR_CANNOTOPEN);
+    }
+
+    #[test]
+    fn mmio_read_handles_eof_and_zero_length_without_touching_the_buffer() {
+        let mut ctx = context();
+        let oob = ctx.memory.bytes.len() as u32 + 0x1000; // past the end
+        {
+            let mut winmm = crate::winmm::state();
+            winmm.mmio().files.insert(
+                10,
+                File {
+                    data: vec![0xAA; 0x40],
+                    pos: 0x44, // past EOF, as a truncated descend can leave it
+                    buffer: 0,
+                },
+            );
+        }
+        // pos past EOF reads as end-of-file instead of underflowing.
+        assert_eq!(mmioRead(&mut ctx, 10, 0x2000, 16), 0);
+        // A zero-length read never dereferences the guest pointer.
+        assert_eq!(mmioRead(&mut ctx, 10, oob, 0), 0);
+        {
+            let mut winmm = crate::winmm::state();
+            let file = winmm.mmio().files.get_mut(&10).unwrap();
+            file.pos = 0;
+        }
+        assert_eq!(mmioRead(&mut ctx, 10, oob, 0), 0);
+        assert_eq!(mmioRead(&mut ctx, 10, oob, 16), MMIO_FAILURE);
+        crate::winmm::state().mmio().files.remove(&10);
     }
 
     #[test]
