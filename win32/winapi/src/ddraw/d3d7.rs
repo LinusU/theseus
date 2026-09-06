@@ -2027,7 +2027,11 @@ pub mod IDirect3DVertexBuffer7 {
 
     #[win32_derive::dllexport]
     pub fn GetVertexBufferDesc(ctx: &mut Context, this: u32, lpVBD: u32) -> DD {
-        if lpVBD == 0 {
+        if !crate::ddraw::ddraw::guest_range(
+            ctx,
+            lpVBD,
+            std::mem::size_of::<D3DVERTEXBUFFERDESC>() as u32,
+        ) {
             return DD::ERR_INVALIDPARAMS;
         }
         let buffers = d3d_state().vertex_buffers.borrow();
