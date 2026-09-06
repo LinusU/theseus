@@ -67,7 +67,7 @@ pub fn HeapDestroy(_ctx: &mut Context, hHeap: HANDLE) -> bool {
 
 #[win32_derive::dllexport]
 pub fn HeapSize(
-    ctx: &mut Context,
+    _ctx: &mut Context,
     hHeap: HANDLE,
     dwFlags: u32, /* HEAP_FLAGS */
     lpMem: Ptr<()>,
@@ -80,7 +80,8 @@ pub fn HeapSize(
         log::error!("HeapSize({hHeap:x}): no such heap");
         return u32::MAX;
     };
-    heap.size(&mut ctx.memory, lpMem.addr)
+    // HeapSize documents (SIZE_T)-1 for a pointer that is not a live block.
+    heap.block_size(lpMem.addr).unwrap_or(u32::MAX)
 }
 
 #[win32_derive::dllexport]
@@ -242,6 +243,12 @@ mod tests {
 
         let mem = HeapAlloc(&mut ctx, hheap, HEAP_FLAGS::empty(), 8);
         ctx.memory[mem..][..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        // HeapSize reports the requested payload size from the live-block
+        // table, not whatever a guest wrote over the in-band header.
+        ctx.memory.write::<u32>(mem - 4, 0xdead_beef);
+        assert_eq!(HeapSize(&mut ctx, hheap, 0, Ptr::new(mem)), 8);
+        ctx.memory.write::<u32>(mem - 4, 12); // restore the real header
 
         // Growing relocates but keeps the old contents.
         let grown = HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(mem), 32);

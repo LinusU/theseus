@@ -36,13 +36,14 @@ impl Heap {
             .unwrap_or_else(|| panic!("heap size {:x} oom {:x}", self.size, size))
     }
 
-    #[allow(unused)]
-    pub fn size(&self, mem: &mut Memory, addr: u32) -> u32 {
-        if addr < 4 || !self.range().contains(&(addr - 4)) {
-            // HeapSize documents (SIZE_T)-1 for a bad pointer.
-            return u32::MAX;
+    /// The payload size of a live block, or None when `addr` does not name a
+    /// live block — unlike the in-band header, this cannot be confused by a
+    /// corrupted or interior header.
+    pub fn block_size(&self, addr: u32) -> Option<u32> {
+        if addr < 4 {
+            return None;
         }
-        mem.read::<u32>(addr - 4) - 4
+        self.freelist.borrow().block_size(addr)
     }
 
     /// Free a pointer previously returned by `alloc`. Returns false when the
@@ -61,16 +62,6 @@ impl Heap {
             return false;
         }
         true
-    }
-
-    /// The payload size of a live block, or None when `addr` does not name a
-    /// live block — unlike `size`, this cannot be confused by a corrupted or
-    /// interior header.
-    pub fn block_size(&self, addr: u32) -> Option<u32> {
-        if addr < 4 {
-            return None;
-        }
-        self.freelist.borrow().block_size(addr)
     }
 }
 
