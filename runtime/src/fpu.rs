@@ -542,6 +542,29 @@ impl FPU {
     pub fn truncate(&self, val: f64) -> f64 {
         val.trunc()
     }
+
+    /// Convert ST(0) to a `bits`-wide signed integer for the FIST family:
+    /// `truncate` picks FISTTP's truncation over the rounding-control field,
+    /// and a NaN or out-of-range input produces the integer-indefinite
+    /// value (the sign bit alone), not Rust `as` semantics.
+    pub fn to_int(&self, val: f64, truncate: bool, bits: u32) -> u64 {
+        let f = if truncate {
+            val.trunc()
+        } else {
+            self.round(val)
+        };
+        let max = 2f64.powi(bits as i32 - 1);
+        // NaN fails the containment test too, which is what we want.
+        if !(-max..max).contains(&f) {
+            return 1u64 << (bits - 1);
+        }
+        (f as i64 as u64)
+            & if bits == 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            }
+    }
 }
 
 #[cfg(test)]
@@ -649,6 +672,26 @@ mod tests {
         fpu.control = (fpu.control & !0x0c00) | 0x0c00;
         assert_eq!(fpu.round(1.9), 1.0);
         assert_eq!(fpu.round(-1.9), -1.0);
+    }
+
+    #[test]
+    fn to_int_honors_rc_truncate_and_indefinite() {
+        let mut fpu = FPU::default();
+        // RC=round-to-nearest-even: ties go to the even neighbor.
+        assert_eq!(fpu.to_int(2.5, false, 32), 2);
+        assert_eq!(fpu.to_int(3.5, false, 32), 4);
+        // Truncation (FISTTP) drops the fraction regardless of RC.
+        fpu.control = (fpu.control & !(0b11 << 10)) | (0b01 << 10); // round down
+        assert_eq!(fpu.to_int(-1.1, true, 32), (-1i32) as u32 as u64);
+        assert_eq!(fpu.to_int(-1.1, false, 32), (-2i32) as u32 as u64);
+        // NaN and out-of-range values produce the integer-indefinite
+        // value for the target width.
+        assert_eq!(fpu.to_int(f64::NAN, false, 32), 0x8000_0000);
+        assert_eq!(fpu.to_int(f64::INFINITY, false, 16), 0x8000);
+        assert_eq!(fpu.to_int(2147483648.0, false, 32), 0x8000_0000);
+        assert_eq!(fpu.to_int(40000.0, true, 16), 0x8000);
+        // i64 width masks to the full width.
+        assert_eq!(fpu.to_int(-5.0, true, 64), (-5i64) as u64);
     }
 
     #[test]

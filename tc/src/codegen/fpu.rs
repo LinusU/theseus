@@ -121,7 +121,7 @@ impl<'a> CodeGen<'a> {
                     instr,
                     0,
                     format!(
-                        "ctx.cpu.fpu.round({}) as i{size} as u{size}",
+                        "ctx.cpu.fpu.to_int({}, false, {size}) as u{size}",
                         self.fpu_get_reg(0)
                     ),
                 ));
@@ -135,7 +135,7 @@ impl<'a> CodeGen<'a> {
                     instr,
                     0,
                     format!(
-                        "ctx.cpu.fpu.truncate({}) as i{size} as u{size}",
+                        "ctx.cpu.fpu.to_int({}, true, {size}) as u{size}",
                         self.fpu_get_reg(0)
                     ),
                 ));

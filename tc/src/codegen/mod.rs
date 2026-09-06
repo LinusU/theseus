@@ -2886,15 +2886,15 @@ mod tests {
         for (bytes, want_write) in [
             (
                 &[0xdb, 0x08][..],
-                "ctx.memory.write::<u32>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i32 as u32);",
+                "ctx.memory.write::<u32>(ctx.cpu.regs.eax, ctx.cpu.fpu.to_int(ctx.cpu.fpu.get(0), true, 32) as u32);",
             ),
             (
                 &[0xdd, 0x08][..],
-                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i64 as u64);",
+                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, ctx.cpu.fpu.to_int(ctx.cpu.fpu.get(0), true, 64) as u64);",
             ),
             (
                 &[0xdf, 0x08][..],
-                "ctx.memory.write::<u16>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i16 as u16);",
+                "ctx.memory.write::<u16>(ctx.cpu.regs.eax, ctx.cpu.fpu.to_int(ctx.cpu.fpu.get(0), true, 16) as u16);",
             ),
         ] {
             let mut decoder =
