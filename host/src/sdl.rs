@@ -14,12 +14,6 @@ fn sdl_error() -> String {
     }
 }
 
-fn check(res: bool) {
-    if !res {
-        panic!("SDL error: {}", sdl_error());
-    }
-}
-
 pub struct MainThread {
     headless: bool,
     /// Mouse buttons currently held. Button events carry no mask of their own,
@@ -264,17 +258,20 @@ impl MainThread {
 impl MainThread {
     fn new(mut headless: bool) -> Self {
         unsafe {
-            check(sdl::hints::SDL_SetHint(
-                sdl::hints::SDL_HINT_NO_SIGNAL_HANDLERS,
-                c"1".as_ptr(),
-            ));
-            check(sdl::hints::SDL_SetHint(
-                sdl::hints::SDL_HINT_RENDER_VSYNC,
-                c"1".as_ptr(),
-            ));
+            if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_NO_SIGNAL_HANDLERS, c"1".as_ptr()) {
+                log::warn!("SDL_SetHint(NO_SIGNAL_HANDLERS) failed: {}", sdl_error());
+            }
+            if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_RENDER_VSYNC, c"1".as_ptr()) {
+                log::warn!("SDL_SetHint(RENDER_VSYNC) failed: {}", sdl_error());
+            }
             // The event subsystem is always needed, even in headless mode, for
             // injected input and for tests that drive the message queue.
-            check(sdl::init::SDL_Init(sdl::init::SDL_INIT_EVENTS));
+            if !sdl::init::SDL_Init(sdl::init::SDL_INIT_EVENTS) {
+                log::warn!(
+                    "SDL_Init(EVENTS) failed: {}; continuing without events",
+                    sdl_error()
+                );
+            }
             if !headless
                 && !sdl::init::SDL_Init(sdl::init::SDL_INIT_VIDEO | sdl::init::SDL_INIT_AUDIO)
             {
@@ -308,8 +305,10 @@ impl MainThread {
             let event = unsafe {
                 let mut event = MaybeUninit::uninit();
                 if !sdl::events::SDL_WaitEvent(event.as_mut_ptr()) {
-                    panic!("SDL_WaitEvent failed: {}", sdl_error());
-                };
+                    log::warn!("SDL_WaitEvent failed: {}; retrying", sdl_error());
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
                 event.assume_init()
             };
             if let Some(msg) = self.msg_from_event(&event) {
@@ -548,11 +547,33 @@ impl MainThread {
                     renderer: std::ptr::null_mut(),
                 };
             }
-            check(sdl::render::SDL_RenderClear(renderer));
-            check(sdl::render::SDL_SetDefaultTextureScaleMode(
+            if !sdl::render::SDL_RenderClear(renderer) {
+                log::warn!(
+                    "SDL_RenderClear failed ({}); destroying window and continuing headless",
+                    sdl_error()
+                );
+                sdl::render::SDL_DestroyRenderer(renderer);
+                sdl::video::SDL_DestroyWindow(window);
+                return Window {
+                    window: std::ptr::null_mut(),
+                    renderer: std::ptr::null_mut(),
+                };
+            }
+            if !sdl::render::SDL_SetDefaultTextureScaleMode(
                 renderer,
                 sdl::surface::SDL_ScaleMode::NEAREST,
-            ));
+            ) {
+                log::warn!(
+                    "SDL_SetDefaultTextureScaleMode failed ({}); destroying window and continuing headless",
+                    sdl_error()
+                );
+                sdl::render::SDL_DestroyRenderer(renderer);
+                sdl::video::SDL_DestroyWindow(window);
+                return Window {
+                    window: std::ptr::null_mut(),
+                    renderer: std::ptr::null_mut(),
+                };
+            }
             Window { window, renderer }
         }
     }
