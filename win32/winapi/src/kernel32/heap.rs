@@ -244,11 +244,12 @@ mod tests {
         let mem = HeapAlloc(&mut ctx, hheap, HEAP_FLAGS::empty(), 8);
         ctx.memory[mem..][..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
 
-        // HeapSize reports the requested payload size from the live-block
-        // table, not whatever a guest wrote over the in-band header.
+        // HeapSize reports the usable payload size from the live-block
+        // table (the 8-byte request pads to a 16-byte block, i.e. 12
+        // usable bytes), not whatever a guest wrote over the in-band header.
         ctx.memory.write::<u32>(mem - 4, 0xdead_beef);
-        assert_eq!(HeapSize(&mut ctx, hheap, 0, Ptr::new(mem)), 8);
-        ctx.memory.write::<u32>(mem - 4, 12); // restore the real header
+        assert_eq!(HeapSize(&mut ctx, hheap, 0, Ptr::new(mem)), 12);
+        ctx.memory.write::<u32>(mem - 4, 16); // restore the real header
 
         // Growing relocates but keeps the old contents.
         let grown = HeapReAlloc(&mut ctx, hheap, 0, Ptr::new(mem), 32);

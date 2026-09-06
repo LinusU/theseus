@@ -71,18 +71,27 @@ struct FreeList {
 
 impl FreeList {
     fn new(addr: u32, size: u32) -> Self {
+        // HeapAlloc hands out 8-byte-aligned payloads. With the 4-byte
+        // header the block itself must start at an offset of 4 mod 8;
+        // sliding the first block forward sets that alignment, and every
+        // later block keeps it because block sizes are rounded up to 8.
+        let block = u32::try_from(((addr as u64) + 4).next_multiple_of(8) - 4).unwrap_or(u32::MAX);
+        let usable = size.saturating_sub(block.wrapping_sub(addr));
         FreeList {
-            nodes: vec![FreeNode { addr, size }],
+            nodes: vec![FreeNode {
+                addr: block,
+                size: usable,
+            }],
             live: Default::default(),
         }
     }
 
     fn alloc(&mut self, mem: &mut Memory, size: u32) -> Option<u32> {
-        // TODO: align
         // The 4-byte header must not wrap the request size: a guest asking
         // for u32::MAX - 3 would otherwise be handed a tiny live block it
-        // believes is nearly 4 GiB.
-        let size = size.checked_add(4)?;
+        // believes is nearly 4 GiB. Padding the block to a multiple of 8
+        // keeps every payload 8-byte aligned (see FreeList::new).
+        let size = size.checked_add(4)?.checked_next_multiple_of(8)?;
         let i = self.nodes.iter().position(|f| f.size >= size)?;
         let free = &mut self.nodes[i];
         let addr = free.addr;
@@ -179,7 +188,7 @@ mod tests {
     #[test]
     fn frees_merge_neighbors_in_address_order() {
         let mut mem = Memory::leak_new(0x10_000);
-        let mut list = FreeList::new(0x4000, 0x300);
+        let mut list = FreeList::new(0x4000, 0x304);
         // Split the range into three adjacent live blocks.
         let a = list.alloc(&mut mem, 0xfc).unwrap();
         let b = list.alloc(&mut mem, 0xfc).unwrap();
@@ -193,9 +202,22 @@ mod tests {
         list.free(b);
 
         assert_eq!(list.nodes.len(), 1);
-        assert_eq!(list.nodes[0].addr, 0x4000);
+        assert_eq!(list.nodes[0].addr, 0x4004);
         assert_eq!(list.nodes[0].size, 0x300);
-        assert_eq!(list.alloc(&mut mem, 0x2fc), Some(0x4004));
+        assert_eq!(list.alloc(&mut mem, 0x2fc), Some(0x4008));
+    }
+
+    #[test]
+    fn alloc_returns_eight_byte_aligned_payloads() {
+        let mut mem = Memory::leak_new(0x10_000);
+        // Both an 8-aligned and a 4-mod-8 heap base yield 8-aligned payloads.
+        for base in [0x4000, 0x4004] {
+            let mut list = FreeList::new(base, 0x400);
+            for size in [1u32, 3, 0xf, 0x10] {
+                let addr = list.alloc(&mut mem, size).unwrap();
+                assert_eq!(addr % 8, 0, "payload {addr:#x} not 8-aligned");
+            }
+        }
     }
 
     #[test]
@@ -207,7 +229,7 @@ mod tests {
         assert_eq!(list.alloc(&mut mem, u32::MAX - 3), None);
         assert_eq!(list.alloc(&mut mem, u32::MAX), None);
         // The free list is untouched and still serves normal requests.
-        assert_eq!(list.alloc(&mut mem, 0xfc), Some(0x4004));
+        assert_eq!(list.alloc(&mut mem, 0xfc), Some(0x4008));
     }
 
     #[test]
@@ -226,6 +248,6 @@ mod tests {
         assert!(list.free(b));
         // Both blocks merged with each other and the free tail.
         assert_eq!(list.nodes.len(), 1);
-        assert_eq!(list.nodes[0].size, 0x400);
+        assert_eq!(list.nodes[0].size, 0x3fc);
     }
 }
