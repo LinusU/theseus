@@ -47,6 +47,15 @@ fn initial_cwd() -> &'static std::path::Path {
     CWD.get_or_init(|| host::fs::current_dir().unwrap_or_else(|_| ".".into()))
 }
 
+/// Optional host directory that acts as the root for on-demand audio caches
+/// (for example MM2's `aud\aud22\*.22k` files). Set `THESEUS_AUD_CACHE` to
+/// keep these generated files outside the game's read-only install.
+fn aud_cache_root() -> Option<std::path::PathBuf> {
+    static ROOT: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| std::env::var("THESEUS_AUD_CACHE").ok().map(Into::into))
+        .clone()
+}
+
 /// Resolve a Windows-style path against the host filesystem, ignoring case
 /// (game data files and the paths that reference them often disagree on it).
 pub fn resolve_path(path: &str) -> std::path::PathBuf {
@@ -57,6 +66,29 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
     } else {
         &path[..]
     };
+
+    // Audio cache redirection: when the guest touches anything under `aud\`,
+    // and a cache directory is configured, mirror that tree under the cache
+    // instead of the game directory. This lets titles create per-install
+    // `.22k`/`.dls` caches without touching the (ignored) game install.
+    let first_dir = path
+        .split('/')
+        .find(|c| !c.is_empty() && *c != "." && *c != "..")
+        .map(str::to_lowercase);
+    if matches!(first_dir.as_deref(), Some("aud") | Some("aud22"))
+        && let Some(cache) = aud_cache_root()
+    {
+        let _ = host::fs::create_dir_all(&cache);
+        let mut result = cache;
+        for comp in path.split('/') {
+            if comp.is_empty() || comp == "." || comp == ".." {
+                continue;
+            }
+            result.push(comp);
+        }
+        return result;
+    }
+
     let mut result = if path.starts_with('/') {
         initial_cwd().to_path_buf()
     } else {
