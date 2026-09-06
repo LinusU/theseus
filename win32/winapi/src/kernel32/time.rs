@@ -49,14 +49,25 @@ fn current_system_time() -> SYSTEMTIME {
     civil_from_unix(now.as_secs() as i64, now.subsec_millis() as u16)
 }
 
-#[win32_derive::dllexport]
-pub fn GetLocalTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
+fn get_time(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
+    if !crate::ddraw::guest_range(
+        ctx,
+        lpSystemTime.addr,
+        std::mem::size_of::<SYSTEMTIME>() as u32,
+    ) {
+        return;
+    }
     let _ = lpSystemTime.write(&mut ctx.memory, current_system_time());
 }
 
 #[win32_derive::dllexport]
+pub fn GetLocalTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
+    get_time(ctx, lpSystemTime);
+}
+
+#[win32_derive::dllexport]
 pub fn GetSystemTime(ctx: &mut Context, lpSystemTime: Ptr<SYSTEMTIME>) {
-    let _ = lpSystemTime.write(&mut ctx.memory, current_system_time());
+    get_time(ctx, lpSystemTime);
 }
 
 #[win32_derive::dllexport]
@@ -129,7 +140,9 @@ pub fn FileTimeToSystemTime(
 
 #[cfg(test)]
 mod tests {
-    use super::{FileTimeToLocalFileTime, FileTimeToSystemTime, SYSTEMTIME};
+    use super::{
+        FileTimeToLocalFileTime, FileTimeToSystemTime, GetLocalTime, GetSystemTime, SYSTEMTIME,
+    };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -148,6 +161,21 @@ mod tests {
     #[test]
     fn system_time_matches_win32_abi() {
         assert_eq!(std::mem::size_of::<SYSTEMTIME>(), 16);
+    }
+
+    #[test]
+    fn get_local_and_system_time_reject_bad_output_pointers() {
+        let mut ctx = context();
+        // Low and far out-of-range output pointers are rejected without panic.
+        GetLocalTime(&mut ctx, Ptr::new(0x500));
+        GetSystemTime(&mut ctx, Ptr::new(0xffff_fff0));
+        // A valid pointer writes a plausible year (wYear at offset 0).
+        GetLocalTime(&mut ctx, Ptr::new(0x1000));
+        let year = ctx.memory.read::<u16>(0x1000);
+        assert!((2000..3000).contains(&year));
+        GetSystemTime(&mut ctx, Ptr::new(0x2000));
+        let year = ctx.memory.read::<u16>(0x2000);
+        assert!((2000..3000).contains(&year));
     }
 
     #[test]
