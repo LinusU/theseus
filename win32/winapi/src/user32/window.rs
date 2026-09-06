@@ -666,9 +666,12 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
     if hWnd.is_null() {
         // A null HWND asks for a DC covering the whole screen; there is no
         // desktop to draw on, so hand out a screen-sized memory DC.
-        let pixels = kernel32::lock()
+        let Some(pixels) = kernel32::lock()
             .process_heap
-            .alloc(&mut ctx.memory, 640 * 480 * 4);
+            .try_alloc(&mut ctx.memory, 640 * 480 * 4)
+        else {
+            return HDC::null();
+        };
         let bitmap = gdi32::Bitmap::new_simple(640, 480, pixels);
         return gdi32::lock().new_memory_dc(bitmap);
     }
