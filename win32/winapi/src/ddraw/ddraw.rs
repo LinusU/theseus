@@ -900,6 +900,20 @@ fn pixel_value(pixel: &[u8], bpp: u32) -> Option<u32> {
     }
 }
 
+/// Whether a `rect` worth of pixels starting at `addr` with `pitch` bytes per
+/// row and `bpp` bytes per pixel fits entirely in emulated memory.
+fn dst_range_valid(memory: &Memory, addr: u32, pitch: u32, bpp: u32, rect: &RECT) -> bool {
+    if rect.left >= rect.right || rect.top >= rect.bottom {
+        return true;
+    }
+    let last_row = (rect.bottom as u64 - 1) * pitch as u64;
+    let last_col = rect.right as u64 * bpp as u64;
+    let Some(end) = (addr as u64).checked_add(last_row + last_col) else {
+        return false;
+    };
+    end as usize <= memory.bytes.len()
+}
+
 /// Write the staged source rows into a destination surface. `want` is the
 /// requested destination rect, already clipped to `rect`; a different-size
 /// `want` stretches the source nearest-neighbor, matching what `Blt` does
@@ -919,6 +933,9 @@ fn write_blit(
     color_key: Option<ColorKey>,
     dst_color_key: Option<ColorKey>,
 ) -> DD {
+    if !dst_range_valid(memory, addr, pitch, bpp, rect) {
+        return DD::ERR_INVALIDPARAMS;
+    }
     let row_bytes = src_w * bpp as usize;
     let dst_w = (want.right - want.left).max(0) as i64;
     let dst_h = (want.bottom - want.top).max(0) as i64;
@@ -994,7 +1011,10 @@ fn dst_key_allows(memory: &Memory, at: u32, bpp: u32, dst_color_key: &Option<Col
     let Some(key) = dst_color_key else {
         return true;
     };
-    pixel_value(&memory[at..][..bpp as usize], bpp).is_some_and(|v| key.matches(v))
+    let Some(pixel) = memory.bytes.get(at as usize..at as usize + bpp as usize) else {
+        return false;
+    };
+    pixel_value(pixel, bpp).is_some_and(|v| key.matches(v))
 }
 
 pub fn surface_src_color_key(surface: u32) -> Option<ColorKey> {
@@ -1060,6 +1080,9 @@ pub fn blt(
             return DD::ERR_OUTOFMEMORY;
         };
         let stride = dst.width * bpp;
+        if !dst_range_valid(&ctx.memory, addr, stride, bpp, &rect) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         for y in rect.top..rect.bottom {
             let start = addr + y as u32 * stride + rect.left as u32 * bpp;
             let width_bytes = ((rect.right - rect.left).max(0) as u32 * bpp) as usize;
