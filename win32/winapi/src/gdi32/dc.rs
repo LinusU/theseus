@@ -250,7 +250,15 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
         // invalid) pointer so a guest cannot panic the host.
         return true;
     }
-    let string = ctx.memory[lpString.addr..][..count].to_vec();
+    let Some(string) = ctx
+        .memory
+        .bytes
+        .get(lpString.addr as usize..)
+        .and_then(|b| b.get(..count))
+        .map(|b| b.to_vec())
+    else {
+        return false;
+    };
     let mut state = gdi32::lock();
     let Some(dc) = state.dcs.get_mut(hdc) else {
         return false;
