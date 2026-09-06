@@ -154,7 +154,7 @@ macro_rules! stub {
             let return_addr = ctx.memory.read::<u32>(ctx.cpu.regs.esp);
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
             ctx.cpu.regs.eax = $ret;
-            ctx.cpu.regs.esp += (1 + $nargs) * 4;
+            ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add((1 + $nargs) * 4);
             ctx.indirect(return_addr)
         }
     };
@@ -174,7 +174,7 @@ macro_rules! stub_out {
         pub fn $name(ctx: &mut Context) -> runtime::Cont {
             let esp = ctx.cpu.regs.esp;
             let return_addr = ctx.memory.read::<u32>(esp);
-            let out = ctx.memory.read::<u32>(esp + ($k + 1) * 4);
+            let out = ctx.memory.read::<u32>(esp.wrapping_add(($k + 1) * 4));
             if out != 0 {
                 // An out-of-range out-pointer loses the zero rather than
                 // panicking the host.
@@ -182,7 +182,7 @@ macro_rules! stub_out {
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
             ctx.cpu.regs.eax = $ret;
-            ctx.cpu.regs.esp += (1 + $nargs) * 4;
+            ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add((1 + $nargs) * 4);
             ctx.indirect(return_addr)
         }
     };
@@ -191,13 +191,13 @@ macro_rules! stub_out {
         pub fn $name(ctx: &mut Context) -> runtime::Cont {
             let esp = ctx.cpu.regs.esp;
             let return_addr = ctx.memory.read::<u32>(esp);
-            let out = ctx.memory.read::<u32>(esp + ($k + 1) * 4);
+            let out = ctx.memory.read::<u32>(esp.wrapping_add(($k + 1) * 4));
             if out != 0 {
                 let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
             ctx.cpu.regs.eax = $ret;
-            ctx.cpu.regs.esp += (1 + $nargs) * 4;
+            ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add((1 + $nargs) * 4);
             ctx.indirect(return_addr)
         }
     };
@@ -286,9 +286,9 @@ macro_rules! query_interface {
         pub fn $name(ctx: &mut Context) -> runtime::Cont {
             let esp = ctx.cpu.regs.esp;
             let return_addr = ctx.memory.read::<u32>(esp);
-            let this = ctx.memory.read::<u32>(esp + 4);
-            let riid = ctx.memory.read::<u32>(esp + 8);
-            let ppv = crate::Ptr::<u32>::new(ctx.memory.read::<u32>(esp + 12));
+            let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+            let riid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+            let ppv = crate::Ptr::<u32>::new(ctx.memory.read::<u32>(esp.wrapping_add(12)));
             let mut ret = S_OK;
             if ppv.addr == 0 {
                 ret = E_POINTER;
@@ -306,7 +306,7 @@ macro_rules! query_interface {
                 }
             }
             ctx.cpu.regs.eax = ret;
-            ctx.cpu.regs.esp += 4 * 4;
+            ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
             ctx.indirect(return_addr)
         }
     };
@@ -328,7 +328,7 @@ pub mod performance {
     pub fn Init_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let pp_direct_music = ctx.memory.read::<u32>(esp + 8);
+        let pp_direct_music = ctx.memory.read::<u32>(esp.wrapping_add(8));
         let mut ret = S_OK;
         if pp_direct_music != 0 {
             let vtable = super::directmusic::get_vtable(ctx);
@@ -345,7 +345,7 @@ pub mod performance {
             }
         }
         ctx.cpu.regs.eax = ret;
-        ctx.cpu.regs.esp += 5 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(5 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -354,12 +354,12 @@ pub mod performance {
     pub fn PlaySegment_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let pp_segment_state = ctx.memory.read::<u32>(esp + 24);
+        let pp_segment_state = ctx.memory.read::<u32>(esp.wrapping_add(24));
         if pp_segment_state != 0 {
             let _ = crate::Ptr::<u32>::new(pp_segment_state).write(&mut ctx.memory, 0);
         }
         ctx.cpu.regs.eax = S_OK;
-        ctx.cpu.regs.esp += 7 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(7 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -380,8 +380,8 @@ pub mod performance {
     pub fn GetTime_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let prt_now = ctx.memory.read::<u32>(esp + 8);
-        let pmt_now = ctx.memory.read::<u32>(esp + 12);
+        let prt_now = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let pmt_now = ctx.memory.read::<u32>(esp.wrapping_add(12));
         if prt_now != 0 {
             let _ = crate::Ptr::<u64>::new(prt_now).write(&mut ctx.memory, 0);
         }
@@ -389,7 +389,7 @@ pub mod performance {
             let _ = crate::Ptr::<u32>::new(pmt_now).write(&mut ctx.memory, 0);
         }
         ctx.cpu.regs.eax = S_OK;
-        ctx.cpu.regs.esp += 4 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -412,13 +412,13 @@ pub mod performance {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
         for k in 2..=4 {
-            let out = ctx.memory.read::<u32>(esp + (k + 1) * 4);
+            let out = ctx.memory.read::<u32>(esp.wrapping_add((k + 1) * 4));
             if out != 0 {
                 let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
         }
         ctx.cpu.regs.eax = S_OK;
-        ctx.cpu.regs.esp += 6 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(6 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -534,8 +534,8 @@ pub mod directmusic {
     pub fn EnumPort_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let index = ctx.memory.read::<u32>(esp + 8);
-        let caps = ctx.memory.read::<u32>(esp + 12);
+        let index = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let caps = ctx.memory.read::<u32>(esp.wrapping_add(12));
         let ret = if index == 0 {
             write_port_caps(ctx, caps)
         } else if caps == 0 {
@@ -545,7 +545,7 @@ pub mod directmusic {
         };
         log::debug!("dmusic EnumPort(index={index}) = {ret:#x} (ret={return_addr:#x})");
         ctx.cpu.regs.eax = ret;
-        ctx.cpu.regs.esp += 4 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -556,7 +556,7 @@ pub mod directmusic {
     pub fn CreatePort_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let pp_port = ctx.memory.read::<u32>(esp + 16);
+        let pp_port = ctx.memory.read::<u32>(esp.wrapping_add(16));
         let mut ret = S_OK;
         if pp_port == 0 {
             ret = E_POINTER;
@@ -575,7 +575,7 @@ pub mod directmusic {
             }
         }
         ctx.cpu.regs.eax = ret;
-        ctx.cpu.regs.esp += 6 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(6 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -590,7 +590,7 @@ pub mod directmusic {
     pub fn GetDefaultPort_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let out = ctx.memory.read::<u32>(esp + 8);
+        let out = ctx.memory.read::<u32>(esp.wrapping_add(8));
         let ret = if out == 0 {
             E_POINTER
         } else {
@@ -601,7 +601,7 @@ pub mod directmusic {
         };
         log::debug!("dmusic GetDefaultPort = {ret:#x} (ret={return_addr:#x})");
         ctx.cpu.regs.eax = ret;
-        ctx.cpu.regs.esp += 3 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
         ctx.indirect(return_addr)
     }
     stub!(SetDirectSound_stub, 3);
@@ -650,11 +650,11 @@ pub mod port {
     pub fn GetCaps_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
-        let caps = ctx.memory.read::<u32>(esp + 8);
+        let caps = ctx.memory.read::<u32>(esp.wrapping_add(8));
         let ret = write_port_caps(ctx, caps);
         log::debug!("dmusic port GetCaps = {ret:#x} (ret={return_addr:#x})");
         ctx.cpu.regs.eax = ret;
-        ctx.cpu.regs.esp += 3 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
         ctx.indirect(return_addr)
     }
 
@@ -770,14 +770,14 @@ pub mod composer {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
         for k in 6..=8 {
-            let out = ctx.memory.read::<u32>(esp + (k + 1) * 4);
+            let out = ctx.memory.read::<u32>(esp.wrapping_add((k + 1) * 4));
             if out != 0 {
                 let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
         }
         log::debug!("dmusic AutoTransition (ret={return_addr:#x})");
         ctx.cpu.regs.eax = E_FAIL;
-        ctx.cpu.regs.esp += 10 * 4;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(10 * 4);
         ctx.indirect(return_addr)
     }
 

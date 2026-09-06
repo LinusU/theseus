@@ -7,7 +7,7 @@ impl Context {
             self.cpu.regs.set_sp(sp);
             self.memory.write::<u32>(segofs(self.cpu.regs.ss, sp), x);
         } else {
-            self.cpu.regs.esp -= 4;
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_sub(4);
             self.memory.write::<u32>(self.cpu.regs.esp, x);
         }
     }
@@ -31,7 +31,7 @@ impl Context {
             x
         } else {
             let x = self.memory.read::<u32>(self.cpu.regs.esp);
-            self.cpu.regs.esp += 4;
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(4);
             x
         }
     }
@@ -131,7 +131,7 @@ impl Context {
                 self.push32(frame_temp);
             }
             self.cpu.regs.ebp = frame_temp;
-            self.cpu.regs.esp -= bytes as u32;
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_sub(bytes as u32);
         }
     }
 

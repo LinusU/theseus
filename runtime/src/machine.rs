@@ -131,8 +131,13 @@ impl Context {
         let esp = self.cpu.regs.esp;
         println!("stack:");
         for i in 0..8 {
-            let addr = esp + i * 4;
-            if addr + 4 > self.memory.bytes.len() as u32 {
+            let Some(addr) = esp.checked_add(i * 4) else {
+                break;
+            };
+            if addr
+                .checked_add(4)
+                .is_none_or(|end| end > self.memory.bytes.len() as u32)
+            {
                 break;
             }
             println!("{addr:08x} {:08x}", self.memory.read::<u32>(addr));
@@ -141,7 +146,7 @@ impl Context {
 
     pub fn dump_memory16(&self, seg: u16, ofs: u16, count: u16) {
         for i in 0..count {
-            let Some(ofs) = ofs.checked_add(i * 2) else {
+            let Ok(ofs) = u16::try_from(u32::from(ofs) + u32::from(i) * 2) else {
                 break;
             };
             let addr = segofs(seg, ofs);

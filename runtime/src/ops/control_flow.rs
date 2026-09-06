@@ -169,7 +169,7 @@ impl Context {
         if self.cpu.real_mode {
             self.cpu.regs.set_sp(self.cpu.regs.get_sp().wrapping_add(n));
         } else {
-            self.cpu.regs.esp += n as u32;
+            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_add(n as u32);
         }
         self.indirect(ret)
     }
