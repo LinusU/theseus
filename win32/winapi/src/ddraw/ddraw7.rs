@@ -91,6 +91,9 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, ppv: u32) -> DD {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
         if let Some(iid) = iid {
             if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
@@ -550,7 +553,12 @@ pub mod IDirectDraw7 {
             return DD::ERR_INVALIDPARAMS;
         }
         // The emulated hardware exposes no FOURCC surface formats.
-        ctx.memory.write::<u32>(lpNumCodes, 0);
+        if crate::Ptr::<u32>::new(lpNumCodes)
+            .write(&mut ctx.memory, 0)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -567,7 +575,12 @@ pub mod IDirectDraw7 {
             .map(|s| s.borrow().addr);
         match gdi_surface {
             Some(addr) => {
-                ctx.memory.write::<u32>(lplpGDISurface, addr);
+                if crate::Ptr::<u32>::new(lplpGDISurface)
+                    .write(&mut ctx.memory, addr)
+                    .is_none()
+                {
+                    return DD::ERR_INVALIDPARAMS;
+                }
                 DD::OK
             }
             None => DD::ERR_NOTFOUND,
@@ -581,7 +594,12 @@ pub mod IDirectDraw7 {
         }
         // The emulated display refreshes at the same 60 Hz reported by
         // GetDisplayMode.
-        ctx.memory.write::<u32>(lpdwFrequency, 60);
+        if crate::Ptr::<u32>::new(lpdwFrequency)
+            .write(&mut ctx.memory, 60)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -591,7 +609,12 @@ pub mod IDirectDraw7 {
             return DD::ERR_INVALIDPARAMS;
         }
         // There is no real raster; report the first line.
-        ctx.memory.write::<u32>(lpdwScanLine, 0);
+        if crate::Ptr::<u32>::new(lpdwScanLine)
+            .write(&mut ctx.memory, 0)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -600,7 +623,12 @@ pub mod IDirectDraw7 {
         if lpbIsInVB == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write::<u32>(lpbIsInVB, 0);
+        if crate::Ptr::<u32>::new(lpbIsInVB)
+            .write(&mut ctx.memory, 0)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -658,10 +686,10 @@ pub mod IDirectDraw7 {
         lpdwFree: u32,
     ) -> DD {
         if lpdwTotal != 0 {
-            ctx.memory.write::<u32>(lpdwTotal, 256 * 1024 * 1024);
+            let _ = crate::Ptr::<u32>::new(lpdwTotal).write(&mut ctx.memory, 256 * 1024 * 1024);
         }
         if lpdwFree != 0 {
-            ctx.memory.write::<u32>(lpdwFree, 256 * 1024 * 1024);
+            let _ = crate::Ptr::<u32>::new(lpdwFree).write(&mut ctx.memory, 256 * 1024 * 1024);
         }
         DD::OK
     }
@@ -688,6 +716,13 @@ pub mod IDirectDraw7 {
         lpDDDeviceIdentifier: u32,
         _flags: u32,
     ) -> DD {
+        if !crate::ddraw::guest_range(
+            ctx,
+            lpDDDeviceIdentifier,
+            std::mem::size_of::<DDDEVICEIDENTIFIER2>() as u32,
+        ) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let mut sz_driver = [0u8; 512];
         let driver = b"nv4disp.dll";
         sz_driver[..driver.len()].copy_from_slice(driver);
@@ -888,10 +923,13 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> DD {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
-        let iid = ctx.memory.read::<GUID>(riid);
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            ctx.memory.write::<u32>(ppv, 0);
+            return DD::E_NOINTERFACE;
+        };
         if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDIRECTDRAWSURFACE7 {
             ctx.memory.write::<u32>(ppv, this);
             return DD::OK;
@@ -1165,6 +1203,9 @@ pub mod IDirectDrawSurface7 {
         _lpDDSCaps: u32,
         lplpDDAttachedSurface: u32,
     ) -> DD {
+        if !crate::ddraw::guest_range(ctx, lplpDDAttachedSurface, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let surfaces = state().surf.borrow_mut();
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
@@ -1346,7 +1387,11 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetSurfaceDesc(ctx: &mut Context, this: u32, lpDDSurfaceDesc2: u32) -> DD {
-        if !crate::ddraw::guest_range(ctx, lpDDSurfaceDesc2, 4) {
+        if !crate::ddraw::guest_range(
+            ctx,
+            lpDDSurfaceDesc2,
+            std::mem::size_of::<DDSURFACEDESC2>() as u32,
+        ) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow();
@@ -1392,7 +1437,11 @@ pub mod IDirectDrawSurface7 {
         _dwFlags: u32,
         _hEvent: u32,
     ) -> DD {
-        if lpDDSurfaceDesc2 == 0 {
+        if !crate::ddraw::guest_range(
+            ctx,
+            lpDDSurfaceDesc2,
+            std::mem::size_of::<DDSURFACEDESC2>() as u32,
+        ) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow_mut();
@@ -1683,8 +1732,13 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lpValue, surface.borrow().uniqueness);
+        let uniqueness = surface.borrow().uniqueness;
+        if crate::Ptr::<u32>::new(lpValue)
+            .write(&mut ctx.memory, uniqueness)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1717,8 +1771,13 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lpdwPriority, surface.borrow().priority);
+        let priority = surface.borrow().priority;
+        if crate::Ptr::<u32>::new(lpdwPriority)
+            .write(&mut ctx.memory, priority)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1741,8 +1800,13 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lpdwMaxLOD, surface.borrow().max_lod);
+        let max_lod = surface.borrow().max_lod;
+        if crate::Ptr::<u32>::new(lpdwMaxLOD)
+            .write(&mut ctx.memory, max_lod)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 

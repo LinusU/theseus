@@ -875,8 +875,13 @@ pub mod IDirectDrawSurface {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lpDDSCaps, surface.borrow().caps.dwCaps.bits());
+        let caps = surface.borrow().caps.dwCaps.bits();
+        if crate::Ptr::<u32>::new(lpDDSCaps)
+            .write(&mut ctx.memory, caps)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
