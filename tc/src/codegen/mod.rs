@@ -2817,6 +2817,42 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_fisttp() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want_write) in [
+            (
+                &[0xdb, 0x08][..],
+                "ctx.memory.write::<u32>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i32 as u32);",
+            ),
+            (
+                &[0xdd, 0x08][..],
+                "ctx.memory.write::<u64>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i64 as u64);",
+            ),
+            (
+                &[0xdf, 0x08][..],
+                "ctx.memory.write::<u16>(ctx.cpu.regs.eax, ctx.cpu.fpu.truncate(ctx.cpu.fpu.get(0)) as i16 as u16);",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+            codegen.buf.clear();
+            codegen.gen_instr(&instr).unwrap();
+            assert!(codegen.buf.contains(want_write), "got {:?}", codegen.buf);
+            assert!(codegen.buf.contains("ctx.cpu.fpu.pop();"));
+        }
+    }
+
+    #[test]
     fn codegen_maps_sal_to_shl() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),

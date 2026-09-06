@@ -129,6 +129,18 @@ impl<'a> CodeGen<'a> {
                     self.line("ctx.cpu.fpu.pop();");
                 }
             }
+            Fisttp => {
+                let size = op_size(instr, 0);
+                self.line(self.set_op(
+                    instr,
+                    0,
+                    format!(
+                        "ctx.cpu.fpu.truncate({}) as i{size} as u{size}",
+                        self.fpu_get_reg(0)
+                    ),
+                ));
+                self.line("ctx.cpu.fpu.pop();");
+            }
 
             // Binary ops
             Fadd | Faddp | Fsub | Fsubp | Fsubr | Fsubrp | Fmul | Fmulp | Fdivp | Fdivrp

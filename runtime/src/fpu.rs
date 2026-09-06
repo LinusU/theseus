@@ -471,6 +471,11 @@ impl FPU {
             _ => unreachable!(),
         }
     }
+
+    /// Truncation toward zero, used by FISTTP regardless of the control word.
+    pub fn truncate(&self, val: f64) -> f64 {
+        val.trunc()
+    }
 }
 
 #[cfg(test)]
@@ -578,6 +583,15 @@ mod tests {
         fpu.control = (fpu.control & !0x0c00) | 0x0c00;
         assert_eq!(fpu.round(1.9), 1.0);
         assert_eq!(fpu.round(-1.9), -1.0);
+    }
+
+    #[test]
+    fn fisttp_truncates_toward_zero() {
+        let fpu = FPU::default();
+        assert_eq!(fpu.truncate(1.9), 1.0);
+        assert_eq!(fpu.truncate(-1.9), -1.0);
+        assert_eq!(fpu.truncate(1.1), 1.0);
+        assert_eq!(fpu.truncate(-1.1), -1.0);
     }
 
     #[test]
