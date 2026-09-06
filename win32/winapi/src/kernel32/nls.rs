@@ -416,7 +416,7 @@ pub fn WideCharToMultiByte(
         .map(|wide| wide_to_ansi(wide, default))
         .collect();
     let used_default = converted.iter().any(|&(_, used)| used);
-    if lpUsedDefaultChar.addr != 0 {
+    if lpUsedDefaultChar.addr >= 0x1000 {
         let _ = lpUsedDefaultChar.write(&mut ctx.memory, used_default);
     }
     if cbMultiByte == 0 {
@@ -780,6 +780,23 @@ mod tests {
         assert_eq!(
             LCMapStringA(&mut ctx, 0, 0, Ptr::new(0x500), -1, Ptr::new(0x1100), 10),
             0
+        );
+
+        // A low lpUsedDefaultChar is ignored like a null pointer.
+        ctx.memory.write::<u16>(0x1000, 0x2603);
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x1000),
+                1,
+                Ptr::new(0x1100),
+                1,
+                Ptr::new(0x1200),
+                Ptr::new(0x500),
+            ),
+            1
         );
     }
 }
