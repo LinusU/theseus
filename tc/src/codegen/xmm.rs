@@ -170,10 +170,10 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
-            // Packed single-precision unary math. RSQRTPS and RCPPS are
+            // Packed single/double-precision unary math. RSQRTPS and RCPPS are
             // approximations on real hardware; the emulated host computes the
             // full-precision values.
-            Sqrtps | Rsqrtps | Rcpps => {
+            Sqrtps | Rsqrtps | Rcpps | Sqrtpd => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(instr, 0, format!("{func}({})", self.xmm_get(instr, 1))));
             }
@@ -182,7 +182,7 @@ impl<'a> CodeGen<'a> {
             // the second source operand when either operand is NaN or the
             // values tie; CMPPS/CMPPD use the 3-bit predicate in the trailing
             // immediate.
-            Minps | Maxps => {
+            Minps | Maxps | Minpd | Maxpd => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(
                     instr,
@@ -311,9 +311,9 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
             }
 
-            // Scalar double-precision arithmetic. Only the low 64-bit qword is
-            // modified; the high qword is preserved.
-            Addsd | Subsd | Mulsd | Divsd => {
+            // Scalar double-precision arithmetic and unary math. Only the low
+            // 64-bit qword is modified; the high qword is preserved.
+            Addsd | Subsd | Mulsd | Divsd | Minsd | Maxsd | Sqrtsd => {
                 let func = instr_name(instr);
                 let src = self.xmm_get_64(instr, 1);
                 let dst = self.xmm_get(instr, 0);

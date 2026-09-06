@@ -1188,6 +1188,49 @@ fn scalar_binop_pd(dst: [u32; 4], src: [u32; 2], op: impl Fn(f64, f64) -> f64) -
     out
 }
 
+fn unary_pd(a: [u32; 4], op: impl Fn(f64) -> f64) -> [u32; 4] {
+    let mut out = [0u32; 4];
+    for n in 0..2 {
+        set_qword(&mut out, n, op(qword(a, n)));
+    }
+    out
+}
+
+pub fn sqrtpd(a: [u32; 4]) -> [u32; 4] {
+    unary_pd(a, |a| a.sqrt())
+}
+
+/// SQRTPD/SQRTSD and MINPD/MAXPD/MINSD/MAXSD share the single-precision
+/// helpers' semantics: sqrt of a negative produces NaN, and the min/max pair
+/// applies the same `SRC1 < SRC2 ? SRC1 : SRC2` rule — src2 on NaN or a tie.
+pub fn minpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| if a < b { a } else { b })
+}
+
+pub fn maxpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    binop_pd(a, b, |a, b| if a > b { a } else { b })
+}
+
+pub fn sqrtsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    let mut out = dst;
+    set_qword(&mut out, 0, qword2(src).sqrt());
+    out
+}
+
+pub fn minsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    let (a, b) = (qword(dst, 0), qword2(src));
+    let mut out = dst;
+    set_qword(&mut out, 0, if a < b { a } else { b });
+    out
+}
+
+pub fn maxsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    let (a, b) = (qword(dst, 0), qword2(src));
+    let mut out = dst;
+    set_qword(&mut out, 0, if a > b { a } else { b });
+    out
+}
+
 pub fn addsd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     scalar_binop_pd(dst, src, |a, b| a + b)
 }
@@ -1425,6 +1468,41 @@ mod tests {
         assert_eq!(
             maxss([neg_zero, two, two, two], pos_zero),
             [pos_zero, two, two, two]
+        );
+    }
+
+    #[test]
+    fn sse2_double_minmax_and_sqrt_follow_single_precision_rules() {
+        let one = dwords(1.0);
+        let four = dwords(4.0);
+        let nan = dwords(f64::NAN);
+        let pos_zero = dwords(0.0);
+        let neg_zero = dwords(-0.0);
+        let packed = |lo: [u32; 2], hi: [u32; 2]| [lo[0], lo[1], hi[0], hi[1]];
+
+        // SQRTPD/SQRTSD apply f64 sqrt lane-wise; negative inputs give NaN,
+        // and SQRTSD preserves the destination's high qword.
+        assert_eq!(sqrtpd(packed(four, one)), packed(dwords(2.0), one));
+        let s = sqrtsd(packed(one, four), dwords(-1.0));
+        assert!(qword(s, 0).is_nan());
+        assert_eq!(s[2..], four);
+
+        // MINPD/MAXPD apply the same src2-on-NaN-or-tie rule as the ps forms.
+        assert_eq!(
+            minpd(packed(four, nan), packed(one, four)),
+            packed(one, four)
+        );
+        assert_eq!(maxpd(packed(nan, four), packed(one, nan)), packed(one, nan));
+        assert_eq!(
+            minpd(packed(neg_zero, one), packed(pos_zero, one)),
+            packed(pos_zero, one)
+        );
+
+        // The scalar forms update only the low qword.
+        assert_eq!(minsd(packed(nan, four), one), packed(one, four));
+        assert_eq!(
+            maxsd(packed(pos_zero, four), neg_zero),
+            packed(neg_zero, four)
         );
     }
 

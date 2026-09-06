@@ -4103,6 +4103,64 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_sse2_double_minmax_and_sqrt() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // sqrtpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x51, 0xc1][..],
+                "ctx.cpu.xmm.xmm0 = sqrtpd(ctx.cpu.xmm.xmm1);",
+            ),
+            // minpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x5d, 0xc1],
+                "ctx.cpu.xmm.xmm0 = minpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // maxpd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x5f, 0x00],
+                "ctx.cpu.xmm.xmm0 = maxpd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
+            // sqrtsd xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0x51, 0xc1],
+                "ctx.cpu.xmm.xmm0 = sqrtsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // minsd xmm0, xmm1
+            (
+                &[0xf2, 0x0f, 0x5d, 0xc1],
+                "ctx.cpu.xmm.xmm0 = minsd(ctx.cpu.xmm.xmm0, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // maxsd xmm0, [eax]
+            (
+                &[0xf2, 0x0f, 0x5f, 0x00],
+                "ctx.cpu.xmm.xmm0 = maxsd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_sse2_scalar_double_conversions() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
