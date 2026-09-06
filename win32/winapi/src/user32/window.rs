@@ -19,6 +19,8 @@ pub struct Window {
     pub title: String,
     /// Keyboard/mouse input enable state from EnableWindow.
     pub enabled: bool,
+    /// Visibility, as ShowWindow reports the previous state of.
+    pub visible: bool,
     /// GWL_USERDATA slot, arbitrary per-window data the app stores.
     pub user_data: u32,
     /// A wndproc installed by SetWindowLong(GWL_WNDPROC) subclassing; when
@@ -152,6 +154,7 @@ impl State {
             dirty: true,
             title: args.name.clone(),
             enabled: true,
+            visible: false,
             user_data: 0,
             subclass_proc: None,
             x: args.x,
@@ -320,29 +323,44 @@ pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
     true
 }
 
+const SW_HIDE: u32 = 0;
+const SW_MINIMIZE: u32 = 6;
+
 #[win32_derive::dllexport]
 pub fn ShowWindow(
     _ctx: &mut Context,
     hWnd: HWND,
-    _nCmdShow: u32, /* SHOW_WINDOW_CMD */
+    nCmdShow: u32, /* SHOW_WINDOW_CMD */
 ) -> bool {
-    // The window comes up focused; games often wait for activation before
-    // running their main loop.
-    use super::message::{WM, post_message};
-    post_message(hWnd, WM::SHOWWINDOW as u32, 1, 0);
-    post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
-    post_message(hWnd, WM::ACTIVATE as u32, 1, 0); // WA_ACTIVE
-    post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
     let state = state();
-    let is_window = state
-        .window
-        .borrow()
-        .as_ref()
-        .is_some_and(|window| window.borrow().hwnd == hWnd);
-    if is_window {
+    let window = state.window.borrow();
+    let Some(window) = window.as_ref() else {
+        return false;
+    };
+    let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
+    // The return value is the previous visibility state.
+    let was_visible = window.visible;
+    window.visible = !matches!(nCmdShow, SW_HIDE | SW_MINIMIZE);
+    let visible = window.visible;
+    if visible {
+        window.dirty = true;
+    }
+    drop(window);
+
+    use super::message::{WM, post_message};
+    post_message(hWnd, WM::SHOWWINDOW as u32, visible as u32, 0);
+    if visible {
+        // The window comes up focused; games often wait for activation
+        // before running their main loop.
+        post_message(hWnd, WM::ACTIVATEAPP as u32, 1, 0);
+        post_message(hWnd, WM::ACTIVATE as u32, 1, 0); // WA_ACTIVE
+        post_message(hWnd, WM::SETFOCUS as u32, 0, 0);
         state.focused.set(hWnd);
     }
-    true
+    was_visible
 }
 
 #[win32_derive::dllexport]
@@ -1268,6 +1286,7 @@ mod tests {
             dirty: false,
             title: "Initial".into(),
             enabled: true,
+            visible: false,
             user_data: 0,
             subclass_proc: None,
             x: 0,
