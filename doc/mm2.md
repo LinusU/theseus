@@ -10,18 +10,12 @@ Acquire a compatible copy of the game independently and place it at:
 game/
 ```
 
-The directory is ignored by Git. `game/Midtown2.exe` is the small loader. The executable containing the game code is `game/MIDTOWN2.ICD`, but its code sections are encrypted on disk and are populated only after the original loader starts it. The translator must receive a decrypted PE image, not the raw ICD. Keep that private working artifact under `scratch/mm2/` or set `MM2_INPUT` to another ignored path. The data files remain in `game/` so the generated program can run with the game directory as its working directory.
+The directory is ignored by Git. This installation includes a cracked/unpacked `game/Midtown2.exe`, which is the usable PE input for Theseus. `game/MIDTOWN2.ICD` is the protected original image with scrambled code on disk; it is retained as part of the installation but is not needed by the current translation path. The data files remain in `game/` so the generated program can run with the game directory as its working directory. Set `MM2_INPUT` only when intentionally translating another usable PE image.
 
 ## Pipeline
 
 ```text
-game/Midtown2.exe + game/MIDTOWN2.ICD
-        |
-        v
-runtime unpack/capture on a compatible Windows environment
-        |
-        v
-scratch/mm2/MIDTOWN2.decrypted.exe
+game/Midtown2.exe (cracked/unpacked PE)
         |
         v
 out/mm2/translate.sh
@@ -43,16 +37,17 @@ Generated files under `out/mm2/` are ignored. The target scaffold, translation s
 
 ## Current assessment
 
-The two files are PE32 Intel 80386 GUI binaries. `Midtown2.exe` is a small loader; `MIDTOWN2.ICD` has the matching image base and imports but its `.text` bytes are scrambled on disk. A direct disassembly of the ICD starts with invalid-looking instructions, so translating the raw file is not a viable path. This is the same general shape as the documented SafeDisc loader pattern: the original loader creates the real process and decrypts the ICD image in memory.
+The two files are PE32 Intel 80386 GUI binaries. In this cracked installation, `Midtown2.exe` is the usable code-bearing PE that Theseus can translate directly. `MIDTOWN2.ICD` has the matching image base and imports but its `.text` bytes are scrambled on disk, so the raw ICD is not a valid translation input. The cracked executable effectively bypasses the original protected loader path for this port.
 
-The first translation attempt against `Midtown2.exe` was useful only as a compiler smoke test: it discovered 99,382 blocks covering about 93.6% of that file's code section, then stopped because `tc/src/codegen/mod.rs` does not handle the `Float80` memory size used by an x87 instruction. It also reported two statically known jumps whose target blocks were not discovered. Those findings remain useful compiler work, but the MM2 target must first obtain a decrypted ICD image.
+The initial translation of `Midtown2.exe` discovered 99,382 blocks covering about 93.6% of its code section. It first stopped on an x87 `Float80` code-generation gap, which the agents fixed. The generated snapshot then built and reached the main menu, lobby paths, London, and multiple race modes on macOS. This was not a decrypted-ICD extraction; it was translation of the cracked executable already present in `game/`.
 
-The staged port has two separate phases:
+The current port therefore has one primary path:
 
-1. Capture/reconstruct a decrypted ICD PE image from the original runtime-loaded process. Preserve the PE headers, loaded code/data sections, image base, entry point, and enough import metadata for `tc`; a raw process-memory dump is not automatically a valid input file.
-2. Translate and run that image through Theseus. Add correct 80-bit x87 load/store representation, fix subsequent code-generation and static-analysis gaps, implement the Win32/DirectX/host behavior needed to reach startup, feed dynamic missing addresses back through `missing.txt`, and finally add focused Rust overrides.
+1. Translate the cracked `game/Midtown2.exe` with `out/mm2/translate.sh`.
+2. Build and run the generated native target through Theseus's runtime, Win32 implementation, and SDL host.
+3. Feed any dynamically missing addresses back through `missing.txt`, then add focused Rust overrides once a suitable target function is identified.
 
-The runtime capture phase is intentionally outside the macOS translator for now. It can be performed in a compatible Windows environment using the user's own installation, after which the resulting private image is supplied with `MM2_INPUT`. The checked-in workflow does not include or redistribute game binaries or a decryption key.
+Reconstructing a decrypted ICD image remains an optional compatibility/research path for comparing against the protected release. It is not required to regenerate or run the current cracked-installation target. If an alternate usable PE is later supplied, set `MM2_INPUT` to that file. The checked-in workflow does not redistribute game binaries or protection keys.
 
 ## Agent loop
 
@@ -87,7 +82,7 @@ Use the runtime context helpers to read/write emulated memory and registers, and
 ## Useful commands
 
 ```text
-MM2_INPUT=scratch/mm2/MIDTOWN2.decrypted.exe out/mm2/translate.sh
+out/mm2/translate.sh
 cargo build --profile fast -p mm2
 THESEUS_MISSING_ADDRS=out/mm2/missing.txt cargo run --profile fast -p mm2 -- game
 ```
@@ -95,10 +90,11 @@ THESEUS_MISSING_ADDRS=out/mm2/missing.txt cargo run --profile fast -p mm2 -- gam
 ## macOS run/debug workflow
 
 The translated program currently launches, navigates the menus, loads the
-London level, and runs a Blitz race with the software Direct3D rasterizer.
-The decrypted PE input is not committed, so the checked-in workflow relies on
-the local generated snapshot under `out/mm2/`; rerun `translate.sh` only when
-a decrypted image is available through `MM2_INPUT`.
+London level, and runs multiple race types with the software Direct3D
+rasterizer. The cracked `game/Midtown2.exe` is the reproducible translation
+input, while the generated snapshot under `out/mm2/` remains ignored. Rerun
+`translate.sh` after acquiring the installation; use `MM2_INPUT` only for an
+alternate usable PE image.
 
 Headless runs drive the game with synthesized input and frame dumps:
 
@@ -170,6 +166,7 @@ overlay panels not showing their text labels, and the absent audio/DirectMusic
 content is the source of most of the runtime warnings. The port handles the
 missing files gracefully and the race loop is otherwise stable.
 
-The only prerequisite that remains blocking for a fully regenerated target is
-a compatible, decrypted `MIDTOWN2.ICD` PE image with valid imports, supplied
-through `MM2_INPUT`.
+The current target can be fully regenerated from the cracked
+`game/Midtown2.exe`. A decrypted `MIDTOWN2.ICD` PE image with valid imports is
+only needed for an optional comparison against the protected release, not for
+the working macOS port.
