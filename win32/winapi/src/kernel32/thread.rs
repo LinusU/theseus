@@ -156,9 +156,13 @@ impl kernel32::State {
             memory_size,
         ) else {
             log::warn!("thread stack mapping could not be allocated");
+            self.mappings.free(teb_addr);
             return false;
         };
         let stack_pointer = stack_addr + stack_size;
+        // NT_TIB stack bounds (fs:[4]/fs:[8]) for code that probes them.
+        teb.Tib.StackBase = stack_pointer;
+        teb.Tib.StackLimit = stack_addr;
         ctx.cpu.regs.esp = stack_pointer;
         ctx.cpu.regs.ebp = stack_pointer;
         true
@@ -406,5 +410,23 @@ mod tests {
             .aligned_ref(&ctx.memory)
             .unwrap()
             .LastErrorValue
+    }
+
+    #[test]
+    fn init_thread_sets_tib_stack_bounds() {
+        ensure_test_state();
+        // The thread setup needs room for the TEB plus the 64 KiB stack.
+        let mut ctx = Context {
+            memory: Memory::leak_new(0x20_000),
+            ..context()
+        };
+        assert!(crate::kernel32::lock().init_thread(&mut ctx, 0));
+
+        let teb = crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
+            .aligned_ref(&ctx.memory)
+            .unwrap();
+        assert_eq!(teb.Tib._Self, ctx.cpu.regs.fs_base);
+        assert_eq!(teb.Tib.StackBase, ctx.cpu.regs.esp);
+        assert_eq!(teb.Tib.StackLimit + (64 << 10), teb.Tib.StackBase);
     }
 }
