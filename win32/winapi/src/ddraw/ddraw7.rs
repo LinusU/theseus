@@ -1335,7 +1335,12 @@ pub mod IDirectDrawSurface7 {
                 .borrow_mut()
                 .insert(dc.to_raw(), scratch);
         }
-        let _ = crate::Ptr::<u32>::new(lphDC).write(&mut ctx.memory, dc.to_raw());
+        if crate::Ptr::<u32>::new(lphDC)
+            .write(&mut ctx.memory, dc.to_raw())
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1722,7 +1727,12 @@ pub mod IDirectDrawSurface7 {
         };
         if size < data.len() as u32 {
             // Report the needed size, as the API contract requires.
-            let _ = Ptr::<u32>::new(lpcbBufferSize).write(&mut ctx.memory, data.len() as u32);
+            if Ptr::<u32>::new(lpcbBufferSize)
+                .write(&mut ctx.memory, data.len() as u32)
+                .is_none()
+            {
+                return DD::ERR_INVALIDPARAMS;
+            }
             return DD::ERR_MOREDATA;
         }
         if !crate::ddraw::guest_range(ctx, lpBuffer, data.len() as u32) {
