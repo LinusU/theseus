@@ -89,7 +89,7 @@ fn read_string_type_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
     if count < -1 {
         return None;
     }
-    let bytes = &ctx.memory[addr..];
+    let bytes = ctx.memory.bytes.get(addr as usize..)?;
     let len = if count == -1 {
         bytes.iter().position(|&byte| byte == 0)? + 1
     } else {
@@ -102,7 +102,7 @@ fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> 
     if count < -1 {
         return None;
     }
-    let bytes = &ctx.memory[addr..];
+    let bytes = ctx.memory.bytes.get(addr as usize..)?;
     if count == -1 {
         let mut out = Vec::new();
         for chunk in bytes.chunks_exact(2) {
@@ -316,15 +316,16 @@ fn ansi_to_wide(byte: u8) -> u16 {
 }
 
 fn read_multibyte(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
+    let bytes = ctx.memory.bytes.get(addr as usize..)?;
     let len = match count {
-        -1 => ctx.memory[addr..]
+        -1 => bytes
             .iter()
             .position(|&byte| byte == 0)
             .map(|len| len + 1)?,
         count if count > 0 => count as usize,
         _ => return None,
     };
-    Some(ctx.memory[addr..].get(..len)?.to_vec())
+    Some(bytes.get(..len)?.to_vec())
 }
 
 #[win32_derive::dllexport]

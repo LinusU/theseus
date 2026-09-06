@@ -86,16 +86,19 @@ pub fn StretchBlt(
     let wSrc = wSrc as u32;
     let hSrc = hSrc as u32;
     let wDst = wDest as u32;
-    if xSrc + wSrc > bmp_src.width
-        || ySrc + hSrc > bmp_src.height
-        || xDst + wDst > bmp_dst.width
-        || yDst + hSrc > bmp_dst.height
+    // Widen to u64 so a negative or huge start coordinate cannot wrap
+    // past the check.
+    if xSrc as u64 + wSrc as u64 > bmp_src.width as u64
+        || ySrc as u64 + hSrc as u64 > bmp_src.height as u64
+        || xDst as u64 + wDst as u64 > bmp_dst.width as u64
+        || yDst as u64 + hSrc as u64 > bmp_dst.height as u64
     {
         return false;
     }
 
     for y in 0..hDest as u32 {
-        let dst = &mut pixels_dst[(((yDst + y) * bmp_dst.stride()) + (xDst * 4)) as usize..]
+        let dst = &mut pixels_dst
+            [(yDst + y) as usize * bmp_dst.stride() as usize + xDst as usize * 4..]
             [..wDst as usize * 4];
         let y_src = ySrc + y;
         bmp_src.read_pixels(
@@ -215,7 +218,10 @@ pub fn SetDIBitsToDevice(
     lpbmi: Ptr<u8>, /* BITMAPINFO */
     ColorUse: u32,  /* DIB_USAGE */
 ) -> u32 {
-    let (bmp_src, _) = Bitmap::parse(&ctx.memory[lpbmi.addr..]);
+    let Some(header) = ctx.memory.bytes.get(lpbmi.addr as usize..) else {
+        return 0;
+    };
+    let (bmp_src, _) = Bitmap::parse(header);
 
     if StartScan != 0 || ColorUse != 0 || cLines != h {
         return 0;
@@ -233,10 +239,11 @@ pub fn SetDIBitsToDevice(
         return 0;
     }
 
-    if xSrc + w > bmp_src.width
-        || ySrc + h > bmp_src.height
-        || xDest + w > bmp_dst.width
-        || yDest + h > bmp_dst.height
+    // Widen to u64 so a huge start coordinate cannot wrap past the check.
+    if xSrc as u64 + w as u64 > bmp_src.width as u64
+        || ySrc as u64 + h as u64 > bmp_src.height as u64
+        || xDest as u64 + w as u64 > bmp_dst.width as u64
+        || yDest as u64 + h as u64 > bmp_dst.height as u64
     {
         return 0;
     }
@@ -254,7 +261,8 @@ pub fn SetDIBitsToDevice(
     // }
 
     for y in 0..h {
-        let dst = &mut pixels_dst[((yDest + y) * bmp_dst.stride() + xDest * 4) as usize..]
+        let dst = &mut pixels_dst
+            [(yDest + y) as usize * bmp_dst.stride() as usize + xDest as usize * 4..]
             [..w as usize * 4];
         let y_src = ySrc + y;
         bmp_src.read_pixels(

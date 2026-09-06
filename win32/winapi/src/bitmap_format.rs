@@ -36,7 +36,7 @@ pub struct BITMAPCOREHEADER {
 impl BITMAPCOREHEADER {
     pub fn stride(&self) -> usize {
         // Bitmap row stride is padded out to 4 bytes per row.
-        ((((self.bcWidth * self.bcBitCount) as usize) + 31) & !31) >> 3
+        (((self.bcWidth as usize * self.bcBitCount as usize) + 31) & !31) >> 3
     }
 }
 
@@ -122,12 +122,16 @@ impl Bitmap {
     }
 
     pub fn stride(&self) -> u32 {
-        // Bitmap row stride is padded out to 4 bytes per row.
-        (((self.width * self.bit_count as u32) + 31) & !31) / 8
+        // Bitmap row stride is padded out to 4 bytes per row. A hostile
+        // width could overflow the u32 multiply, so compute in u64 and
+        // saturate: every row guard then fails gracefully instead of
+        // indexing a too-short buffer.
+        u32::try_from((((self.width as u64 * self.bit_count as u64) + 31) & !31) / 8)
+            .unwrap_or(u32::MAX)
     }
 
     pub fn pixels_len(&self) -> usize {
-        (self.height * self.stride()) as usize
+        self.height as usize * self.stride() as usize
     }
 
     pub fn pixels_range(&self) -> std::ops::Range<usize> {
@@ -266,7 +270,7 @@ impl Bitmap {
 
     pub fn read_pixels(&self, pixels: &[u8], y: u32, x1: u32, x2: u32, dst: &mut [u8]) {
         // Degenerate or truncated bitmaps may not have a full row available.
-        if x2 > self.width || pixels.len() < (y + 1) as usize * self.stride() as usize {
+        if x2 > self.width || x1 > x2 || pixels.len() < (y as usize + 1) * self.stride() as usize {
             return;
         }
         let row_pixels = (x2 - x1) as usize;
@@ -282,18 +286,20 @@ impl Bitmap {
         };
         match self.bit_count {
             32 => {
-                let len = ((x2 - x1) * 4) as usize;
-                dst[..len].copy_from_slice(&pixels[(y * self.stride() + x1 * 4) as usize..][..len]);
+                let len = (x2 - x1) as usize * 4;
+                dst[..len].copy_from_slice(
+                    &pixels[y as usize * self.stride() as usize + x1 as usize * 4..][..len],
+                );
             }
             8 => {
-                let src = &pixels[(y * self.stride()) as usize..];
+                let src = &pixels[y as usize * self.stride() as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let color = palette(src[srci as usize] as usize);
                     dst[dsti..][..4].copy_from_slice(&color.to_pixel());
                 }
             }
             4 => {
-                let src = &pixels[(y * self.stride()) as usize..];
+                let src = &pixels[y as usize * self.stride() as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let color = palette(if srci % 2 == 0 {
                         src[(srci / 2) as usize] >> 4
@@ -304,7 +310,7 @@ impl Bitmap {
                 }
             }
             1 => {
-                let src = &pixels[(y * self.stride()) as usize..];
+                let src = &pixels[y as usize * self.stride() as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let bit = 7 - (srci % 8);
                     let color = palette(((src[(srci / 8) as usize] >> bit) & 1) as usize);
@@ -313,7 +319,7 @@ impl Bitmap {
             }
             16 => {
                 // BI_RGB 16bpp stores pixels as RGB555.
-                let src = &pixels[(y * self.stride()) as usize..];
+                let src = &pixels[y as usize * self.stride() as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let v =
                         u16::from_le_bytes([src[srci as usize * 2], src[srci as usize * 2 + 1]]);
@@ -324,7 +330,7 @@ impl Bitmap {
                 }
             }
             24 => {
-                let src = &pixels[(y * self.stride()) as usize..];
+                let src = &pixels[y as usize * self.stride() as usize..];
                 for (srci, dsti) in (x1..x2).zip((0..).step_by(4)) {
                     let color = if let Some([b, g, r]) = src
                         .get(srci as usize * 3..)
@@ -445,5 +451,35 @@ mod tests {
         let mut dst = [0u8; 8];
         bmp.read_pixels(&pixels, 0, 0, 2, &mut dst);
         assert_eq!(dst, [0u8; 8]);
+    }
+
+    #[test]
+    fn read_pixels_handles_a_huge_declared_width() {
+        // width * bit_count overflows u32, so stride saturates and the
+        // row-length guard rejects a too-short pixel buffer.
+        let bmp = Bitmap {
+            width: 0x4000_0000,
+            height: 4,
+            is_bottom_up: true,
+            bit_count: 32,
+            palette: Box::new([]),
+            pixels: 0,
+        };
+        assert_eq!(bmp.stride(), u32::MAX);
+        let pixels = [0u8; 64];
+        let mut dst = [0u8; 16];
+        bmp.read_pixels(&pixels, 0, 0, 4, &mut dst);
+        assert_eq!(dst, [0u8; 16]);
+    }
+
+    #[test]
+    fn read_pixels_rejects_x1_past_x2() {
+        let bmp = Bitmap::new_simple(4, 1, 0);
+        let pixels = [0u8; 16];
+        let mut dst = [0xccu8; 16];
+        // x1 > x2 is a caller bug; treat it as an empty row, not a
+        // u32 underflow.
+        bmp.read_pixels(&pixels, 0, 3, 1, &mut dst);
+        assert_eq!(dst, [0xccu8; 16]);
     }
 }
