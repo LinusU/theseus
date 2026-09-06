@@ -253,7 +253,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                         ctx.cpu.flags.insert(runtime::Flags::CF);
                         return None;
                     }
-                    ctx.memory[load_addr..][..data.len()].copy_from_slice(data);
+                    ctx.memory.write_bytes(load_addr, data);
                     log::info!("TODO: relocations {relo:x}");
 
                     ctx.cpu.flags.remove(runtime::Flags::CF); // no error

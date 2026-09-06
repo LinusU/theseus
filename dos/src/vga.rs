@@ -28,7 +28,12 @@ impl VGA {
         host::host().poll(); // pump msg loop
 
         let pixels_seg = 0xa000;
-        let pixels8 = &ctx.memory[segofs(pixels_seg, 0)..][..(320 * 200)];
+        let pixels8 = ctx
+            .memory
+            .bytes
+            .get(segofs(pixels_seg, 0) as usize..)
+            .and_then(|b| b.get(..(320 * 200)))
+            .unwrap_or(&[]);
 
         for (p32, &p8) in self.pixels32.chunks_exact_mut(4).zip(pixels8) {
             let [r, g, b] = self.palette[p8 as usize];

@@ -147,7 +147,7 @@ pub fn load(exe: &EXEData, command_line: Option<&str>) -> Context {
     ]
     .join(b"\0".as_slice());
     let environment_segment = 0x7ca; // from dosbox
-    memory[segofs(environment_segment, 0)..][..environment.len()].copy_from_slice(&environment);
+    memory.write_bytes(segofs(environment_segment, 0), &environment);
 
     let mut psp = PSP::new();
     psp.memory_top = 0x9fff; // from dosbox
@@ -316,9 +316,14 @@ pub fn out(ctx: &mut Context, port: u16, data: u8) {
 }
 
 pub fn dump_com(ctx: &mut Context) -> &[u8] {
-    let data = &ctx.memory[segofs(DOSBOX_SEG, 0x100)..];
-    let end = data.iter().rposition(|&x| x != 0);
-    &data[..end.unwrap() + 1]
+    let addr = segofs(DOSBOX_SEG, 0x100);
+    let data = ctx.memory.bytes.get(addr as usize..).unwrap_or(&[]);
+    let end = data
+        .iter()
+        .rposition(|&x| x != 0)
+        .map(|end| end + 1)
+        .unwrap_or(0);
+    data.get(..end).unwrap_or(&[])
 }
 
 impl State {
