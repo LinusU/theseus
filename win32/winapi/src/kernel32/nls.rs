@@ -416,8 +416,12 @@ pub fn WideCharToMultiByte(
         .map(|wide| wide_to_ansi(wide, default))
         .collect();
     let used_default = converted.iter().any(|&(_, used)| used);
-    if lpUsedDefaultChar.addr >= 0x1000 {
-        let _ = lpUsedDefaultChar.write(&mut ctx.memory, used_default);
+    if crate::ddraw::guest_range(
+        ctx,
+        lpUsedDefaultChar.addr,
+        std::mem::size_of::<u8>() as u32,
+    ) {
+        lpUsedDefaultChar.write(&mut ctx.memory, used_default);
     }
     if cbMultiByte == 0 {
         return converted.len() as i32;
