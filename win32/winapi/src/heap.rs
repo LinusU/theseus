@@ -31,11 +31,6 @@ impl Heap {
         self.freelist.borrow_mut().alloc(mem, size)
     }
 
-    pub fn alloc(&self, mem: &mut Memory, size: u32) -> u32 {
-        self.try_alloc(mem, size)
-            .unwrap_or_else(|| panic!("heap size {:x} oom {:x}", self.size, size))
-    }
-
     /// The payload size of a live block, or None when `addr` does not name a
     /// live block — unlike the in-band header, this cannot be confused by a
     /// corrupted or interior header.

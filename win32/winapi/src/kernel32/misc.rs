@@ -326,33 +326,6 @@ pub fn VirtualAlloc(
         .mappings
         .try_alloc("VirtualAlloc".into(), dwSize, limit)
         .unwrap_or(0)
-    /*
-    let memory = sys.memory_mut();
-    if lpAddress != 0 {
-        // Changing flags on an existing address, hopefully.
-        match memory
-            .mappings
-            .vec()
-            .iter()
-            .find(|&mapping| mapping.contains(lpAddress))
-        {
-            None => {
-                log::error!("failing VirtualAlloc({lpAddress:x}, ...) refers to unknown mapping");
-                return 0;
-            }
-            Some(_) => {
-                // adjusting flags on existing mapping, ignore.
-                return lpAddress;
-            }
-        }
-    }
-    // TODO round dwSize to page boundary
-
-    let mapping = memory
-        .mappings
-        .alloc(memory.imp.mem(), dwSize, "VirtualAlloc".into());
-    mapping.addr
-    */
 }
 
 #[win32_derive::dllexport]
