@@ -248,7 +248,14 @@ pub fn LoadStringA(
     if end as usize > ctx.memory.bytes.len() {
         return 0;
     }
-    ctx.memory[lpBuffer.addr..][..copy_len].copy_from_slice(&bytes[..copy_len]);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..copy_len))
+    {
+        dst.copy_from_slice(&bytes[..copy_len]);
+    }
     ctx.memory.write::<u8>(lpBuffer.addr + copy_len as u32, 0);
     copy_len as i32
 }
@@ -285,7 +292,14 @@ pub fn LoadStringW(
     if end > ctx.memory.bytes.len() {
         return 0;
     }
-    ctx.memory[lpBuffer.addr..][..copy_bytes].copy_from_slice(&bytes[..copy_bytes]);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpBuffer.addr as usize..)
+        .and_then(|b| b.get_mut(..copy_bytes))
+    {
+        dst.copy_from_slice(&bytes[..copy_bytes]);
+    }
     ctx.memory
         .write::<u16>(lpBuffer.addr + copy_bytes as u32, 0);
     copy_units as i32

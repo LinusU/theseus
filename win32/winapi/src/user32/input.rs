@@ -524,7 +524,14 @@ pub fn GetKeyNameTextA(ctx: &mut Context, lParam: i32, lpString: u32, cchSize: i
     if end as usize > ctx.memory.bytes.len() {
         return 0;
     }
-    ctx.memory[lpString..][..copy_len].copy_from_slice(&name[..copy_len]);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpString as usize..)
+        .and_then(|b| b.get_mut(..copy_len))
+    {
+        dst.copy_from_slice(&name[..copy_len]);
+    }
     ctx.memory.write::<u8>(lpString + copy_len as u32, 0);
     copy_len as i32
 }
@@ -560,8 +567,16 @@ pub fn GetKeyboardState(ctx: &mut Context, lpKeyState: u32) -> bool {
         return false;
     }
     let input = state().input.borrow();
-    for vkey in 0..256u32 {
-        ctx.memory[lpKeyState + vkey] = input.key_state(vkey as u8);
+    let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpKeyState as usize..)
+        .and_then(|b| b.get_mut(..256))
+    else {
+        return false;
+    };
+    for (vkey, slot) in dst.iter_mut().enumerate() {
+        *slot = input.key_state(vkey as u8);
     }
     true
 }
