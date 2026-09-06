@@ -231,20 +231,21 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
-            // Packed single-precision lane shuffles.
-            Shufps => {
+            // Packed single/double-precision lane shuffles.
+            Shufps | Shufpd => {
                 let imm = format!("{:#x}", instr.immediate8());
+                let func = instr_name(instr);
                 self.line(self.xmm_set(
                     instr,
                     0,
                     format!(
-                        "shufps({}, {}, {imm})",
+                        "{func}({}, {}, {imm})",
                         self.xmm_get(instr, 0),
                         self.xmm_get(instr, 1)
                     ),
                 ));
             }
-            Unpckhps | Unpcklps => {
+            Unpckhps | Unpcklps | Unpckhpd | Unpcklpd => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(
                     instr,
@@ -606,7 +607,7 @@ impl<'a> CodeGen<'a> {
             // 64-bit low/high loads and stores. Memory loads replace the
             // corresponding qword and leave the other qword unchanged; stores
             // write the selected qword from a register source.
-            Movlps | Movhps => {
+            Movlps | Movhps | Movlpd | Movhpd => {
                 use iced_x86::OpKind::*;
                 let func = instr_name(instr);
                 let (op0, op1) = (instr.op_kind(0), instr.op_kind(1));
@@ -616,7 +617,7 @@ impl<'a> CodeGen<'a> {
                     let reg = instr.op_register(0);
                     self.line(format!("{} = {func}({}, {});", xmm_reg(reg), dst, src));
                 } else if codegen::is_memory_op(op0) && op1 == Register {
-                    let qword = if func == "movlps" {
+                    let qword = if matches!(func.as_str(), "movlps" | "movlpd") {
                         "low_qword"
                     } else {
                         "high_qword"

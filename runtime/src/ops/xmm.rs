@@ -88,6 +88,20 @@ pub fn unpckhps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     [a[2], b[2], a[3], b[3]]
 }
 
+pub fn unpcklpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[0], a[1], b[0], b[1]]
+}
+
+pub fn unpckhpd(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    [a[2], a[3], b[2], b[3]]
+}
+
+pub fn shufpd(a: [u32; 4], b: [u32; 4], imm8: u8) -> [u32; 4] {
+    let lo = (imm8 & 1) as usize * 2;
+    let hi = ((imm8 >> 1) & 1) as usize * 2;
+    [a[lo], a[lo + 1], b[hi], b[hi + 1]]
+}
+
 pub fn movss(dst: [u32; 4], src: u32) -> [u32; 4] {
     [src, dst[1], dst[2], dst[3]]
 }
@@ -935,6 +949,16 @@ pub fn movhps(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
     [dst[0], dst[1], src[0], src[1]]
 }
 
+// MOVLPD/MOVHPD move the same 64-bit qword lane as their MOVLPS/MOVHPS
+// counterparts; only the opcode and datatype hint differ.
+pub fn movlpd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    movlps(dst, src)
+}
+
+pub fn movhpd(dst: [u32; 4], src: [u32; 2]) -> [u32; 4] {
+    movhps(dst, src)
+}
+
 pub fn low_qword(xmm: [u32; 4]) -> [u32; 2] {
     [xmm[0], xmm[1]]
 }
@@ -1469,6 +1493,20 @@ mod tests {
             maxss([neg_zero, two, two, two], pos_zero),
             [pos_zero, two, two, two]
         );
+    }
+
+    #[test]
+    fn pd_unpack_shuffle_and_qword_moves() {
+        let a = [1, 2, 3, 4];
+        let b = [5, 6, 7, 8];
+        assert_eq!(unpcklpd(a, b), [1, 2, 5, 6]);
+        assert_eq!(unpckhpd(a, b), [3, 4, 7, 8]);
+        assert_eq!(shufpd(a, b, 0x0), [1, 2, 5, 6]);
+        assert_eq!(shufpd(a, b, 0x1), [3, 4, 5, 6]);
+        assert_eq!(shufpd(a, b, 0x2), [1, 2, 7, 8]);
+        assert_eq!(shufpd(a, b, 0x3), [3, 4, 7, 8]);
+        assert_eq!(movlpd(a, [9, 10]), [9, 10, 3, 4]);
+        assert_eq!(movhpd(a, [9, 10]), [1, 2, 9, 10]);
     }
 
     #[test]

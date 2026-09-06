@@ -1773,6 +1773,21 @@ mod tests {
                 &[0x0f, 0x15, 0xc1],
                 "ctx.cpu.xmm.xmm0 = unpckhps(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
             ),
+            // shufpd xmm0, xmm1, 0x2
+            (
+                &[0x66, 0x0f, 0xc6, 0xc1, 0x02],
+                "ctx.cpu.xmm.xmm0 = shufpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1, 0x2);",
+            ),
+            // unpcklpd xmm0, xmm1
+            (
+                &[0x66, 0x0f, 0x14, 0xc1],
+                "ctx.cpu.xmm.xmm0 = unpcklpd(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);",
+            ),
+            // unpckhpd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x15, 0x00],
+                "ctx.cpu.xmm.xmm0 = unpckhpd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 4]>(ctx.cpu.regs.eax));",
+            ),
         ] {
             codegen.buf.clear();
             let mut decoder =
@@ -1872,6 +1887,26 @@ mod tests {
             // movhps [eax], xmm1
             (
                 &[0x0f, 0x17, 0x08],
+                "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, high_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // movlpd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x12, 0x00],
+                "ctx.cpu.xmm.xmm0 = movlpd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movhpd xmm0, [eax]
+            (
+                &[0x66, 0x0f, 0x16, 0x00],
+                "ctx.cpu.xmm.xmm0 = movhpd(ctx.cpu.xmm.xmm0, ctx.memory.read::<[u32; 2]>(ctx.cpu.regs.eax));",
+            ),
+            // movlpd [eax], xmm1
+            (
+                &[0x66, 0x0f, 0x13, 0x08],
+                "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
+            // movhpd [eax], xmm1
+            (
+                &[0x66, 0x0f, 0x17, 0x08],
                 "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, high_qword(ctx.cpu.xmm.xmm1));",
             ),
         ] {
