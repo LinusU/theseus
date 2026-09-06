@@ -944,8 +944,8 @@ pub mod IDirectInputDevice {
         lplpde: u32,
         _punkOuter: u32,
     ) -> u32 {
-        if lplpde != 0 {
-            let _ = crate::Ptr::<u32>::new(lplpde).write(&mut ctx.memory, 0);
+        if lplpde != 0 && crate::ddraw::guest_range(ctx, lplpde, 4) {
+            crate::Ptr::<u32>::new(lplpde).write(&mut ctx.memory, 0);
         }
         DIERR_UNSUPPORTED
     }
