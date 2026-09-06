@@ -16,9 +16,29 @@ pub fn OffsetRect(ctx: &mut Context, lprc: Ptr<RECT>, dx: i32, dy: i32) -> bool 
 }
 
 #[win32_derive::dllexport]
-pub fn ClientToScreen(_ctx: &mut Context, _hWnd: HWND, _lpPoint: Ptr<POINT>) -> bool {
-    // The window's client area sits at the screen origin.
-    true
+pub fn ClientToScreen(ctx: &mut Context, hWnd: HWND, lpPoint: Ptr<POINT>) -> bool {
+    let Some(mut point) = lpPoint.read(&ctx.memory) else {
+        return false;
+    };
+    // A null HWND is the desktop (see GetDesktopWindow): the point is
+    // already in screen space. Otherwise the window's (x, y) is the client
+    // origin — the model has no frame or caption — matching
+    // MapWindowPoints.
+    if !hWnd.is_null() {
+        let window = super::state().window.borrow();
+        let Some(window) = window.as_ref() else {
+            return false;
+        };
+        let window = window.borrow();
+        if window.hwnd != hWnd {
+            return false;
+        }
+        point = point.add(POINT {
+            x: window.x,
+            y: window.y,
+        });
+    }
+    lpPoint.write(&mut ctx.memory, point).is_some()
 }
 
 #[win32_derive::dllexport]
@@ -49,4 +69,73 @@ pub fn SetRect(
         },
     )
     .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClientToScreen, HWND, POINT, Ptr};
+    use runtime::{BlockCache, CPU, Context, Memory};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn client_to_screen_offsets_by_the_window_origin() {
+        let mut ctx = context();
+        let host_window: host::Window = unsafe { std::mem::zeroed() };
+        let window = Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: "Test".into(),
+            enabled: true,
+            visible: false,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 10,
+            y: 20,
+            width: 1,
+            height: 1,
+            pixels: None,
+            host: host_window,
+            surface: None,
+        }));
+        crate::user32::state().window.borrow_mut().replace(window);
+
+        ctx.memory.write(0x1000, POINT { x: 1, y: 2 });
+        assert!(ClientToScreen(
+            &mut ctx,
+            HWND::from_raw(1),
+            Ptr::new(0x1000)
+        ));
+        assert_eq!(ctx.memory.read::<POINT>(0x1000), POINT { x: 11, y: 22 });
+
+        // A null hwnd is the desktop: the point passes through unchanged.
+        assert!(ClientToScreen(&mut ctx, HWND::null(), Ptr::new(0x1000)));
+        assert_eq!(ctx.memory.read::<POINT>(0x1000), POINT { x: 11, y: 22 });
+
+        // A foreign hwnd and an unreadable out-pointer both fail.
+        assert!(!ClientToScreen(
+            &mut ctx,
+            HWND::from_raw(2),
+            Ptr::new(0x1000)
+        ));
+        assert!(!ClientToScreen(&mut ctx, HWND::from_raw(1), Ptr::new(0)));
+
+        crate::user32::state().window.borrow_mut().take();
+    }
 }

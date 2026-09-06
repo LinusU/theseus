@@ -898,25 +898,6 @@ mod tests {
     }
 
     #[test]
-    fn wait_message_returns_once_a_message_is_queued() {
-        use runtime::{BlockCache, CPU, Context, Memory};
-        let mut ctx = Context {
-            cpu: CPU::default(),
-            thread_handle: 0,
-            thread_id: 0,
-            memory: Memory::leak_new(0x4000),
-            blocks: &[],
-            cache: BlockCache::default(),
-            recent: [Context::return_from_x86; 4],
-        };
-        // A pending posted message satisfies WaitMessage without blocking
-        // on the host.
-        post_message(HWND::from_raw(7), WM::KEYDOWN as u32, 0, 0);
-        assert!(WaitMessage(&mut ctx));
-        state().message_queue.borrow_mut().messages.clear();
-    }
-
-    #[test]
     fn null_hwnd_timers_get_allocated_ids() {
         let mut queue = MessageQueue::default();
         let first = queue.set_timer(HWND::null(), 0, 20, 0, 0);

@@ -1,6 +1,14 @@
 #[repr(C)]
 #[derive(
-    Copy, Clone, Debug, Default, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::Immutable,
 )]
 pub struct POINT {
     pub x: i32,
