@@ -158,30 +158,37 @@ pub fn sar<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
 }
 
 pub fn rol<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
-    let count = usize::from(y) % I::bits();
-    if count == 0 {
+    // The count masks to 5 bits; a nonzero masked count updates CF even
+    // when the effective rotation (mod operand width) is zero, e.g.
+    // `rol al, 8` leaves AL alone but still writes CF = LSB(AL).
+    let masked = usize::from(y) % 32;
+    if masked == 0 {
         return x;
     }
-    let result = x.rotate_left(count as u32);
+    let result = x.rotate_left((masked % I::bits()) as u32);
     let carry = (result & I::one()).is_one();
     flags.set(Flags::CF, carry);
     // Note: OF only defined for 1-bit rotates.
-    flags.set(Flags::OF, carry ^ (result.high_bit()).is_one());
+    if masked == 1 {
+        flags.set(Flags::OF, carry ^ (result.high_bit()).is_one());
+    }
     result
 }
 
 pub fn ror<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
-    let count = usize::from(y) % I::bits();
-    if count == 0 {
+    let masked = usize::from(y) % 32;
+    if masked == 0 {
         return x;
     }
-    let result = x.rotate_right(count as u32);
+    let result = x.rotate_right((masked % I::bits()) as u32);
     flags.set(Flags::CF, result.high_bit().is_one());
     // Note: OF only defined for 1-bit rotates.
-    flags.set(
-        Flags::OF,
-        result.high_bit().is_one() ^ ((result >> (I::bits() - 2)) & I::one()).is_one(),
-    );
+    if masked == 1 {
+        flags.set(
+            Flags::OF,
+            result.high_bit().is_one() ^ ((result >> (I::bits() - 2)) & I::one()).is_one(),
+        );
+    }
     result
 }
 
@@ -301,9 +308,10 @@ mod tests {
         assert_eq!(super::ror(0b0000_0010u8, 1, &mut flags), 0b0000_0001);
         assert_eq!("", flags.to_string());
 
+        // OF is undefined for counts above 1 and is left untouched.
         let mut flags = Flags::default();
         assert_eq!(super::ror(0x1234_5678u32, 4, &mut flags), 0x8123_4567);
-        assert_eq!("CF OF", flags.to_string());
+        assert_eq!("CF", flags.to_string());
 
         let mut flags = Flags::CF | Flags::OF;
         assert_eq!(super::ror(0x1234_5678u32, 32, &mut flags), 0x1234_5678);
@@ -318,6 +326,33 @@ mod tests {
 
         let mut flags = Flags::CF | Flags::OF;
         assert_eq!(super::ror(0x8001u16, 16, &mut flags), 0x8001);
+        assert_eq!("CF OF", flags.to_string());
+    }
+
+    #[test]
+    fn full_width_rotates_still_update_cf() {
+        // `rol al, 8` rotates a full width: AL is unchanged but the masked
+        // count is nonzero, so CF still receives LSB(AL).
+        let mut flags = Flags::CF;
+        assert_eq!(super::rol(0x80u8, 8, &mut flags), 0x80);
+        assert_eq!("", flags.to_string());
+
+        let mut flags = Flags::default();
+        assert_eq!(super::rol(0x01u8, 8, &mut flags), 0x01);
+        assert_eq!("CF", flags.to_string());
+
+        // `ror al, 8` likewise writes CF = MSB(AL).
+        let mut flags = Flags::CF;
+        assert_eq!(super::ror(0x01u8, 8, &mut flags), 0x01);
+        assert_eq!("", flags.to_string());
+
+        let mut flags = Flags::default();
+        assert_eq!(super::ror(0x80u8, 24, &mut flags), 0x80);
+        assert_eq!("CF", flags.to_string());
+
+        // A zero masked count still leaves every flag alone.
+        let mut flags = Flags::CF | Flags::OF;
+        assert_eq!(super::rol(0x01u8, 32, &mut flags), 0x01);
         assert_eq!("CF OF", flags.to_string());
     }
 
