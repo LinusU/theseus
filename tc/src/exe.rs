@@ -48,14 +48,16 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
     for sec in &f.sections {
         let addr = image_base + sec.VirtualAddress;
         let size = runtime::round_to_page(sec.SizeOfRawData.max(sec.VirtualSize));
-        mem.reserve(sec.name().unwrap().into(), addr, size);
+        mem.reserve(sec.name().unwrap_or("<invalid>").to_string(), addr, size);
 
         use exe::pe::IMAGE_SCN;
-        let flags = sec.characteristics().unwrap();
+        let flags = IMAGE_SCN::from_bits_truncate(sec.Characteristics);
         let load_data =
             flags.contains(IMAGE_SCN::CODE) || flags.contains(IMAGE_SCN::INITIALIZED_DATA);
         if load_data {
-            let data = &buf[sec.PointerToRawData as usize..][..sec.SizeOfRawData as usize];
+            let start = sec.PointerToRawData as usize;
+            let end = start.saturating_add(sec.SizeOfRawData as usize);
+            let data = buf.get(start..end.min(buf.len())).unwrap_or(&[]);
             mem.write_bytes(addr, data);
         }
         if flags.contains(IMAGE_SCN::CODE) || flags.contains(IMAGE_SCN::MEM_EXECUTE) {
@@ -82,7 +84,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
         imports,
         image_base,
         entry_point: image_base + f.opt_header.AddressOfEntryPoint,
-        code_memory: code_range.unwrap(),
+        code_memory: code_range.unwrap_or(0..0),
         resources,
         vtables: Default::default(),
         dynamic_exports: Default::default(),
@@ -135,7 +137,10 @@ fn read_imports(pe_file: &exe::PE, mem: &Memory) -> Vec<Import> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use exe::pe::{IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY};
+    use exe::pe::{
+        IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY, IMAGE_FILE_HEADER, IMAGE_OPTIONAL_HEADER32,
+        IMAGE_SCN, IMAGE_SECTION_HEADER,
+    };
     use zerocopy::FromBytes;
 
     #[test]
@@ -166,5 +171,41 @@ mod tests {
         };
 
         assert!(read_imports(&pe, &mem).is_empty());
+    }
+
+    #[test]
+    fn load_pe_tolerates_truncated_section_data() {
+        let image_base = 0x400000;
+        let mut mem = Memory::default();
+        // A 50-byte "file" whose single section claims 0x200 bytes at offset 100.
+        let buf = vec![0u8; 50];
+
+        let header = <IMAGE_FILE_HEADER>::read_from_prefix(&[0u8; 20]).unwrap().0;
+        let mut opt_header = <IMAGE_OPTIONAL_HEADER32>::read_from_prefix(&[0u8; 96])
+            .unwrap()
+            .0;
+        opt_header.ImageBase = image_base;
+
+        let mut name = [0u8; 8];
+        name[..4].copy_from_slice(b"test");
+        let section = IMAGE_SECTION_HEADER {
+            Name: name,
+            VirtualAddress: 0x1000,
+            VirtualSize: 0x100,
+            SizeOfRawData: 0x200,
+            PointerToRawData: 100,
+            Characteristics: (IMAGE_SCN::CODE | IMAGE_SCN::INITIALIZED_DATA).bits(),
+            ..Default::default()
+        };
+
+        let pe = exe::PE {
+            header,
+            opt_header,
+            data_directory: (0..16).map(|_| IMAGE_DATA_DIRECTORY::default()).collect(),
+            sections: vec![section].into_boxed_slice(),
+        };
+
+        let module = load_pe(&mut mem, &buf, pe);
+        assert_eq!(module.image_base, image_base);
     }
 }
