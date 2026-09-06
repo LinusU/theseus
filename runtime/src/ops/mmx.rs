@@ -758,47 +758,47 @@ pub fn phsubsw(dest: u64, src: u64) -> u64 {
     .pack()
 }
 
-/// PSIGNB (SSSE3) applies the sign of each byte in `dest` to the
-/// corresponding byte in `src`.
+/// PSIGNB (SSSE3) negates, zeroes, or keeps each destination byte according
+/// to the sign of the corresponding byte in `src`.
 pub fn psignb(dest: u64, src: u64) -> u64 {
     let d: [i8; 8] = dest.unpack();
     let s: [i8; 8] = src.unpack();
-    let out: [u8; 8] = std::array::from_fn(|i| match d[i].cmp(&0) {
-        std::cmp::Ordering::Less => s[i].wrapping_neg() as u8,
+    let out: [u8; 8] = std::array::from_fn(|i| match s[i].cmp(&0) {
+        std::cmp::Ordering::Less => d[i].wrapping_neg() as u8,
         std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => s[i] as u8,
+        std::cmp::Ordering::Greater => d[i] as u8,
     });
     out.pack()
 }
 
-/// PSIGNW (SSSE3) applies the sign of each word in `dest` to the
-/// corresponding word in `src`.
+/// PSIGNW (SSSE3) negates, zeroes, or keeps each destination word according
+/// to the sign of the corresponding word in `src`.
 pub fn psignw(dest: u64, src: u64) -> u64 {
     let d: [i16; 4] = dest.unpack();
     let s: [i16; 4] = src.unpack();
-    let out: [u16; 4] = std::array::from_fn(|i| match d[i].cmp(&0) {
-        std::cmp::Ordering::Less => s[i].wrapping_neg() as u16,
+    let out: [u16; 4] = std::array::from_fn(|i| match s[i].cmp(&0) {
+        std::cmp::Ordering::Less => d[i].wrapping_neg() as u16,
         std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => s[i] as u16,
+        std::cmp::Ordering::Greater => d[i] as u16,
     });
     out.pack()
 }
 
-/// PSIGND (SSSE3) applies the sign of each dword in `dest` to the
-/// corresponding dword in `src`.
+/// PSIGND (SSSE3) negates, zeroes, or keeps each destination dword
+/// according to the sign of the corresponding dword in `src`.
 pub fn psignd(dest: u64, src: u64) -> u64 {
     let d: [i32; 2] = dest.unpack();
     let s: [i32; 2] = src.unpack();
     [
-        match d[0].cmp(&0) {
-            std::cmp::Ordering::Less => s[0].wrapping_neg() as u32,
+        match s[0].cmp(&0) {
+            std::cmp::Ordering::Less => d[0].wrapping_neg() as u32,
             std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => s[0] as u32,
+            std::cmp::Ordering::Greater => d[0] as u32,
         },
-        match d[1].cmp(&0) {
-            std::cmp::Ordering::Less => s[1].wrapping_neg() as u32,
+        match s[1].cmp(&0) {
+            std::cmp::Ordering::Less => d[1].wrapping_neg() as u32,
             std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => s[1] as u32,
+            std::cmp::Ordering::Greater => d[1] as u32,
         },
     ]
     .pack()
@@ -1093,8 +1093,9 @@ mod tests {
         pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
         pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubsw, phsubw, pi2fd, pi2fw,
         pinsrw, pmaddubsw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw,
-        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, pslld, psllw, psrad, psraw, psrld, psrlq,
-        psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd, punpckldq, punpcklwd,
+        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, psignb, psignd, psignw, pslld, psllw,
+        psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd,
+        punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1263,6 +1264,29 @@ mod tests {
         assert_eq!(pabsw(0x8000_ffff_0001_fffe), 0x8000_0001_0001_0002);
         // 0x80000000 (-2147483648) stays 0x80000000 for i32::MIN.
         assert_eq!(pabsd(0x8000_0000_ffff_ffff), 0x8000_0000_0000_0001);
+    }
+
+    #[test]
+    fn psign_applies_the_source_sign_to_the_destination() {
+        // PSIGNB: each dest byte is negated, zeroed, or kept according to
+        // the sign of the matching *source* lane (not its own sign).
+        // dest = [5, -5, 7, -128, 1, 2, 3, 4], src = [1, -1, 0, 1, -2, 2, 0, -128]
+        let dest = u64::from_le_bytes([5, 0xfb, 7, 0x80, 1, 2, 3, 4]);
+        let src = u64::from_le_bytes([1, 0xff, 0, 1, 0xfe, 2, 0, 0x80]);
+        // => [5, -(-5)=5, 0, -128, -1, 2, 0, -4]
+        assert_eq!(
+            psignb(dest, src),
+            u64::from_le_bytes([5, 5, 0, 0x80, 0xff, 2, 0, 0xfc])
+        );
+
+        // dest = [300, -300], src = [-1, 0] => [-300, 0]
+        assert_eq!(psignw(0xfed4_012c, 0x0000_ffff), 0x0000_fed4);
+
+        // dest = [7, -9], src = [-1, 2] => [-7, -9]
+        assert_eq!(
+            psignd(0xffff_fff7_0000_0007, 0x0000_0002_ffff_ffff),
+            0xffff_fff7_ffff_fff9
+        );
     }
 
     #[test]
