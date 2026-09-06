@@ -885,13 +885,27 @@ pub mod IDirectSoundBuffer {
         let (offset, len, len2) = if dwFlags.contains(DSBLOCK::ENTIREBUFFER) {
             (0, buffer.size, 0)
         } else {
-            if buffer.size == 0 || dwOffset >= buffer.size || dwBytes > buffer.size {
+            if buffer.size == 0 || dwBytes > buffer.size {
+                return DSERR_INVALIDPARAM;
+            }
+            let offset = if dwFlags.contains(DSBLOCK::FROMWRITECURSOR) {
+                // The write cursor runs a frame ahead of playback, wrapping
+                // like GetCurrentPosition reports it.
+                let frame = buffer.format.frame_bytes();
+                let play = (buffer.cursor as u32)
+                    .saturating_mul(frame)
+                    .min(buffer.size - 1);
+                (play + frame) % buffer.size
+            } else {
+                dwOffset
+            };
+            if offset >= buffer.size {
                 return DSERR_INVALIDPARAM;
             }
             // A region that crosses the end of the buffer wraps around to the
             // start, split across the two pointer pairs.
-            let len = dwBytes.min(buffer.size - dwOffset);
-            (dwOffset, len, dwBytes - len)
+            let len = dwBytes.min(buffer.size - offset);
+            (offset, len, dwBytes - len)
         };
         // Some callers rely on getting null back for an empty region.
         let addr = if len == 0 { 0 } else { buffer.addr + offset };
@@ -1227,6 +1241,10 @@ mod tests {
     }
 
     fn insert_buffer(handle: u32, addr: u32, size: u32) {
+        insert_buffer_at(handle, addr, size, 0.0)
+    }
+
+    fn insert_buffer_at(handle: u32, addr: u32, size: u32, cursor: f64) {
         init();
         lock().buffers.insert(
             handle,
@@ -1243,7 +1261,7 @@ mod tests {
                 caps_flags: DSBCAPS_FLAGS::default(),
                 playing: false,
                 looping: false,
-                cursor: 0.0,
+                cursor,
                 volume: 0,
                 pan: 0,
             },
@@ -1309,5 +1327,32 @@ mod tests {
         assert_eq!(result, DSERR_INVALIDPARAM);
 
         lock().buffers.remove(&0xabc1);
+    }
+
+    #[test]
+    fn lock_from_write_cursor_starts_a_frame_past_playback() {
+        let mut ctx = context();
+        // 1-channel 8-bit PCM: one byte per frame, so the play cursor at
+        // frame 0x40 sits at byte 0x40 and the write cursor a frame ahead.
+        insert_buffer_at(0xabc2, 0x8000, 0x100, 64.0);
+
+        let result = IDirectSoundBuffer::Lock(
+            &mut ctx,
+            0xabc2,
+            0,
+            0x10,
+            0x4000,
+            0x4004,
+            0x4008,
+            0x400c,
+            DSBLOCK::FROMWRITECURSOR,
+        );
+        assert_eq!(result, 0); // DS_OK
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0x8041);
+        assert_eq!(ctx.memory.read::<u32>(0x4004), 0x10);
+        assert_eq!(ctx.memory.read::<u32>(0x4008), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x400c), 0);
+
+        lock().buffers.remove(&0xabc2);
     }
 }
