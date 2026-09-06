@@ -358,10 +358,27 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                     }
-                    if let Err(e) = self.gen_instr(instr) {
-                        self.line(format!("panic!({:?});", e.to_string()));
-                        break;
-                    }
+                    // Operand-helper todo!()s panic rather than returning
+                    // through gen_instr's Result; catch them so one
+                    // unhandled variant degrades to a runtime panic stub
+                    // instead of aborting the whole translation.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.gen_instr(instr)
+                    }));
+                    let err = match result {
+                        Ok(Ok(())) => continue,
+                        Ok(Err(e)) => e.to_string(),
+                        Err(payload) => {
+                            let msg = payload
+                                .downcast_ref::<String>()
+                                .map(String::as_str)
+                                .or_else(|| payload.downcast_ref::<&str>().copied())
+                                .unwrap_or("unknown panic");
+                            format!("codegen panic at {} {}: {msg}", instr.ip, instr.iced)
+                        }
+                    };
+                    self.line(format!("panic!({err:?});"));
+                    break;
                 }
 
                 let last = instrs.last().unwrap();
