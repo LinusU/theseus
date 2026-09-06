@@ -1095,7 +1095,16 @@ pub fn blt(
             let start = addr + y as u32 * stride + rect.left as u32 * bpp;
             let width_bytes = ((rect.right - rect.left).max(0) as u32 * bpp) as usize;
             match bpp {
-                1 => ctx.memory[start..][..width_bytes].fill(color as u8),
+                1 => {
+                    if let Some(dst) = ctx
+                        .memory
+                        .bytes
+                        .get_mut(start as usize..)
+                        .and_then(|b| b.get_mut(..width_bytes))
+                    {
+                        dst.fill(color as u8);
+                    }
+                }
                 2 => {
                     for x in 0..(rect.right - rect.left).max(0) as u32 {
                         ctx.memory.write::<u16>(start + x * 2, color as u16);
@@ -1103,7 +1112,15 @@ pub fn blt(
                 }
                 3 => {
                     for x in 0..(rect.right - rect.left).max(0) as u32 {
-                        ctx.memory[start + x * 3..][..3].copy_from_slice(&color.to_le_bytes()[..3]);
+                        let pixel_start = start + x * 3;
+                        if let Some(dst) = ctx
+                            .memory
+                            .bytes
+                            .get_mut(pixel_start as usize..)
+                            .and_then(|b| b.get_mut(..3))
+                        {
+                            dst.copy_from_slice(&color.to_le_bytes()[..3]);
+                        }
                     }
                 }
                 4 => {
