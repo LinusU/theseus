@@ -687,11 +687,17 @@ pub mod IDirectDraw7 {
         lpdwTotal: u32,
         lpdwFree: u32,
     ) -> DD {
+        if lpdwTotal != 0 && !crate::ddraw::guest_range(ctx, lpdwTotal, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        if lpdwFree != 0 && !crate::ddraw::guest_range(ctx, lpdwFree, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         if lpdwTotal != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwTotal).write(&mut ctx.memory, 256 * 1024 * 1024);
+            crate::Ptr::<u32>::new(lpdwTotal).write(&mut ctx.memory, 256 * 1024 * 1024);
         }
         if lpdwFree != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwFree).write(&mut ctx.memory, 256 * 1024 * 1024);
+            crate::Ptr::<u32>::new(lpdwFree).write(&mut ctx.memory, 256 * 1024 * 1024);
         }
         DD::OK
     }
