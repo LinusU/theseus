@@ -417,11 +417,12 @@ impl Window {
             return;
         }
         unsafe {
-            check(sdl::video::SDL_SetWindowSize(
-                self.window,
-                width as i32,
-                height as i32,
-            ));
+            if !sdl::video::SDL_SetWindowSize(self.window, width as i32, height as i32) {
+                log::warn!(
+                    "SDL_SetWindowSize({width}x{height}) failed ({}); ignoring",
+                    sdl_error()
+                );
+            }
         }
     }
 
