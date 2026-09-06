@@ -31,7 +31,13 @@ pub fn __getmainargs(
             .read_str(kernel32.command_line.command_line_8)
             .to_owned()
     };
-    let exe = cmdline.split(' ').next().unwrap_or("");
+    // argv[0] may be quoted — `"C:\dir with space\game.exe" arg` — so the
+    // program name ends at the closing quote, not the first space.
+    let trimmed = cmdline.trim_start();
+    let exe = match trimmed.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        None => trimmed.split(' ').next().unwrap_or(""),
+    };
     let kernel32 = lock();
     // The command line is guest data; an unallocatable argv reports the
     // documented nonzero failure rather than panicking the host.
@@ -253,22 +259,22 @@ pub fn exit(_ctx: &mut Context, status: i32) {
 }
 
 // MSDN: "Calling rand before any call to srand generates the same sequence as calling srand with seed passed as 1."
-static mut RAND_STATE: u32 = 1;
+static RAND_STATE: AtomicU32 = AtomicU32::new(1);
 
 #[win32_derive::dllexport(cdecl)]
 pub fn rand(_ctx: &mut Context) -> u32 {
     // The MSVC runtime's linear congruential generator.
-    unsafe {
-        RAND_STATE = RAND_STATE.wrapping_mul(214013).wrapping_add(2531011);
-        (RAND_STATE >> 16) & 0x7fff
-    }
+    let next = RAND_STATE
+        .load(Ordering::Relaxed)
+        .wrapping_mul(214013)
+        .wrapping_add(2531011);
+    RAND_STATE.store(next, Ordering::Relaxed);
+    (next >> 16) & 0x7fff
 }
 
 #[win32_derive::dllexport(cdecl)]
 pub fn srand(_ctx: &mut Context, seed: u32) {
-    unsafe {
-        RAND_STATE = seed;
-    }
+    RAND_STATE.store(seed, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -305,6 +311,17 @@ mod tests {
         _controlfp(&mut ctx, MCW_EM, MCW_EM);
         assert_eq!(ctx.cpu.fpu.control & 0x3f, 0x3f);
         assert_eq!(_controlfp(&mut ctx, 0, 0) & MCW_EM, MCW_EM);
+    }
+
+    #[test]
+    fn rand_matches_the_msvc_sequence() {
+        let mut ctx = context();
+        srand(&mut ctx, 1);
+        // state = 1*214013 + 2531011 = 0x29E4C0; (0x29E4C0 >> 16) & 0x7fff.
+        assert_eq!(rand(&mut ctx), 41);
+        // Reseeding restarts the same sequence.
+        srand(&mut ctx, 1);
+        assert_eq!(rand(&mut ctx), 41);
     }
 
     #[test]
