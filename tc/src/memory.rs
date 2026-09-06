@@ -67,19 +67,39 @@ impl Memory {
     }
 
     pub fn write_bytes(&mut self, addr: u32, data: &[u8]) {
-        self.slice_mut(addr, data.len() as u32)
-            .copy_from_slice(data);
+        if data.is_empty() {
+            return;
+        }
+        let start = addr as usize;
+        let end = start
+            .checked_add(data.len())
+            .expect("write_bytes length overflow");
+        let buf = self
+            .bytes
+            .get_mut(start..end)
+            .expect("write_bytes out of range");
+        buf.copy_from_slice(data);
     }
 
     pub fn slice(&self, addr: u32, len: u32) -> &[u8] {
-        &self.bytes[addr as usize..][..len as usize]
+        let start = addr as usize;
+        let end = start
+            .checked_add(len as usize)
+            .expect("slice length overflow");
+        self.bytes.get(start..end).expect("slice out of range")
     }
 
     pub fn slice_all(&self, addr: u32) -> &[u8] {
-        &self.bytes[addr as usize..]
+        self.bytes.get(addr as usize..).unwrap_or(&[])
     }
 
     pub fn slice_mut(&mut self, addr: u32, len: u32) -> &mut [u8] {
-        &mut self.bytes[addr as usize..][..len as usize]
+        let start = addr as usize;
+        let end = start
+            .checked_add(len as usize)
+            .expect("slice_mut length overflow");
+        self.bytes
+            .get_mut(start..end)
+            .expect("slice_mut out of range")
     }
 }

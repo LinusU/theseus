@@ -424,10 +424,9 @@ impl<'a> CodeGen<'a> {
             ));
             if !zeroed {
                 self.line(format!(
-                    "let bytes = include_bytes!(\"../data/{addr:08x}.raw\").as_slice();
-let out = &mut memory.bytes[{addr:#x}..][..bytes.len()];
-out.copy_from_slice(bytes);",
+                    "let bytes = include_bytes!(\"../data/{addr:08x}.raw\").as_slice();"
                 ));
+                self.line(format!("memory.write_bytes({addr:#x}, bytes);"));
             }
         }
 

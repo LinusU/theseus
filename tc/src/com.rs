@@ -5,7 +5,7 @@ use crate::{DOSModule, memory::Memory};
 pub fn load_com(mem: &mut Memory, buf: Vec<u8>) -> DOSModule {
     let addr = segofs(dos::DOSBOX_SEG, 0x100);
     mem.reserve("com".into(), addr, buf.len() as u32);
-    mem.bytes[addr as usize..].copy_from_slice(&buf);
+    mem.write_bytes(addr, &buf);
     DOSModule {
         is_com: true,
         psp_segment: dos::DOSBOX_SEG,

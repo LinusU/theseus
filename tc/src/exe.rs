@@ -22,14 +22,11 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> Result<DOSModule> {
     let data = buf.get(dos.image_offset()..).unwrap_or(&[]);
     mem.reserve("dos data".into(), load_addr, data.len() as u32);
     if !data.is_empty() {
-        mem.slice_mut(load_addr, data.len() as u32)
-            .copy_from_slice(data);
+        let data_len = data.len() as u32;
+        let data_slice = mem.slice_mut(load_addr, data_len);
+        data_slice.copy_from_slice(data);
+        dos.apply_relocations(load_segment, data_slice);
     }
-
-    dos.apply_relocations(
-        load_segment,
-        &mut mem.bytes[load_addr as usize..][..data.len()],
-    );
 
     Ok(DOSModule {
         is_com: false,

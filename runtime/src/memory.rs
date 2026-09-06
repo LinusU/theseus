@@ -110,6 +110,29 @@ impl<'a> Memory<'a> {
     }
 
     #[track_caller]
+    pub fn write_bytes(&mut self, addr: u32, data: &[u8]) {
+        self.check_access(addr);
+        let start = addr as usize;
+        let Some(end) = start.checked_add(data.len()) else {
+            log::error!(
+                "out-of-bounds {}-byte write at {addr:#x} (caller {})",
+                data.len(),
+                std::panic::Location::caller()
+            );
+            return;
+        };
+        let Some(buf) = self.bytes.get_mut(start..end) else {
+            log::error!(
+                "out-of-bounds {}-byte write at {addr:#x} (caller {})",
+                data.len(),
+                std::panic::Location::caller()
+            );
+            return;
+        };
+        buf.copy_from_slice(data);
+    }
+
+    #[track_caller]
     pub fn read_str(&self, addr: u32) -> &str {
         self.check_access(addr);
         let Some(buf) = self.bytes.get(addr as usize..) else {
