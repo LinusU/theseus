@@ -581,6 +581,11 @@ fn register_class(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>, wide: bool) -> u
     let Some(wndclass) = lpWndClass.read(&ctx.memory) else {
         return 0;
     };
+    // A class without a window procedure is invalid; resolving the address
+    // would panic on null.
+    if wndclass.lpfnWndProc == 0 {
+        return 0;
+    }
     let background = if wndclass.hbrBackground.is_null() {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {

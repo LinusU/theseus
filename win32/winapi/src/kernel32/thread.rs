@@ -175,6 +175,10 @@ pub fn CreateThread(
     _dwCreationFlags: u32, /* THREAD_CREATION_FLAGS */
     lpThreadId: Ptr<u32>,
 ) -> HANDLE {
+    // A null start address would panic in the spawned thread's indirect().
+    if lpStartAddress.addr == 0 {
+        return HANDLE::null();
+    }
     let mut lock = kernel32::lock();
     let name = format!("thread {}@{:x}", lock.next_thread_id, lpStartAddress.addr);
     let Some((handle, thread_id)) = lock.create_thread(ctx, name, move |ctx| {

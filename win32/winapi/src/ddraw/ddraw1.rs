@@ -185,6 +185,9 @@ pub mod IDirectDraw {
         lpContext: u32,
         lpEnumCallback: u32,
     ) -> DD {
+        if lpEnumCallback == 0 {
+            return DD::ERR_INVALIDPARAMS;
+        }
         // A filter desc limits enumeration to modes matching its DDSD fields.
         let filter = if lpSurfaceDesc != 0 {
             if !crate::ddraw::guest_range(

@@ -71,6 +71,8 @@ pub fn timeSetEvent(
     }
 
     let notify = match fuEvent.event_pulse {
+        // A null callback would panic the timer thread at indirect().
+        None if lpTimeProc == 0 => return 0,
         None => Notify::Function(lpTimeProc),
         Some(pulse) => Notify::Event {
             handle: lpTimeProc,
