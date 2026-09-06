@@ -152,7 +152,14 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
         .heap(memory_size)?
         .try_alloc(&mut ctx.memory, len.max(1))?;
     let file = mmio.files.get_mut(&hmmio)?;
-    ctx.memory[addr..][..file.data.len()].copy_from_slice(&file.data);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(addr as usize..)
+        .and_then(|b| b.get_mut(..file.data.len()))
+    {
+        dst.copy_from_slice(&file.data);
+    }
     file.buffer = addr;
     Some((addr, pos, len))
 }
@@ -258,7 +265,14 @@ pub fn mmioRead(ctx: &mut Context, hmmio: u32, pch: u32, cch: u32) -> i32 {
         if !guest_fits(ctx, pch, read as u32) {
             return MMIO_FAILURE;
         }
-        ctx.memory[pch..][..read].copy_from_slice(&file.data[file.pos..end]);
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(pch as usize..)
+            .and_then(|b| b.get_mut(..read))
+        {
+            dst.copy_from_slice(&file.data[file.pos..end]);
+        }
     }
     file.pos = end;
     read as i32
