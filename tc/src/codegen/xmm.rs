@@ -178,9 +178,10 @@ impl<'a> CodeGen<'a> {
                 self.line(self.xmm_set(instr, 0, format!("{func}({})", self.xmm_get(instr, 1))));
             }
 
-            // Packed single/double-precision comparisons. MINPS/MAXPS preserve
-            // the non-NaN operand when one is NaN; CMPPS/CMPPD use the 3-bit
-            // predicate in the trailing immediate.
+            // Packed single/double-precision comparisons. MINPS/MAXPS return
+            // the second source operand when either operand is NaN or the
+            // values tie; CMPPS/CMPPD use the 3-bit predicate in the trailing
+            // immediate.
             Minps | Maxps => {
                 let func = instr_name(instr);
                 self.line(self.xmm_set(

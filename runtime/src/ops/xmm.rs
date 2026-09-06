@@ -60,28 +60,15 @@ pub fn rcpps(a: [u32; 4]) -> [u32; 4] {
     unary_ps(a, |a| 1.0 / a)
 }
 
+/// MINPS/MAXPS follow the x86 rule `SRC1 < SRC2 ? SRC1 : SRC2`, so the second
+/// source operand is returned whenever either operand is NaN or the two values
+/// compare equal — including the -0.0/+0.0 tie, which keeps src2's sign.
 pub fn minps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
-    binop_ps(a, b, |a, b| {
-        if a.is_nan() {
-            b
-        } else if b.is_nan() {
-            a
-        } else {
-            a.min(b)
-        }
-    })
+    binop_ps(a, b, |a, b| if a < b { a } else { b })
 }
 
 pub fn maxps(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
-    binop_ps(a, b, |a, b| {
-        if a.is_nan() {
-            b
-        } else if b.is_nan() {
-            a
-        } else {
-            a.max(b)
-        }
-    })
+    binop_ps(a, b, |a, b| if a > b { a } else { b })
 }
 
 pub fn shufps(a: [u32; 4], b: [u32; 4], imm8: u8) -> [u32; 4] {
@@ -1020,26 +1007,14 @@ pub fn rcpss(dst: [u32; 4], src: u32) -> [u32; 4] {
 pub fn minss(dst: [u32; 4], src: u32) -> [u32; 4] {
     let a = f32::from_bits(dst[0]);
     let b = f32::from_bits(src);
-    let res = if a.is_nan() {
-        b
-    } else if b.is_nan() {
-        a
-    } else {
-        a.min(b)
-    };
+    let res = if a < b { a } else { b };
     [res.to_bits(), dst[1], dst[2], dst[3]]
 }
 
 pub fn maxss(dst: [u32; 4], src: u32) -> [u32; 4] {
     let a = f32::from_bits(dst[0]);
     let b = f32::from_bits(src);
-    let res = if a.is_nan() {
-        b
-    } else if b.is_nan() {
-        a
-    } else {
-        a.max(b)
-    };
+    let res = if a > b { a } else { b };
     [res.to_bits(), dst[1], dst[2], dst[3]]
 }
 
@@ -1415,6 +1390,42 @@ mod tests {
         let [a0, a1] = dwords(a);
         let [b0, b1] = dwords(b);
         [a0, a1, b0, b1]
+    }
+
+    #[test]
+    fn min_max_return_the_second_source_on_nan_or_tie() {
+        let one = 1.0f32.to_bits();
+        let two = 2.0f32.to_bits();
+        let nan = f32::NAN.to_bits();
+        let pos_zero = 0.0f32.to_bits();
+        let neg_zero = (-0.0f32).to_bits();
+
+        // Ordered lanes pick the smaller/larger value.
+        assert_eq!(minps([two, one, two, one], [one, two, one, two]), [one; 4]);
+        assert_eq!(maxps([two, one, two, one], [one, two, one, two]), [two; 4]);
+
+        // A NaN in either operand yields src2 verbatim, including the NaN.
+        assert_eq!(
+            minps([nan, two, nan, two], [one, nan, one, nan]),
+            [one, nan, one, nan]
+        );
+        assert_eq!(
+            maxps([nan, two, nan, two], [one, nan, one, nan]),
+            [one, nan, one, nan]
+        );
+
+        // -0.0 and +0.0 compare equal, so src2 wins and keeps its sign.
+        assert_eq!(minps([neg_zero; 4], [pos_zero; 4]), [pos_zero; 4]);
+        assert_eq!(minps([pos_zero; 4], [neg_zero; 4]), [neg_zero; 4]);
+        assert_eq!(maxps([neg_zero; 4], [pos_zero; 4]), [pos_zero; 4]);
+        assert_eq!(maxps([pos_zero; 4], [neg_zero; 4]), [neg_zero; 4]);
+
+        // The scalar forms follow the same rule on the low lane only.
+        assert_eq!(minss([nan, two, two, two], one), [one, two, two, two]);
+        assert_eq!(
+            maxss([neg_zero, two, two, two], pos_zero),
+            [pos_zero, two, two, two]
+        );
     }
 
     #[test]
