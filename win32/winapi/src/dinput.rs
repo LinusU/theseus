@@ -831,7 +831,12 @@ pub mod IDirectInputDevice {
                 }
             }
         }
-        let _ = crate::Ptr::<u32>::new(pdwInOut).write(&mut ctx.memory, events.len() as u32);
+        if crate::Ptr::<u32>::new(pdwInOut)
+            .write(&mut ctx.memory, events.len() as u32)
+            .is_none()
+        {
+            return DIERR_INVALIDPARAM;
+        }
 
         if overflowed { DI_BUFFEROVERFLOW } else { DI_OK }
     }
