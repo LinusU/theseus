@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use runtime::*;
-use zerocopy::FromBytes;
 
 use crate::{
     Ptr, RECT,
@@ -244,8 +243,7 @@ pub mod IDirectDraw7 {
             ) {
                 return DD::ERR_INVALIDPARAMS;
             }
-            let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpSurfaceDesc2..])
-            else {
+            let Some(desc) = Ptr::<DDSURFACEDESC2>::new(lpSurfaceDesc2).read(&ctx.memory) else {
                 return DD::ERR_INVALIDPARAMS;
             };
             if desc.dwSize != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
@@ -497,8 +495,7 @@ pub mod IDirectDraw7 {
         {
             return DD::ERR_INVALIDPARAMS;
         }
-        let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc2..])
-        else {
+        let Some(desc) = Ptr::<DDSURFACEDESC2>::new(lpDDSurfaceDesc2).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
         if desc.dwSize != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
