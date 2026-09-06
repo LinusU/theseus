@@ -575,7 +575,7 @@ mod tests {
 
 /// Read a NUL-terminated UTF-16 string from guest memory.
 fn read_wstr(ctx: &Context, addr: u32) -> String {
-    if addr == 0 {
+    if addr < 0x1000 {
         return String::new();
     }
     let mut buf = Vec::new();

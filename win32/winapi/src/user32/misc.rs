@@ -378,7 +378,7 @@ pub fn MessageBoxW(
     // We have no dialogs, but the C runtime reports fatal errors this way, so
     // the text is worth surfacing.
     let read = |ptr: Ptr<u16>| {
-        if ptr.addr == 0 {
+        if ptr.addr < 0x1000 {
             String::new()
         } else {
             String::from_utf16_lossy(ctx.memory.read_wstr(ptr.addr).as_slice())
@@ -522,7 +522,9 @@ fn wsprintf_impl(ctx: &mut Context, fmt: &[u16], mut arg_addr: u32, wide: bool) 
             b'c' => vec![next_arg() as u16],
             b's' => {
                 let addr = next_arg();
-                if wide {
+                if addr < 0x1000 {
+                    Vec::new()
+                } else if wide {
                     ctx.memory.read_wstr(addr).as_slice().to_vec()
                 } else {
                     read_bytes0(ctx, addr).iter().map(|&b| b as u16).collect()
@@ -574,8 +576,11 @@ pub fn wsprintfW(ctx: &mut Context) -> i32 {
     };
     let fmt = ctx.memory.read_wstr(fmt_addr).as_slice().to_vec();
     let out = wsprintf_impl(ctx, &fmt, esp.wrapping_add(12), true);
-    // wsprintf takes no size; a destination at the edge of emulated memory
-    // would panic the host, so write only what fits.
+    // wsprintf takes no size; a destination in the null page fails, and one
+    // at the edge of emulated memory writes only what fits.
+    if dst < 0x1000 {
+        return 0;
+    }
     if let Some(buf) = ctx.memory.bytes.get_mut(dst as usize..) {
         let mut chunks = buf.chunks_exact_mut(2);
         // Keep a unit free for the terminator so a truncated result still
@@ -611,8 +616,11 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     let out = wsprintf_impl(ctx, &fmt, esp.wrapping_add(12), false);
 
     let bytes: Vec<u8> = out.iter().map(|&c| c as u8).collect();
-    // wsprintf takes no size; a destination at the edge of emulated memory
-    // would panic the host, so write only what fits.
+    // wsprintf takes no size; a destination in the null page fails, and one
+    // at the edge of emulated memory writes only what fits.
+    if dst < 0x1000 {
+        return 0;
+    }
     if let Some(buf) = ctx.memory.bytes.get_mut(dst as usize..) {
         // Keep a byte free for the terminator so a truncated result still
         // reads as a string.
@@ -670,35 +678,37 @@ mod tests {
 
     #[test]
     fn wsprintf_formats_args_for_both_char_widths() {
+        // The stack, format, and string buffers sit above the null page like
+        // real guest data.
         let mut ctx = context();
         // [esp]=ret, [esp+4]=dst, [esp+8]=fmt, [esp+12...]=args.
-        ctx.cpu.regs.esp = 0x200;
-        ctx.memory.write::<u32>(0x200, 0); // return addr
-        ctx.memory.write::<u32>(0x204, 0x300); // dst
-        ctx.memory.write::<u32>(0x208, 0x400); // fmt
-        ctx.memory.write::<u32>(0x20c, 42); // %d arg
-        ctx.memory.write::<u32>(0x210, 0x500); // %s arg
-        ctx.memory[0x400..][..12].copy_from_slice(b"val=%d %s\0\0\0");
-        ctx.memory[0x500..][..4].copy_from_slice(b"hey\0");
+        ctx.cpu.regs.esp = 0x2000;
+        ctx.memory.write::<u32>(0x2000, 0); // return addr
+        ctx.memory.write::<u32>(0x2004, 0x3000); // dst
+        ctx.memory.write::<u32>(0x2008, 0x3400); // fmt
+        ctx.memory.write::<u32>(0x200c, 42); // %d arg
+        ctx.memory.write::<u32>(0x2010, 0x3800); // %s arg
+        ctx.memory[0x3400..][..12].copy_from_slice(b"val=%d %s\0\0\0");
+        ctx.memory[0x3800..][..4].copy_from_slice(b"hey\0");
         assert_eq!(wsprintfA(&mut ctx), 10);
-        assert_eq!(read_cstr(&ctx, 0x300), "val=42 hey");
+        assert_eq!(read_cstr(&ctx, 0x3000), "val=42 hey");
 
         let mut ctx = context();
-        ctx.cpu.regs.esp = 0x200;
-        ctx.memory.write::<u32>(0x200, 0);
-        ctx.memory.write::<u32>(0x204, 0x300);
-        ctx.memory.write::<u32>(0x208, 0x400);
-        ctx.memory.write::<u32>(0x20c, 42);
-        ctx.memory.write::<u32>(0x210, 0x500);
+        ctx.cpu.regs.esp = 0x2000;
+        ctx.memory.write::<u32>(0x2000, 0);
+        ctx.memory.write::<u32>(0x2004, 0x3000);
+        ctx.memory.write::<u32>(0x2008, 0x3400);
+        ctx.memory.write::<u32>(0x200c, 42);
+        ctx.memory.write::<u32>(0x2010, 0x3800);
         for (i, unit) in "val=%d %s\0".encode_utf16().enumerate() {
-            ctx.memory.write::<u16>(0x400 + i as u32 * 2, unit);
+            ctx.memory.write::<u16>(0x3400 + i as u32 * 2, unit);
         }
         for (i, unit) in "hey\0".encode_utf16().enumerate() {
-            ctx.memory.write::<u16>(0x500 + i as u32 * 2, unit);
+            ctx.memory.write::<u16>(0x3800 + i as u32 * 2, unit);
         }
         assert_eq!(wsprintfW(&mut ctx), 10);
         assert_eq!(
-            read_wstr(&ctx, 0x300),
+            read_wstr(&ctx, 0x3000),
             "val=42 hey".encode_utf16().collect::<Vec<_>>()
         );
     }
@@ -744,17 +754,28 @@ mod tests {
     fn wsprintf_tolerates_an_out_of_range_destination() {
         let mut ctx = context();
         let len = ctx.memory.bytes.len() as u32;
-        ctx.cpu.regs.esp = 0x200;
-        ctx.memory.write::<u32>(0x200, 0);
-        ctx.memory.write::<u32>(0x204, len - 4); // only four bytes left
-        ctx.memory.write::<u32>(0x208, 0x400);
-        ctx.memory[0x400..][..8].copy_from_slice(b"val=%d!\0");
-        ctx.memory.write::<u32>(0x20c, 42);
+        ctx.cpu.regs.esp = 0x2000;
+        ctx.memory.write::<u32>(0x2000, 0);
+        ctx.memory.write::<u32>(0x2004, len - 4); // only four bytes left
+        ctx.memory.write::<u32>(0x2008, 0x3400);
+        ctx.memory[0x3400..][..8].copy_from_slice(b"val=%d!\0");
+        ctx.memory.write::<u32>(0x200c, 42);
         // Truncated to fit instead of panicking; the count is still honest.
         assert_eq!(wsprintfA(&mut ctx), 7);
         assert_eq!(read_cstr(&ctx, len - 4), "val");
 
-        ctx.memory.write::<u32>(0x204, len + 0x100); // wholly out of range
+        ctx.memory.write::<u32>(0x2004, len + 0x100); // wholly out of range
         assert_eq!(wsprintfA(&mut ctx), 7);
+
+        // A destination in the null page fails instead of writing.
+        ctx.memory.write::<u32>(0x2004, 0x500);
+        assert_eq!(wsprintfA(&mut ctx), 0);
+
+        // A low %s argument formats as an empty string.
+        ctx.memory.write::<u32>(0x2004, 0x3000);
+        ctx.memory[0x3400..][..5].copy_from_slice(b"s=%s\0");
+        ctx.memory.write::<u32>(0x200c, 0x500);
+        assert_eq!(wsprintfA(&mut ctx), 2);
+        assert_eq!(read_cstr(&ctx, 0x3000), "s=");
     }
 }
