@@ -55,18 +55,53 @@ impl<'a> Memory<'a> {
     }
 
     #[track_caller]
-    pub fn read<T: MemRead>(&self, addr: u32) -> T {
+    pub fn try_read<T: MemRead>(&self, addr: u32) -> Option<T> {
         self.check_access(addr);
-        let addr = addr as usize;
-        T::read_from_bytes(&self.bytes[addr..addr + std::mem::size_of::<T>()]).unwrap()
+        let start = addr as usize;
+        let end = start.checked_add(std::mem::size_of::<T>())?;
+        let bytes = self.bytes.get(start..end)?;
+        T::read_from_bytes(bytes).ok()
+    }
+
+    #[track_caller]
+    pub fn read<T: MemRead>(&self, addr: u32) -> T {
+        match self.try_read(addr) {
+            Some(val) => val,
+            None => {
+                log::error!(
+                    "out-of-bounds {}-byte read at {addr:#x} (caller {})",
+                    std::mem::size_of::<T>(),
+                    std::panic::Location::caller()
+                );
+                let zeros = vec![0u8; std::mem::size_of::<T>()];
+                T::read_from_bytes(&zeros).unwrap()
+            }
+        }
+    }
+
+    #[track_caller]
+    pub fn try_write<T: MemWrite>(&mut self, addr: u32, val: T) -> bool {
+        self.check_access(addr);
+        let start = addr as usize;
+        let size = std::mem::size_of::<T>();
+        let Some(end) = start.checked_add(size) else {
+            return false;
+        };
+        let Some(bytes) = self.bytes.get_mut(start..end) else {
+            return false;
+        };
+        val.write_to(bytes).is_ok()
     }
 
     #[track_caller]
     pub fn write<T: MemWrite>(&mut self, addr: u32, val: T) {
-        self.check_access(addr);
-        let addr = addr as usize;
-        val.write_to(&mut self.bytes[addr..addr + std::mem::size_of::<T>()])
-            .unwrap();
+        if !self.try_write(addr, val) {
+            log::error!(
+                "out-of-bounds {}-byte write at {addr:#x} (caller {})",
+                std::mem::size_of::<T>(),
+                std::panic::Location::caller()
+            );
+        }
     }
 
     #[track_caller]
