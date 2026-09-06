@@ -234,7 +234,7 @@ fn init() {
             buffers: HashMap::default(),
             stream: None,
             heap: None,
-            write: wav_debug_path().map(|path| WavWrite::new(&path)),
+            write: wav_debug_path().and_then(|path| WavWrite::new(&path)),
         });
     }
 }
@@ -1079,11 +1079,20 @@ struct WavWrite {
 }
 
 impl WavWrite {
-    fn new(path: &str) -> Self {
-        let f = std::fs::File::create(path).unwrap();
+    fn new(path: &str) -> Option<Self> {
+        let f = match std::fs::File::create(path) {
+            Ok(f) => f,
+            Err(err) => {
+                log::warn!("THESEUS_DSOUND_WAV: cannot create {path}: {err}");
+                return None;
+            }
+        };
         let mut w = Self { f };
-        w.write_header().unwrap();
-        w
+        if let Err(err) = w.write_header() {
+            log::warn!("THESEUS_DSOUND_WAV: cannot write {path}: {err}");
+            return None;
+        }
+        Some(w)
     }
 
     fn write_header(&mut self) -> std::io::Result<()> {
@@ -1153,6 +1162,7 @@ impl WavWrite {
 
     fn write(&mut self, data: &[u8]) {
         use std::io::Write;
-        self.f.write_all(data).unwrap();
+        // A failed debug dump is dropped data, not a fatal error.
+        let _ = self.f.write_all(data);
     }
 }
