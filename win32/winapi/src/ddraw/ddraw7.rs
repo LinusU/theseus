@@ -1223,8 +1223,13 @@ pub mod IDirectDrawSurface7 {
             let scratch = kernel32::lock()
                 .process_heap
                 .alloc(&mut ctx.memory, width * height * 4);
-            if let Some(rgba) = rgba {
-                ctx.memory[scratch..][..rgba.len()].copy_from_slice(&rgba);
+            if let Some(rgba) = rgba
+                && let Some(buf) = ctx
+                    .memory
+                    .bytes
+                    .get_mut(scratch as usize..(scratch + rgba.len() as u32) as usize)
+            {
+                buf.copy_from_slice(&rgba);
             }
             gdi32::Bitmap::new_simple(width, height, scratch)
         };
