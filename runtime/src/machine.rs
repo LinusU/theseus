@@ -166,6 +166,13 @@ impl Context {
         }
     }
 
+    /// Per-instruction trace hook emitted by `tc --trace` for flat (Windows)
+    /// modules: prints the instruction pointer followed by the register file.
+    pub fn dump_trace(&self, ip: u32) {
+        println!("eip={ip:08x}");
+        self.cpu.regs.dump();
+    }
+
     pub fn dump_dosbox(&self, ip: u16) {
         // 0813:0000FF30  xchg si,ax
         // EAX:0000000C EBX:00000001 ECX:00000005 EDX:00000D0B

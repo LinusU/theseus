@@ -349,7 +349,9 @@ impl<'a> CodeGen<'a> {
                             Module::DOS(_) => {
                                 self.line(format!("ctx.dump_dosbox({:#x});", instr.iced.ip32()));
                             }
-                            Module::Windows(_) => todo!(),
+                            Module::Windows(_) => {
+                                self.line(format!("ctx.dump_trace({:#x});", instr.iced.ip32()));
+                            }
                         }
                     }
                     if let Err(e) = self.gen_instr(instr) {
@@ -5404,5 +5406,33 @@ mod tests {
                 codegen.buf
             );
         }
+    }
+
+    #[test]
+    fn codegen_traces_windows_blocks() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, true);
+
+        // nop at flat address 0x401000.
+        let mut decoder =
+            iced_x86::Decoder::with_ip(32, &[0x90], 0x401000, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0x401000),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        let block = crate::Block {
+            name: None,
+            ty: crate::BlockType::Instrs(vec![instr]),
+        };
+        codegen.gen_block(&block);
+        assert!(
+            codegen.buf.contains("ctx.dump_trace(0x401000);"),
+            "wanted a trace hook in {:?}",
+            codegen.buf
+        );
     }
 }
