@@ -226,7 +226,10 @@ pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
     dst.copy_from_slice(&rsrc_data[..copy_len_u32 as usize]);
 
     state.dlls.register_module(&filename);
-    let hmodule = state.dlls.module_handle(&filename).unwrap();
+    let Some(hmodule) = state.dlls.module_handle(&filename) else {
+        log::warn!("LoadLibrary({filename}): module handle not found after registration");
+        return 0;
+    };
     state.loaded_modules.insert(
         hmodule,
         LoadedModule {
