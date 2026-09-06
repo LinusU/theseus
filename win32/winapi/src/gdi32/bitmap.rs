@@ -55,7 +55,8 @@ pub fn StretchBlt(
             // BLACKNESS / WHITENESS / DSTINVERT
             return rop_fill(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
         }
-        0x00cc_0020 => {} // SRCCOPY
+        // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT
+        0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 => {}
         _ => return false,
     }
 
@@ -104,31 +105,36 @@ pub fn StretchBlt(
         let x_dst = (xDest as i64 + x_skip) as u32;
         let y_dst = (yDest as i64 + y_skip) as u32;
 
+        // A combining rop stages the source row before merging it into the
+        // destination.
+        let mut row_buf = vec![0u8; w as usize * 4];
         for y in 0..h {
             let dst = &mut pixels_dst
                 [(y_dst + y) as usize * bmp_dst.stride() as usize + x_dst as usize * 4..]
                 [..w as usize * 4];
             let y_src = y_src + y;
-            bmp_src.read_pixels(
-                pixels_src,
-                if bmp_src.is_bottom_up {
-                    // GDI coordinates are top-down; a bottom-up source's
-                    // last buffer row is the image's first.
-                    bmp_src.height - y_src - 1
-                } else {
-                    y_src
-                },
-                x_src,
-                x_src + w,
-                dst,
-            );
+            let row = if bmp_src.is_bottom_up {
+                // GDI coordinates are top-down; a bottom-up source's
+                // last buffer row is the image's first.
+                bmp_src.height - y_src - 1
+            } else {
+                y_src
+            };
+            if rop == 0x00cc_0020 {
+                bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, dst);
+            } else {
+                row_buf.fill(0);
+                bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, &mut row_buf);
+                apply_rop(dst, &row_buf, rop);
+            }
         }
         return true;
     }
 
     // A different-size blit scales the source: clip the destination to its
     // bitmap, then nearest-neighbor map each remaining pixel back into the
-    // source. Samples that land outside the source are left undrawn.
+    // source. SRCCOPY leaves out-of-source samples undrawn; the combining
+    // rops apply with a black sample.
     if wSrc <= 0 || hSrc <= 0 || wDest <= 0 || hDest <= 0 {
         return false;
     }
@@ -156,20 +162,30 @@ pub fn StretchBlt(
             [..width as usize * 4];
         for i in 0..width {
             let sx = xSrc as i64 + (x_skip + i) * wSrc as i64 / wDest as i64;
-            if !(0..bmp_src.width as i64).contains(&sx) {
+            let mut px = [0u8; 4];
+            if (0..bmp_src.width as i64).contains(&sx) {
+                bmp_src.read_pixels(pixels_src, row, sx as u32, sx as u32 + 1, &mut px);
+            } else if rop == 0x00cc_0020 {
                 continue;
             }
-            bmp_src.read_pixels(
-                pixels_src,
-                row,
-                sx as u32,
-                sx as u32 + 1,
-                &mut dst[i as usize * 4..][..4],
-            );
+            // A combining rop treats an out-of-source sample as black.
+            apply_rop(&mut dst[i as usize * 4..][..4], &px, rop);
         }
     }
 
     true
+}
+
+/// Apply a source-combining raster op over one run of BGRA pixels.
+fn apply_rop(dst: &mut [u8], src: &[u8], rop: u32) {
+    for (d, &s) in dst.iter_mut().zip(src.iter()) {
+        *d = match rop {
+            0x0033_0008 => !s,     // NOTSRCCOPY
+            0x0066_0046 => *d ^ s, // SRCINVERT
+            0x0088_00c6 => *d & s, // SRCAND
+            _ => *d | s,           // SRCPAINT
+        };
+    }
 }
 
 /// The fill-style raster ops (BLACKNESS, WHITENESS, DSTINVERT) ignore the
@@ -361,6 +377,35 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(0x3004), 0x11);
         assert_eq!(ctx.memory.read::<u32>(0x3008), 0x22);
         assert_eq!(ctx.memory.read::<u32>(0x300c), 0x22);
+    }
+
+    #[test]
+    fn stretch_blt_supports_the_combining_rops() {
+        let mut ctx = context();
+        ctx.memory.write::<u32>(0x2000, 0x00ff_00ff);
+        let src_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x2000));
+        let dst_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x3000));
+        // SRCINVERT xors the destination with the source.
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0x660046
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x0ff0_0ff0);
+        // SRCAND masks, SRCPAINT ors, and NOTSRCCOPY inverts the source.
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0x8800c6
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x000f_000f);
+        ctx.memory.write::<u32>(0x3000, 0x0f00_0000);
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0xee0086
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x0fff_00ff);
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0x330008
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_ff00);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
