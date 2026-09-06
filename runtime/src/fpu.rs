@@ -255,6 +255,54 @@ impl FPU {
         self.push(sig);
     }
 
+    /// FBLD: load an 80-bit packed BCD integer from memory and push it.
+    pub fn bld(&mut self, memory: &crate::Memory<'_>, addr: u32) {
+        let Some(bytes) = memory.try_read::<[u8; 10]>(addr) else {
+            self.push(0.0);
+            return;
+        };
+        let sign = (bytes[9] & 0x80) != 0;
+        let mut value: u64 = 0;
+        for i in (0..9).rev() {
+            let b = bytes[i];
+            let low = (b & 0x0f) as u64;
+            let high = (b >> 4) as u64;
+            value = value * 100 + (high * 10 + low);
+        }
+        let mut result = value as f64;
+        if sign {
+            result = -result;
+        }
+        self.push(result);
+    }
+
+    /// FBSTP: store ST(0) as an 80-bit packed BCD integer, then pop.
+    pub fn bstp(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
+        const MAX_BCD: f64 = 999_999_999_999_999_999.0;
+        let val = self.round(self.get(0));
+        let mut bytes = [0xffu8; 10];
+        if val.is_finite() {
+            let sign = val.is_sign_negative();
+            let mut abs = val.abs().clamp(0.0, MAX_BCD).floor();
+            if abs < 1.0 {
+                // Round-to-zero/negative small magnitudes become 0.
+                abs = 0.0;
+            }
+            let mut ival = abs as u64;
+            bytes = [0u8; 10];
+            for i in 0..9 {
+                let low = (ival % 10) as u8;
+                ival /= 10;
+                let high = (ival % 10) as u8;
+                ival /= 10;
+                bytes[i] = (high << 4) | low;
+            }
+            bytes[9] = if sign { 0x80 } else { 0x00 };
+        }
+        let _ = memory.try_write(addr, bytes);
+        self.pop();
+    }
+
     pub fn compare(&mut self, left: f64, right: f64) {
         let Some(cmp) = left.partial_cmp(&right) else {
             self.cmp = std::cmp::Ordering::Equal;
@@ -610,6 +658,44 @@ mod tests {
         assert_eq!(fpu.truncate(-1.9), -1.0);
         assert_eq!(fpu.truncate(1.1), 1.0);
         assert_eq!(fpu.truncate(-1.1), -1.0);
+    }
+
+    #[test]
+    fn fbld_and_bstp_round_trip_bcd() {
+        let mut memory = crate::Memory::leak_new(0x100);
+        let mut fpu = FPU::default();
+
+        // 1234 as packed BCD little-endian, positive: bytes 0..8 digits, byte 9 sign.
+        // 1234 => 0x12 0x34 in little-endian packed form.
+        let mut bcd = [0u8; 10];
+        bcd[0] = 0x34; // low: 4, high: 3
+        bcd[1] = 0x12; // low: 2, high: 1
+        bcd[9] = 0x00; // positive
+        memory.bytes[0x20..0x2a].copy_from_slice(&bcd);
+
+        fpu.bld(&memory, 0x20);
+        assert_eq!(fpu.get(0), 1234.0);
+
+        fpu.bstp(&mut memory, 0x30);
+        assert_eq!(&memory.bytes[0x30..0x3a], bcd);
+    }
+
+    #[test]
+    fn fbld_handles_negative_and_out_of_range() {
+        let memory = crate::Memory::leak_new(0x100);
+        let mut fpu = FPU::default();
+
+        // -56 => 0x56 with sign bit.
+        let mut bcd = [0u8; 10];
+        bcd[0] = 0x56;
+        bcd[9] = 0x80;
+        memory.bytes[0x20..0x2a].copy_from_slice(&bcd);
+        fpu.bld(&memory, 0x20);
+        assert_eq!(fpu.get(0), -56.0);
+
+        // Out-of-range read returns 0.
+        fpu.bld(&memory, 0x1000);
+        assert_eq!(fpu.get(0), 0.0);
     }
 
     #[test]

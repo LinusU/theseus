@@ -142,6 +142,19 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.fpu.pop();");
             }
 
+            Fbld => {
+                self.line(format!(
+                    "ctx.cpu.fpu.bld(&ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
+            Fbstp => {
+                self.line(format!(
+                    "ctx.cpu.fpu.bstp(&mut ctx.memory, {});",
+                    self.gen_addr(instr)
+                ));
+            }
+
             // Binary ops
             Fadd | Faddp | Fsub | Fsubp | Fsubr | Fsubrp | Fmul | Fmulp | Fdivp | Fdivrp
             | Fdivr | Fdiv => {

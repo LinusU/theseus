@@ -2323,6 +2323,46 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_bcd_load_and_store() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // fbld m80bcd ptr [eax]  => DF /4
+        let bytes = [0xdf, 0x20];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.fpu.bld(&ctx.memory, ctx.cpu.regs.eax);")
+        );
+
+        // fbstp m80bcd ptr [eax] => DF /6
+        let bytes = [0xdf, 0x30];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        codegen.buf.clear();
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("ctx.cpu.fpu.bstp(&mut ctx.memory, ctx.cpu.regs.eax);")
+        );
+    }
+
+    #[test]
     fn codegen_handles_f2xm1() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
