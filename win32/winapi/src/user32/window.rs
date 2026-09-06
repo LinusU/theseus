@@ -338,7 +338,7 @@ pub fn SetForegroundWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
 #[win32_derive::dllexport]
 pub fn MoveWindow(
     ctx: &mut Context,
-    _hWnd: HWND,
+    hWnd: HWND,
     X: i32,
     Y: i32,
     nWidth: i32,
@@ -351,9 +351,14 @@ pub fn MoveWindow(
         return false;
     };
     let mut window = window.borrow_mut();
+    if window.hwnd != hWnd {
+        return false;
+    }
     window.x = X;
     window.y = Y;
-    window.resize(ctx, nWidth as u32, nHeight as u32);
+    // A negative size clamps to zero like SetWindowPos, not up to
+    // MAX_WINDOW_DIM via the u32 cast.
+    window.resize(ctx, nWidth.max(0) as u32, nHeight.max(0) as u32);
     if bRepaint {
         // ...
     };
