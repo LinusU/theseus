@@ -519,7 +519,10 @@ impl MessageQueue {
             KeyDown(key) => key_msg(hwnd, &key, true),
             KeyUp(key) => key_msg(hwnd, &key, false),
             #[cfg(not(target_family = "wasm"))]
-            Paint | Quit => unreachable!(),
+            // Paint is translated into a dirty flag in enqueue_message and
+            // Quit is a thread message handled above; a stray event here is
+            // dropped rather than panicking the host.
+            Paint | Quit => return None,
         })
     }
 }
