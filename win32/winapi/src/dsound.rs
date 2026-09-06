@@ -175,10 +175,19 @@ impl Buffer {
             };
             (left, right)
         } else {
-            // 8-bit PCM is unsigned, centered on 128.
-            let left = (mem[base] as i32 - 128) << 8;
+            // 8-bit PCM is unsigned, centered on 128. Out-of-range or
+            // overflowed frames fall back to 128 (silence) instead of the
+            // dummy byte or wrapped low address.
+            let read = |addr: u32| mem.bytes.get(addr as usize).copied().unwrap_or(128);
+            let left = (read(base) as i32 - 128) << 8;
             let right = if stereo {
-                (mem[base + 1] as i32 - 128) << 8
+                let right_base = base.checked_add(1);
+                (right_base
+                    .and_then(|a| mem.bytes.get(a as usize))
+                    .copied()
+                    .unwrap_or(128) as i32
+                    - 128)
+                    << 8
             } else {
                 left
             };
@@ -1361,5 +1370,39 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(0x400c), 0);
 
         lock().buffers.remove(&0xabc2);
+    }
+
+    #[test]
+    fn frame_at_returns_silence_for_out_of_range_8bit_samples() {
+        let mut ctx = context();
+        let mono = Buffer {
+            refs: 1,
+            addr: 0x10000,
+            size: 0x100,
+            format: WaveFormat {
+                channels: 1,
+                bits: 8,
+                rate: 22050,
+            },
+            primary: false,
+            caps_flags: DSBCAPS_FLAGS::default(),
+            playing: false,
+            looping: false,
+            cursor: 0.0,
+            volume: 0,
+            pan: 0,
+        };
+        // 128 is silence; an out-of-range mono frame should be (0, 0).
+        assert_eq!(mono.frame_at(&ctx.memory, 0), (0, 0));
+
+        let mut stereo = mono;
+        stereo.format.channels = 2;
+        // Both channels out of range.
+        assert_eq!(stereo.frame_at(&ctx.memory, 0), (0, 0));
+
+        // Write silence to the last byte so left is in range and right is OOB.
+        ctx.memory.write::<u8>(0xFFFF, 128);
+        stereo.addr = 0xFFFF;
+        assert_eq!(stereo.frame_at(&ctx.memory, 0), (0, 0));
     }
 }
