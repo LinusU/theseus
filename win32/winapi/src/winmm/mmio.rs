@@ -116,14 +116,17 @@ pub struct State {
 
 impl State {
     /// The heap backing direct-access buffers, created on first use.
-    fn heap(&mut self) -> &Heap {
-        self.heap.get_or_insert_with(|| {
+    fn heap(&mut self, memory_size: u32) -> Option<&mut Heap> {
+        if self.heap.is_none() {
             const HEAP_SIZE: u32 = 16 << 20;
-            let addr = kernel32::lock()
-                .mappings
-                .alloc("winmm mmio buffers".into(), HEAP_SIZE);
-            Heap::new(addr, HEAP_SIZE)
-        })
+            let addr = kernel32::lock().mappings.try_alloc(
+                "winmm mmio buffers".into(),
+                HEAP_SIZE,
+                memory_size,
+            )?;
+            self.heap = Some(Heap::new(addr, HEAP_SIZE));
+        }
+        self.heap.as_mut()
     }
 }
 
@@ -144,7 +147,10 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
 
     // Out of guest buffer space: the callers report open failures rather
     // than panicking the host.
-    let addr = mmio.heap().try_alloc(&mut ctx.memory, len.max(1))?;
+    let memory_size = ctx.memory.bytes.len() as u32;
+    let addr = mmio
+        .heap(memory_size)?
+        .try_alloc(&mut ctx.memory, len.max(1))?;
     let file = mmio.files.get_mut(&hmmio)?;
     ctx.memory[addr..][..file.data.len()].copy_from_slice(&file.data);
     file.buffer = addr;
@@ -205,7 +211,10 @@ pub fn mmioClose(ctx: &mut Context, hmmio: u32, _wFlags: u32) -> u32 {
         return MMIOERR_CANNOTOPEN;
     };
     if file.buffer != 0 {
-        mmio.heap().free(&mut ctx.memory, file.buffer);
+        let memory_size = ctx.memory.bytes.len() as u32;
+        if let Some(heap) = mmio.heap(memory_size) {
+            heap.free(&mut ctx.memory, file.buffer);
+        }
     }
     MMSYSERR_NOERROR
 }

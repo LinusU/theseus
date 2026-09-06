@@ -190,10 +190,16 @@ pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
     let rsrc_data = &buf[rsrc_off..rsrc_end];
     let copy_len_u32 = rsrc_data.len().min(rsrc_len) as u32;
 
+    let memory_size = ctx.memory.bytes.len() as u32;
     let mut state = lock();
-    let image_base = state
-        .mappings
-        .alloc(format!("{} .rsrc", filename), rsrc_rva + rsrc_vsize);
+    let Some(image_base) = state.mappings.try_alloc(
+        format!("{} .rsrc", filename),
+        rsrc_rva + rsrc_vsize,
+        memory_size,
+    ) else {
+        log::warn!("LoadLibrary({filename}): could not allocate .rsrc mapping");
+        return 0;
+    };
     let rsrc_addr = image_base + rsrc_rva;
     ctx.memory[rsrc_addr..rsrc_addr + copy_len_u32]
         .copy_from_slice(&rsrc_data[..copy_len_u32 as usize]);
