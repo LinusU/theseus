@@ -541,13 +541,25 @@ pub mod IDirect3D7 {
         ];
 
         for &(guid, desc, name) in DEVICES {
-            let desc_addr = crate::ddraw::alloc_string(ctx, desc);
-            let name_addr = crate::ddraw::alloc_string(ctx, name);
+            let Some(desc_addr) = crate::ddraw::alloc_string(ctx, desc) else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            let Some(name_addr) = crate::ddraw::alloc_string(ctx, name) else {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+                return DD::ERR_OUTOFMEMORY;
+            };
             let device = device_desc7(guid);
-            let dd_addr = kernel32::lock().process_heap.alloc(
+            let Some(dd_addr) = kernel32::lock().process_heap.try_alloc(
                 &mut ctx.memory,
                 std::mem::size_of::<D3DDEVICEDESC7>() as u32,
-            );
+            ) else {
+                let kernel32 = kernel32::lock();
+                kernel32.process_heap.free(&mut ctx.memory, desc_addr);
+                kernel32.process_heap.free(&mut ctx.memory, name_addr);
+                return DD::ERR_OUTOFMEMORY;
+            };
             ctx.memory.write(dd_addr, device);
 
             let callback = ctx.indirect(lpEnumDevicesCallback);
@@ -662,9 +674,12 @@ pub mod IDirect3D7 {
             return DD::ERR_INVALIDPARAMS;
         }
         for fmt in zbuffer_formats() {
-            let addr = kernel32::lock()
+            let Some(addr) = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, std::mem::size_of::<DDPIXELFORMAT>() as u32);
+                .try_alloc(&mut ctx.memory, std::mem::size_of::<DDPIXELFORMAT>() as u32)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             ctx.memory.write(addr, fmt);
             let callback = ctx.indirect(lpEnumCallback);
             ctx.call32_x86(callback, vec![addr, lpContext]);
@@ -854,9 +869,12 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         }
         for fmt in texture_formats() {
-            let addr = kernel32::lock()
+            let Some(addr) = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, std::mem::size_of::<DDPIXELFORMAT>() as u32);
+                .try_alloc(&mut ctx.memory, std::mem::size_of::<DDPIXELFORMAT>() as u32)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             ctx.memory.write(addr, fmt);
             let callback = ctx.indirect(lpd3dEnumPixelProc);
             ctx.call32_x86(callback, vec![addr, lpArg]);

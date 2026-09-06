@@ -245,9 +245,12 @@ pub mod IDirectDraw {
                     ..Default::default()
                 };
 
-                let desc_addr = kernel32::lock()
+                let Some(desc_addr) = kernel32::lock()
                     .process_heap
-                    .alloc(&mut ctx.memory, desc.dwSize);
+                    .try_alloc(&mut ctx.memory, desc.dwSize)
+                else {
+                    return DD::ERR_OUTOFMEMORY;
+                };
                 ctx.memory.write(desc_addr, desc);
                 let callback = ctx.indirect(lpEnumCallback);
                 ctx.call32_x86(callback, vec![desc_addr, lpContext]);
@@ -315,9 +318,12 @@ pub mod IDirectDraw {
                     ..DDSURFACEDESC::default()
                 }
             };
-            let desc_addr = kernel32::lock()
+            let Some(desc_addr) = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, desc.dwSize);
+                .try_alloc(&mut ctx.memory, desc.dwSize)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             let Some(buf) = ctx
                 .memory
                 .bytes
@@ -752,9 +758,12 @@ pub mod IDirectDrawSurface {
                     ..DDSURFACEDESC::default()
                 }
             };
-            let desc_addr = kernel32::lock()
+            let Some(desc_addr) = kernel32::lock()
                 .process_heap
-                .alloc(&mut ctx.memory, desc.dwSize);
+                .try_alloc(&mut ctx.memory, desc.dwSize)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             let Some(buf) = ctx
                 .memory
                 .bytes

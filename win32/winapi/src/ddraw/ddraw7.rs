@@ -304,9 +304,12 @@ pub mod IDirectDraw7 {
                         ..Default::default()
                     };
 
-                    let desc_addr = kernel32::lock()
+                    let Some(desc_addr) = kernel32::lock()
                         .process_heap
-                        .alloc(&mut ctx.memory, desc.dwSize);
+                        .try_alloc(&mut ctx.memory, desc.dwSize)
+                    else {
+                        return DD::ERR_OUTOFMEMORY;
+                    };
                     ctx.memory.write(desc_addr, desc);
                     let callback = ctx.indirect(lpEnumCallback);
                     ctx.call32_x86(callback, vec![desc_addr, lpContext]);
@@ -360,10 +363,12 @@ pub mod IDirectDraw7 {
                     ..Default::default()
                 }
             };
-            let desc_addr = kernel32::lock().process_heap.alloc(
+            let Some(desc_addr) = kernel32::lock().process_heap.try_alloc(
                 &mut ctx.memory,
                 std::mem::size_of::<DDSURFACEDESC2>() as u32,
-            );
+            ) else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             ctx.memory.write(desc_addr, desc);
             let callback = ctx.indirect(lpEnumCallback);
             ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
@@ -1078,10 +1083,12 @@ pub mod IDirectDrawSurface7 {
                     ..Default::default()
                 }
             };
-            let desc_addr = kernel32::lock().process_heap.alloc(
+            let Some(desc_addr) = kernel32::lock().process_heap.try_alloc(
                 &mut ctx.memory,
                 std::mem::size_of::<DDSURFACEDESC2>() as u32,
-            );
+            ) else {
+                return DD::ERR_OUTOFMEMORY;
+            };
             ctx.memory.write(desc_addr, desc);
             let callback = ctx.indirect(lpEnumSurfacesCallback);
             ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);

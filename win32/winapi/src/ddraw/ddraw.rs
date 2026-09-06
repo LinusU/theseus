@@ -661,12 +661,14 @@ pub fn DirectDrawCreateEx(
     DD::OK
 }
 
-pub(crate) fn alloc_string(ctx: &mut Context, s: &str) -> u32 {
+pub(crate) fn alloc_string(ctx: &mut Context, s: &str) -> Option<u32> {
     let kernel32 = kernel32::lock();
-    let addr = kernel32.process_heap.alloc(&mut ctx.memory, s.len() as u32);
+    let addr = kernel32
+        .process_heap
+        .try_alloc(&mut ctx.memory, s.len() as u32)?;
     drop(kernel32);
     ctx.memory[addr..addr + s.len() as u32].copy_from_slice(s.as_bytes());
-    addr
+    Some(addr)
 }
 
 #[win32_derive::dllexport]
@@ -674,8 +676,13 @@ pub fn DirectDrawEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) 
     if lpCallback == 0 {
         return DD::ERR_GENERIC;
     }
-    let desc = alloc_string(ctx, "Primary Display Driver\0");
-    let name = alloc_string(ctx, "DISPLAY\0");
+    let Some(desc) = alloc_string(ctx, "Primary Display Driver\0") else {
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let Some(name) = alloc_string(ctx, "DISPLAY\0") else {
+        kernel32::lock().process_heap.free(&mut ctx.memory, desc);
+        return DD::ERR_OUTOFMEMORY;
+    };
     let callback = ctx.indirect(lpCallback);
     ctx.call32_x86(callback, vec![desc, name, lpContext]);
     DD::OK
@@ -691,17 +698,29 @@ pub fn DirectDrawEnumerateExA(
     if lpCallback == 0 {
         return DD::ERR_GENERIC;
     }
-    let guid_addr = {
+    let Some(guid_addr) = ({
         let kernel32 = kernel32::lock();
         let addr = kernel32
             .process_heap
-            .alloc(&mut ctx.memory, std::mem::size_of::<GUID>() as u32);
+            .try_alloc(&mut ctx.memory, std::mem::size_of::<GUID>() as u32);
         drop(kernel32);
-        ctx.memory[addr..addr + std::mem::size_of::<GUID>() as u32].fill(0);
         addr
+    }) else {
+        return DD::ERR_OUTOFMEMORY;
     };
-    let desc = alloc_string(ctx, "Primary Display Driver\0");
-    let name = alloc_string(ctx, "DISPLAY\0");
+    ctx.memory[guid_addr..guid_addr + std::mem::size_of::<GUID>() as u32].fill(0);
+    let Some(desc) = alloc_string(ctx, "Primary Display Driver\0") else {
+        kernel32::lock()
+            .process_heap
+            .free(&mut ctx.memory, guid_addr);
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let Some(name) = alloc_string(ctx, "DISPLAY\0") else {
+        let kernel32 = kernel32::lock();
+        kernel32.process_heap.free(&mut ctx.memory, guid_addr);
+        kernel32.process_heap.free(&mut ctx.memory, desc);
+        return DD::ERR_OUTOFMEMORY;
+    };
     let callback = ctx.indirect(lpCallback);
     ctx.call32_x86(callback, vec![guid_addr, desc, name, lpContext, 0]);
     DD::OK
