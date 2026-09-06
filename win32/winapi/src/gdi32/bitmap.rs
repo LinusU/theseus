@@ -81,51 +81,92 @@ pub fn StretchBlt(
         return false;
     };
 
-    // stretching not implemented yet
-    if wDest != wSrc || hDest != hSrc {
-        return false;
-    }
+    if wDest == wSrc && hDest == hSrc {
+        // GDI clips a partially offscreen blit rather than failing it:
+        // compute the pixels skipped at the near edges and the shared
+        // length that remains, in i64 so a negative or huge start
+        // coordinate cannot wrap the check.
+        let x_skip = (-(xDest as i64)).max(-(xSrc as i64)).max(0);
+        let y_skip = (-(yDest as i64)).max(-(ySrc as i64)).max(0);
+        let width = (wDest as i64 - x_skip)
+            .min(bmp_dst.width as i64 - xDest as i64 - x_skip)
+            .min(bmp_src.width as i64 - xSrc as i64 - x_skip);
+        let height = (hDest as i64 - y_skip)
+            .min(bmp_dst.height as i64 - yDest as i64 - y_skip)
+            .min(bmp_src.height as i64 - ySrc as i64 - y_skip);
+        if width <= 0 || height <= 0 {
+            // A fully clipped blit is well-formed but draws nothing.
+            return true;
+        }
+        let (w, h) = (width as u32, height as u32);
+        let x_src = (xSrc as i64 + x_skip) as u32;
+        let y_src = (ySrc as i64 + y_skip) as u32;
+        let x_dst = (xDest as i64 + x_skip) as u32;
+        let y_dst = (yDest as i64 + y_skip) as u32;
 
-    // GDI clips a partially offscreen blit rather than failing it: compute
-    // the pixels skipped at the near edges and the shared length that
-    // remains, in i64 so a negative or huge start coordinate cannot wrap
-    // the check.
-    let x_skip = (-(xDest as i64)).max(-(xSrc as i64)).max(0);
-    let y_skip = (-(yDest as i64)).max(-(ySrc as i64)).max(0);
-    let width = (wDest as i64 - x_skip)
-        .min(bmp_dst.width as i64 - xDest as i64 - x_skip)
-        .min(bmp_src.width as i64 - xSrc as i64 - x_skip);
-    let height = (hDest as i64 - y_skip)
-        .min(bmp_dst.height as i64 - yDest as i64 - y_skip)
-        .min(bmp_src.height as i64 - ySrc as i64 - y_skip);
-    if width <= 0 || height <= 0 {
-        // A fully clipped blit is well-formed but draws nothing.
+        for y in 0..h {
+            let dst = &mut pixels_dst
+                [(y_dst + y) as usize * bmp_dst.stride() as usize + x_dst as usize * 4..]
+                [..w as usize * 4];
+            let y_src = y_src + y;
+            bmp_src.read_pixels(
+                pixels_src,
+                if bmp_src.is_bottom_up {
+                    // GDI coordinates are top-down; a bottom-up source's
+                    // last buffer row is the image's first.
+                    bmp_src.height - y_src - 1
+                } else {
+                    y_src
+                },
+                x_src,
+                x_src + w,
+                dst,
+            );
+        }
         return true;
     }
-    let (w, h) = (width as u32, height as u32);
-    let x_src = (xSrc as i64 + x_skip) as u32;
-    let y_src = (ySrc as i64 + y_skip) as u32;
-    let x_dst = (xDest as i64 + x_skip) as u32;
-    let y_dst = (yDest as i64 + y_skip) as u32;
 
-    for y in 0..h {
+    // A different-size blit scales the source: clip the destination to its
+    // bitmap, then nearest-neighbor map each remaining pixel back into the
+    // source. Samples that land outside the source are left undrawn.
+    if wSrc <= 0 || hSrc <= 0 || wDest <= 0 || hDest <= 0 {
+        return false;
+    }
+    let x_skip = (-(xDest as i64)).max(0);
+    let y_skip = (-(yDest as i64)).max(0);
+    let width = (wDest as i64 - x_skip).min(bmp_dst.width as i64 - xDest as i64 - x_skip);
+    let height = (hDest as i64 - y_skip).min(bmp_dst.height as i64 - yDest as i64 - y_skip);
+    if width <= 0 || height <= 0 {
+        return true;
+    }
+    let x_dst = (xDest as i64 + x_skip) as u32;
+    for dy in 0..height {
+        let y_dst = (yDest as i64 + y_skip + dy) as u32;
+        let sy = ySrc as i64 + (y_skip + dy) * hSrc as i64 / hDest as i64;
+        if !(0..bmp_src.height as i64).contains(&sy) {
+            continue;
+        }
+        let row = if bmp_src.is_bottom_up {
+            (bmp_src.height as i64 - 1 - sy) as u32
+        } else {
+            sy as u32
+        };
         let dst = &mut pixels_dst
-            [(y_dst + y) as usize * bmp_dst.stride() as usize + x_dst as usize * 4..]
-            [..w as usize * 4];
-        let y_src = y_src + y;
-        bmp_src.read_pixels(
-            pixels_src,
-            if bmp_src.is_bottom_up {
-                // GDI coordinates are top-down; a bottom-up source's last
-                // buffer row is the image's first.
-                bmp_src.height - y_src - 1
-            } else {
-                y_src
-            },
-            x_src,
-            x_src + w,
-            dst,
-        );
+            [(y_dst as usize * bmp_dst.stride() as usize + x_dst as usize * 4)..]
+            [..width as usize * 4];
+        for i in 0..width {
+            let sx = xSrc as i64 + (x_skip + i) * wSrc as i64 / wDest as i64;
+            if !(0..bmp_src.width as i64).contains(&sx) {
+                continue;
+            }
+            bmp_src.read_pixels(
+                pixels_src,
+                row,
+                sx as u32,
+                sx as u32 + 1,
+                &mut dst[i as usize * 4..][..4],
+            );
+        }
     }
 
     true
@@ -303,6 +344,23 @@ mod tests {
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0xbb);
         assert_eq!(ctx.memory.read::<u32>(0x3004), 0x77777777);
+    }
+
+    #[test]
+    fn stretch_blt_scales_a_source_nearest_neighbor() {
+        let mut ctx = context();
+        ctx.memory.write::<u32>(0x2000, 0x11);
+        ctx.memory.write::<u32>(0x2004, 0x22);
+        let src_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(2, 1, 0x2000));
+        let dst_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(4, 1, 0x3000));
+        // A 2-wide source doubles to 4 destination pixels.
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 4, 1, src_dc, 0, 0, 2, 1, 0xcc0020
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x11);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0x11);
+        assert_eq!(ctx.memory.read::<u32>(0x3008), 0x22);
+        assert_eq!(ctx.memory.read::<u32>(0x300c), 0x22);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
