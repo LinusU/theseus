@@ -102,7 +102,7 @@ struct File {
 impl File {
     fn read_u32(&self, at: usize) -> Option<u32> {
         let bytes = self.data.get(at..at + 4)?;
-        Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
     }
 }
 
@@ -266,8 +266,12 @@ pub fn mmioDescend(ctx: &mut Context, hmmio: u32, lpck: u32, lpckParent: u32, wF
         if header + 8 > file.data.len() || header + 8 > parent_end {
             return MMIOERR_CHUNKNOTFOUND;
         }
-        let ckid = file.read_u32(header).unwrap();
-        let cksize = file.read_u32(header + 4).unwrap();
+        let Some(ckid) = file.read_u32(header) else {
+            return MMIOERR_CHUNKNOTFOUND;
+        };
+        let Some(cksize) = file.read_u32(header + 4) else {
+            return MMIOERR_CHUNKNOTFOUND;
+        };
         // RIFF and LIST chunks start with a form type, and the API reports
         // dwDataOffset pointing at it.
         let body = header + 8;
