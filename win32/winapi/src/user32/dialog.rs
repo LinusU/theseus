@@ -78,7 +78,9 @@ pub fn GetDlgItemInt(
     _bSigned: bool,
 ) -> u32 {
     // lpTranslated receives FALSE on failure; an unusable pointer is ignored.
-    let _ = lpTranslated.write(&mut ctx.memory, 0);
+    if crate::ddraw::guest_range(ctx, lpTranslated.addr, std::mem::size_of::<u32>() as u32) {
+        let _ = lpTranslated.write(&mut ctx.memory, 0);
+    }
     0
 }
 
@@ -92,7 +94,9 @@ pub fn GetDlgItemTextW(
 ) -> u32 {
     // On failure the buffer receives an empty string; an unusable pointer is
     // ignored rather than panicking the host.
-    if cchMax > 0 {
+    if cchMax > 0
+        && crate::ddraw::guest_range(ctx, lpString.addr, std::mem::size_of::<u16>() as u32)
+    {
         let _ = lpString.write(&mut ctx.memory, 0);
     }
     0
@@ -145,6 +149,11 @@ mod tests {
             GetDlgItemInt(&mut ctx, HWND::null(), 0, Ptr::new(0xffff_ff00), false),
             0
         );
+        // A low out-pointer is also ignored.
+        assert_eq!(
+            GetDlgItemInt(&mut ctx, HWND::null(), 0, Ptr::new(0x500), false),
+            0
+        );
         // A valid out-pointer still receives FALSE.
         assert_eq!(
             GetDlgItemInt(&mut ctx, HWND::null(), 0, Ptr::new(0x2000), false),
@@ -155,6 +164,10 @@ mod tests {
         // Same for the text out-buffer: bad addresses are ignored.
         assert_eq!(
             GetDlgItemTextW(&mut ctx, HWND::null(), 0, Ptr::new(0xffff_ff00), 16),
+            0
+        );
+        assert_eq!(
+            GetDlgItemTextW(&mut ctx, HWND::null(), 0, Ptr::new(0x500), 16),
             0
         );
         assert_eq!(
