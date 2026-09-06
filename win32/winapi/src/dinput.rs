@@ -496,6 +496,9 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn GetCapabilities(ctx: &mut Context, this: u32, lpCaps: u32) -> u32 {
+        if lpCaps < 0x1000 {
+            return DIERR_INVALIDPARAM;
+        }
         let Some(size) = crate::Ptr::<u32>::new(lpCaps).read(&ctx.memory) else {
             return DIERR_INVALIDPARAM;
         };
@@ -1099,6 +1102,23 @@ mod tests {
             IDirectInputDevice::GetCapabilities(&mut ctx, 0x2000, 0x1000),
             DIERR_INVALIDPARAM
         );
+    }
+
+    #[test]
+    fn get_capabilities_rejects_null_destination() {
+        let mut ctx = context();
+
+        assert_eq!(
+            IDirectInputDevice::GetCapabilities(&mut ctx, 0x2000, 0),
+            DIERR_INVALIDPARAM
+        );
+        assert_eq!(&ctx.memory.bytes[0..DIDEVCAPS_SIZE], &[0u8; DIDEVCAPS_SIZE]);
+
+        assert_eq!(
+            IDirectInputDevice::GetCapabilities(&mut ctx, 0x2000, 0x500),
+            DIERR_INVALIDPARAM
+        );
+        assert_eq!(&ctx.memory.bytes[0..DIDEVCAPS_SIZE], &[0u8; DIDEVCAPS_SIZE]);
     }
 
     #[test]
