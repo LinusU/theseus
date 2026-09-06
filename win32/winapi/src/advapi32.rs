@@ -153,6 +153,9 @@ pub fn RegCreateKeyExW(
     phkResult: u32,
     lpdwDisposition: u32, /* REG_CREATE_KEY_DISPOSITION */
 ) -> u32 /* WIN32_ERROR */ {
+    if phkResult < 0x1000 || (lpSubKey != 0 && lpSubKey < 0x1000) {
+        return ERROR_INVALID_PARAMETER;
+    }
     let subkey = ctx.memory.read_wstr(lpSubKey).to_string_lossy();
     reg_create_key(ctx, hKey, subkey, phkResult, lpdwDisposition)
 }
@@ -166,6 +169,9 @@ pub fn RegOpenKeyExA(
     _samDesired: u32, /* REG_SAM_FLAGS */
     phkResult: u32,
 ) -> u32 /* WIN32_ERROR */ {
+    if phkResult < 0x1000 || (lpSubKey != 0 && lpSubKey < 0x1000) {
+        return ERROR_INVALID_PARAMETER;
+    }
     let subkey = ctx.memory.read_str(lpSubKey);
     let mut reg = registry();
     let Some(path) = subkey_path(&reg, hKey, subkey) else {
@@ -357,6 +363,24 @@ mod tests {
         // Setting through a bad data pointer is an explicit error.
         assert_eq!(
             RegSetValueExW(&mut ctx, HKCR, 0, 0, 1, 0xffff_fff0, 8),
+            ERROR_INVALID_PARAMETER
+        );
+
+        // Sub-0x1000 subkey or result pointers are rejected.
+        assert_eq!(
+            RegOpenKeyExA(&mut ctx, HKCR, 0x500, 0, 0, 0x2000),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegOpenKeyExA(&mut ctx, HKCR, 0x3000, 0, 0, 0x500),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegCreateKeyExW(&mut ctx, HKCR, 0x500, 0, 0, 0, 0, 0, 0x2000, 0),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegCreateKeyExW(&mut ctx, HKCR, 0x3000, 0, 0, 0, 0, 0, 0x500, 0),
             ERROR_INVALID_PARAMETER
         );
     }
