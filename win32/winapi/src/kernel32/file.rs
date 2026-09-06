@@ -365,8 +365,12 @@ pub fn WriteFile(
             return 0;
         };
         host::host().console_write(buf);
-        if lpNumberOfBytesWritten.addr != 0 {
-            let _ = lpNumberOfBytesWritten.write(&mut ctx.memory, nNumberOfBytesToWrite);
+        if lpNumberOfBytesWritten.addr != 0
+            && lpNumberOfBytesWritten
+                .write(&mut ctx.memory, nNumberOfBytesToWrite)
+                .is_none()
+        {
+            return 0;
         }
         return 1;
     }
@@ -387,8 +391,12 @@ pub fn WriteFile(
     match file.write_all(buf) {
         Ok(()) => {
             drop(kernel32);
-            if lpNumberOfBytesWritten.addr != 0 {
-                let _ = lpNumberOfBytesWritten.write(&mut ctx.memory, nNumberOfBytesToWrite);
+            if lpNumberOfBytesWritten.addr != 0
+                && lpNumberOfBytesWritten
+                    .write(&mut ctx.memory, nNumberOfBytesToWrite)
+                    .is_none()
+            {
+                return 0;
             }
             1
         }
@@ -746,7 +754,7 @@ mod tests {
         CreateDirectoryA, CreateFileA, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DeleteFileA,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FindFirstFileA, FindNextFileA,
         GetDriveTypeA, GetFileAttributesA, INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER,
-        MoveMethod, Object, ReadFile, SetCurrentDirectoryA, SetFilePointer, drive_type,
+        MoveMethod, Object, ReadFile, SetCurrentDirectoryA, SetFilePointer, WriteFile, drive_type,
         file_attributes, initial_cwd, lock, resolve_path, wildcard_match,
     };
     use crate::Ptr;
@@ -941,6 +949,57 @@ mod tests {
         ));
         // The previous count is left in place; no out-of-bounds write occurred.
         assert_eq!(ctx.memory.read::<u32>(0x1000), 5);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    static NEXT_WRITE_ID: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn write_file_rejects_a_bad_output_count_pointer() {
+        crate::kernel32::ensure_test_state();
+
+        let id = NEXT_WRITE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("mm2_writefile_test_{id}.txt"));
+
+        let file = OpenOptions {
+            read: false,
+            write: true,
+            create: true,
+            create_new: true,
+            truncate: false,
+        }
+        .open(&path)
+        .unwrap();
+        let handle = lock().objects.add(Object::File(file));
+
+        let mut ctx = context();
+        ctx.memory.bytes[0x2000..0x2005].copy_from_slice(b"hello");
+
+        assert_eq!(
+            WriteFile(
+                &mut ctx,
+                handle.to_raw(),
+                Ptr::new(0x2000),
+                5,
+                Ptr::new(0x1000),
+                Ptr::new(0)
+            ),
+            1
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x1000), 5);
+
+        assert_eq!(
+            WriteFile(
+                &mut ctx,
+                handle.to_raw(),
+                Ptr::new(0x2000),
+                5,
+                Ptr::new(0xffff_ff00),
+                Ptr::new(0)
+            ),
+            0
+        );
 
         let _ = std::fs::remove_file(&path);
     }
