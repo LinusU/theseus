@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use runtime::Context;
+use runtime::{Context, Memory};
 
 use crate::{
     HANDLE, Handles, POINT, Ptr,
     gdi32::{
         self, Bitmap, Brush, COLORREF, Font, HBITMAP, HBRUSH, HGDIOBJ, HPEN, Object, Pen, State,
     },
+    kernel32,
 };
 
 pub type HDC = HANDLE;
@@ -19,9 +20,21 @@ impl State {
     }
 
     /// Remove the DC from the table, reporting whether the handle named a
-    /// live DC — `ReleaseDC` returns that to its caller.
-    pub fn release_dc(&mut self, hdc: HDC) -> bool {
-        self.dcs.remove(hdc).is_some()
+    /// live DC — `ReleaseDC` returns that to its caller. A DC that owns its
+    /// pixel buffer (the GetDC(NULL) screen scratch) also frees that guest
+    /// memory and its internal bitmap handle, so a get/release loop cannot
+    /// exhaust the process heap or grow the object table without bound.
+    pub fn release_dc(&mut self, mem: &mut Memory, hdc: HDC) -> bool {
+        let Some(dc) = self.dcs.remove(hdc) else {
+            return false;
+        };
+        if let Some((hbitmap, pixels)) = dc.owned {
+            // The internal bitmap handle is never exposed to the guest (no
+            // GetCurrentObject), so removing it cannot orphan a live handle.
+            self.objects.remove(hbitmap);
+            kernel32::lock().process_heap.free(mem, pixels);
+        }
+        true
     }
 }
 
@@ -37,6 +50,10 @@ pub struct DC {
     bk_color: COLORREF,
     pos: POINT,
     layout: u32,
+    /// The internal bitmap handle and heap pixel buffer a GetDC(NULL)
+    /// screen-scratch DC owns, freed by `release_dc`. `None` for DCs backed
+    /// by guest- or window-owned pixels.
+    pub(crate) owned: Option<(HBITMAP, u32)>,
 }
 
 #[repr(C)]
@@ -65,6 +82,7 @@ impl DC {
             bk_color: COLORREF::from_rgb(0xff, 0xff, 0xff),
             pos: POINT::default(),
             layout: 0, // LAYOUT_LTR
+            owned: None,
         }
     }
 
@@ -95,8 +113,8 @@ pub fn CreateCompatibleDC(_ctx: &mut Context, hdc: HDC) -> HDC {
 }
 
 #[win32_derive::dllexport]
-pub fn DeleteDC(_ctx: &mut Context, hdc: HDC) -> bool {
-    gdi32::lock().dcs.remove(hdc).is_some()
+pub fn DeleteDC(ctx: &mut Context, hdc: HDC) -> bool {
+    gdi32::lock().release_dc(&mut ctx.memory, hdc)
 }
 
 #[win32_derive::dllexport]
@@ -623,6 +641,38 @@ mod tests {
         let pos = gdi32::lock().dcs.get(hdc).map(|dc| dc.pos);
         assert_eq!(pos.map(|p| (p.x, p.y)), Some((i32::MAX, i32::MAX)));
         assert_ne!(ctx.memory.read::<u32>(0x3000), 0);
+    }
+
+    #[test]
+    fn release_dc_reports_whether_the_handle_was_live() {
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3000);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        let hbitmap = gdi32::lock().dcs.get(hdc).unwrap().bitmap.0;
+
+        // An owned scratch buffer frees its internal bitmap handle; the
+        // pixel free is a no-op on the test's empty process heap.
+        gdi32::lock().dcs.get_mut(hdc).unwrap().owned = Some((hbitmap, 0x3800));
+
+        assert!(gdi32::lock().release_dc(&mut ctx.memory, hdc));
+        assert!(!gdi32::lock().release_dc(&mut ctx.memory, hdc));
+        assert!(gdi32::lock().dcs.get(hdc).is_none());
+        assert!(gdi32::lock().objects.get(hbitmap).is_none());
+    }
+
+    #[test]
+    fn release_dc_keeps_window_backed_pixels() {
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3000);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        let hbitmap = gdi32::lock().dcs.get(hdc).unwrap().bitmap.0;
+
+        // A DC without an owned buffer leaves its bitmap object alone —
+        // window-backed DCs share pixels owned by the window.
+        assert!(gdi32::lock().release_dc(&mut ctx.memory, hdc));
+        assert!(gdi32::lock().objects.get(hbitmap).is_some());
     }
 
     #[test]

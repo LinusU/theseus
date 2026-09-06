@@ -801,7 +801,7 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
         )
         .is_none()
     {
-        gdi32::lock().release_dc(hdc);
+        gdi32::lock().release_dc(&mut ctx.memory, hdc);
         return HDC::null();
     }
     if let Some(window) = state().window.borrow().as_ref() {
@@ -826,7 +826,7 @@ pub fn EndPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> boo
         return false;
     }
     if let Some(hdc) = window.paint_dc.take() {
-        gdi32::lock().release_dc(hdc);
+        gdi32::lock().release_dc(&mut ctx.memory, hdc);
     }
     window.dirty = false;
     window.flush(ctx);
@@ -845,7 +845,15 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
             return HDC::null();
         };
         let bitmap = gdi32::Bitmap::new_simple(640, 480, pixels);
-        return gdi32::lock().new_memory_dc(bitmap);
+        let mut lock = gdi32::lock();
+        let hdc = lock.new_memory_dc(bitmap);
+        // The scratch buffer and its internal bitmap belong to this DC;
+        // release frees them so a get/release loop cannot exhaust the heap.
+        if let Some(dc) = lock.dcs.get_mut(hdc) {
+            let hbitmap = dc.bitmap.0;
+            dc.owned = Some((hbitmap, pixels));
+        }
+        return hdc;
     }
 
     let state = state();
@@ -879,7 +887,7 @@ pub fn ReleaseDC(ctx: &mut Context, hWnd: HWND, hDC: HDC) -> i32 {
         }
     }
     // The return value reports whether the DC was actually released.
-    i32::from(gdi32::lock().release_dc(hDC))
+    i32::from(gdi32::lock().release_dc(&mut ctx.memory, hDC))
 }
 
 #[win32_derive::dllexport]

@@ -1499,7 +1499,7 @@ pub mod IDirectDrawSurface7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let mut surface = surface.borrow_mut();
-        gdi32::lock().release_dc(hDC);
+        gdi32::lock().release_dc(&mut ctx.memory, hDC);
         if let Some(scratch) = scratch {
             // GetDC gave the game a 32-bit scratch buffer; convert it back to
             // the surface's depth now.
