@@ -103,7 +103,9 @@ pub fn FileTimeToLocalFileTime(
     lpFileTime: crate::Ptr<u64>,
     lpLocalFileTime: crate::Ptr<u64>,
 ) -> bool {
-    let time = lpFileTime.read(&ctx.memory).unwrap_or(0);
+    let Some(time) = lpFileTime.read(&ctx.memory) else {
+        return false;
+    };
     lpLocalFileTime.write(&mut ctx.memory, time).is_some()
 }
 
@@ -127,7 +129,7 @@ pub fn FileTimeToSystemTime(
 
 #[cfg(test)]
 mod tests {
-    use super::{FileTimeToSystemTime, SYSTEMTIME};
+    use super::{FileTimeToLocalFileTime, FileTimeToSystemTime, SYSTEMTIME};
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -182,6 +184,40 @@ mod tests {
             &mut ctx,
             Ptr::new(0xffff_ff00),
             Ptr::new(0x2000)
+        ));
+    }
+
+    #[test]
+    fn filetime_to_local_file_time_copies_and_rejects_bad_pointers() {
+        let mut ctx = context();
+        ctx.memory.write::<u64>(0x1000, 125_911_584_000_000_000);
+
+        assert!(FileTimeToLocalFileTime(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x2000)
+        ));
+        assert_eq!(ctx.memory.read::<u64>(0x2000), 125_911_584_000_000_000);
+
+        // Identity model: local == UTC, so zero stays zero.
+        ctx.memory.write::<u64>(0x1000, 0);
+        assert!(FileTimeToLocalFileTime(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0x2000)
+        ));
+        assert_eq!(ctx.memory.read::<u64>(0x2000), 0);
+
+        // Bad input or output pointers fail without writing.
+        assert!(!FileTimeToLocalFileTime(
+            &mut ctx,
+            Ptr::new(0xffff_ff00),
+            Ptr::new(0x2000)
+        ));
+        assert!(!FileTimeToLocalFileTime(
+            &mut ctx,
+            Ptr::new(0x1000),
+            Ptr::new(0xffff_ff00)
         ));
     }
 }
