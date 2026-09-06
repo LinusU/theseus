@@ -182,7 +182,8 @@ pub fn mciSendCommandA(
         const MCI_STATUS_ITEM: u32 = 0x100;
         const MCI_STATUS_MODE: u32 = 4;
         const MCI_MODE_STOP: u32 = 527;
-        if dwParam2 < 0x1000 {
+        // The parameter block is 16 bytes (dwCallback, dwReturn, dwItem, dwTrack).
+        if !crate::ddraw::guest_range(ctx, dwParam2, 16) {
             return 0;
         }
         // dwItem sits past dwCallback and dwReturn; a device that plays
