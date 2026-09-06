@@ -28,11 +28,12 @@ impl PE {
 }
 
 pub fn has_pe_signature(buf: &[u8]) -> bool {
-    buf[..4] == *b"PE\0\0"
+    buf.get(..4) == Some(b"PE\0\0".as_slice())
 }
 
 fn pe_header(buf: &[u8]) -> anyhow::Result<(IMAGE_NT_HEADERS32, &[u8])> {
-    let (header, buf) = <IMAGE_NT_HEADERS32>::read_from_prefix(buf).unwrap();
+    let (header, buf) = <IMAGE_NT_HEADERS32>::read_from_prefix(buf)
+        .map_err(|_| anyhow!("buffer too short for PE header"))?;
     if header.Signature != *b"PE\0\0" {
         bail!(
             "invalid PE signature; wanted 'PE\\0\\0', got {:x?}",
@@ -53,11 +54,14 @@ fn pe_data_directory<'a>(
     header: &IMAGE_NT_HEADERS32,
     buf: &'a [u8],
 ) -> anyhow::Result<(Box<[IMAGE_DATA_DIRECTORY]>, &'a [u8])> {
-    let data_directory =
-        iter_pod_n::<IMAGE_DATA_DIRECTORY>(buf, 0, header.OptionalHeader.NumberOfRvaAndSizes)
-            .collect();
-    let buf = &buf[(std::mem::size_of::<IMAGE_DATA_DIRECTORY>()
-        * header.OptionalHeader.NumberOfRvaAndSizes as usize)..];
+    let count = header.OptionalHeader.NumberOfRvaAndSizes as usize;
+    let byte_len = std::mem::size_of::<IMAGE_DATA_DIRECTORY>()
+        .checked_mul(count)
+        .ok_or_else(|| anyhow!("data directory count overflows"))?;
+    let data_directory = iter_pod_n::<IMAGE_DATA_DIRECTORY>(buf, 0, count as u32).collect();
+    let buf = buf
+        .get(byte_len..)
+        .ok_or_else(|| anyhow!("buffer too short for data directory"))?;
     Ok((data_directory, buf))
 }
 
@@ -65,11 +69,14 @@ fn pe_sections<'a>(
     header: &IMAGE_NT_HEADERS32,
     buf: &'a [u8],
 ) -> anyhow::Result<(Box<[IMAGE_SECTION_HEADER]>, &'a [u8])> {
-    let sections =
-        iter_pod_n::<IMAGE_SECTION_HEADER>(buf, 0, header.FileHeader.NumberOfSections as u32)
-            .collect();
-    let buf = &buf[(std::mem::size_of::<IMAGE_SECTION_HEADER>()
-        * header.FileHeader.NumberOfSections as usize)..];
+    let count = header.FileHeader.NumberOfSections as usize;
+    let byte_len = std::mem::size_of::<IMAGE_SECTION_HEADER>()
+        .checked_mul(count)
+        .ok_or_else(|| anyhow!("section count overflows"))?;
+    let sections = iter_pod_n::<IMAGE_SECTION_HEADER>(buf, 0, count as u32).collect();
+    let buf = buf
+        .get(byte_len..)
+        .ok_or_else(|| anyhow!("buffer too short for section headers"))?;
     Ok((sections, buf))
 }
 

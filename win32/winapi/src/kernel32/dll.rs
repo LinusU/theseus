@@ -11,7 +11,7 @@ fn parse_pe(buf: &[u8]) -> Option<exe::PE> {
     if buf.starts_with(b"MZ") {
         let dos = exe::DOS::parse(buf).ok()?;
         let offset = dos.header.e_lfanew as usize;
-        return exe::PE::parse(&buf[offset..]).ok();
+        return exe::PE::parse(buf.get(offset..)?).ok();
     }
     exe::PE::parse(buf).ok()
 }
@@ -212,9 +212,18 @@ pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
         log::warn!("LoadLibrary({filename}): could not allocate .rsrc mapping");
         return 0;
     };
-    let rsrc_addr = image_base + rsrc_rva;
-    ctx.memory[rsrc_addr..rsrc_addr + copy_len_u32]
-        .copy_from_slice(&rsrc_data[..copy_len_u32 as usize]);
+    let Some(rsrc_addr) = image_base.checked_add(rsrc_rva) else {
+        log::warn!("LoadLibrary({filename}): .rsrc address overflows");
+        return 0;
+    };
+    let Some(dst) = rsrc_addr
+        .checked_add(copy_len_u32)
+        .and_then(|end| ctx.memory.bytes.get_mut(rsrc_addr as usize..end as usize))
+    else {
+        log::warn!("LoadLibrary({filename}): .rsrc data out of memory bounds");
+        return 0;
+    };
+    dst.copy_from_slice(&rsrc_data[..copy_len_u32 as usize]);
 
     state.dlls.register_module(&filename);
     let hmodule = state.dlls.module_handle(&filename).unwrap();

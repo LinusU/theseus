@@ -18,7 +18,9 @@ pub struct DOS {
 
 impl DOS {
     pub fn parse(buf: &[u8]) -> anyhow::Result<DOS> {
-        let header = <IMAGE_DOS_HEADER>::read_from_prefix(buf).unwrap().0;
+        let header = <IMAGE_DOS_HEADER>::read_from_prefix(buf)
+            .map_err(|_| anyhow::anyhow!("buffer too short for DOS header"))?
+            .0;
         if header.e_magic != *b"MZ" {
             bail!(
                 "invalid DOS signature; wanted 'MZ', got {:?}",

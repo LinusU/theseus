@@ -15,7 +15,7 @@ use std::ops::Range;
 use widestring::U16Str;
 use zerocopy::FromBytes;
 
-use crate::iter::iter_pod_n;
+use crate::iter::iter_pod;
 
 #[repr(C)]
 #[derive(Debug, zerocopy::FromBytes)]
@@ -30,10 +30,14 @@ struct IMAGE_RESOURCE_DIRECTORY {
 
 impl IMAGE_RESOURCE_DIRECTORY {
     fn entries(mem: &[u8]) -> impl Iterator<Item = IMAGE_RESOURCE_DIRECTORY_ENTRY> + '_ {
-        let (header, body) = <IMAGE_RESOURCE_DIRECTORY>::read_from_prefix(mem).unwrap();
-        let count = (header.NumberOfIdEntries + header.NumberOfNamedEntries) as u32;
+        // A truncated or malformed directory yields no entries instead of a
+        // panic: resource lookups run on host files loaded at runtime.
+        let Ok((header, body)) = <IMAGE_RESOURCE_DIRECTORY>::read_from_prefix(mem) else {
+            return iter_pod::<IMAGE_RESOURCE_DIRECTORY_ENTRY>(&[]).take(0);
+        };
         // Entries are in memory immediately after the directory.
-        iter_pod_n::<IMAGE_RESOURCE_DIRECTORY_ENTRY>(body, 0, count)
+        let count = header.NumberOfIdEntries as usize + header.NumberOfNamedEntries as usize;
+        iter_pod(body).take(count)
     }
 }
 
@@ -64,9 +68,8 @@ impl<'a> PartialEq for ResourceName<'a> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Name(name), Self::Name(name_other)) => name
-                .to_string()
-                .unwrap()
-                .eq_ignore_ascii_case(&name_other.to_string().unwrap()),
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&name_other.to_string_lossy()),
             (Self::Id(id), Self::Id(id_other)) => id == id_other,
             _ => false,
         }
@@ -79,32 +82,30 @@ enum ResourceValue<'a> {
 }
 
 impl IMAGE_RESOURCE_DIRECTORY_ENTRY {
-    fn name<'a>(&self, section: &'a [u8]) -> ResourceName<'a> {
+    fn name<'a>(&self, section: &'a [u8]) -> Option<ResourceName<'a>> {
         let is_id = self.Name >> 31 == 0;
         let val = self.Name & 0x7FFF_FFFF;
         if is_id {
-            ResourceName::Id(val)
+            Some(ResourceName::Id(val))
         } else {
-            let buf = &section[val as usize..];
-            let (len, buf) = <u16>::read_from_prefix(buf).unwrap();
-            let buf = <[u16]>::ref_from_bytes(&buf[..len as usize * 2]).unwrap();
+            let buf = section.get(val as usize..)?;
+            let (len, buf) = <u16>::read_from_prefix(buf).ok()?;
+            let buf = <[u16]>::ref_from_bytes(buf.get(..len as usize * 2)?).ok()?;
             let name = U16Str::from_slice(buf);
-            ResourceName::Name(name)
+            Some(ResourceName::Name(name))
         }
     }
 
-    fn value<'a>(&self, section: &'a [u8]) -> ResourceValue<'a> {
+    fn value<'a>(&self, section: &'a [u8]) -> Option<ResourceValue<'a>> {
         let is_directory = self.OffsetToData >> 31 == 1;
         let offset = self.OffsetToData & 0x7FFF_FFFF;
-        let data = &section[offset as usize..];
+        let data = section.get(offset as usize..)?;
         if is_directory {
-            ResourceValue::Dir(data)
+            Some(ResourceValue::Dir(data))
         } else {
-            ResourceValue::Data(
-                <IMAGE_RESOURCE_DATA_ENTRY>::read_from_prefix(data)
-                    .unwrap()
-                    .0,
-            )
+            Some(ResourceValue::Data(
+                <IMAGE_RESOURCE_DATA_ENTRY>::read_from_prefix(data).ok()?.0,
+            ))
         }
     }
 }
@@ -129,25 +130,25 @@ pub fn find_resource(
     // are always exactly three levels with known semantics.
     let mut dir = IMAGE_RESOURCE_DIRECTORY::entries(section);
 
-    let etype = dir.find(|entry| entry.name(section) == query_type)?;
-    let mut dir = match etype.value(section) {
-        ResourceValue::Dir(dir) => IMAGE_RESOURCE_DIRECTORY::entries(dir),
-        _ => todo!(),
+    let etype = dir.find(|entry| entry.name(section).is_some_and(|n| n == query_type))?;
+    let ResourceValue::Dir(dir) = etype.value(section)? else {
+        // A leaf where the tree expects a directory: malformed section.
+        return None;
     };
+    let mut dir = IMAGE_RESOURCE_DIRECTORY::entries(dir);
 
-    let eid = dir.find(|entry| entry.name(section) == query_id)?;
-    let mut dir = match eid.value(section) {
-        ResourceValue::Dir(dir) => IMAGE_RESOURCE_DIRECTORY::entries(dir),
-        _ => todo!(),
+    let eid = dir.find(|entry| entry.name(section).is_some_and(|n| n == query_id))?;
+    let ResourceValue::Dir(dir) = eid.value(section)? else {
+        return None;
     };
+    let mut dir = IMAGE_RESOURCE_DIRECTORY::entries(dir);
 
     let first = dir.next()?;
     if dir.next().is_some() {
         log::warn!("multiple res entries, picking first");
     }
-    let data = match first.value(section) {
-        ResourceValue::Data(data) => data,
-        _ => todo!(),
+    let ResourceValue::Data(data) = first.value(section)? else {
+        return None;
     };
-    Some(data.OffsetToData..(data.OffsetToData + data.Size))
+    Some(data.OffsetToData..data.OffsetToData.checked_add(data.Size)?)
 }

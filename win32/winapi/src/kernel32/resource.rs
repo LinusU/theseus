@@ -31,9 +31,16 @@ impl State {
             let module = self.loaded_modules.get(&hModule)?;
             (module.image_base, module.resources.clone())
         };
-        let section = &ctx.memory[resources];
+        let section = ctx
+            .memory
+            .bytes
+            .get(resources.start as usize..resources.end as usize)?;
         let span = exe::find_resource(section, typ, name)?;
-        Some(&ctx.memory[image_base + span.start..image_base + span.end])
+        // The span comes from the resource table; a malformed image can
+        // declare data outside itself or outside emulated memory.
+        let start = image_base.checked_add(span.start)? as usize;
+        let end = image_base.checked_add(span.end)? as usize;
+        ctx.memory.bytes.get(start..end)
     }
 }
 

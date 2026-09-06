@@ -10,7 +10,7 @@ impl<'m, T: zerocopy::FromBytes> std::iter::Iterator for PodIterator<'m, T> {
         if self.buf.len() < size_of::<T>() {
             return None;
         }
-        let (obj, buf) = <T>::read_from_prefix(self.buf).unwrap();
+        let (obj, buf) = <T>::read_from_prefix(self.buf).ok()?;
         self.buf = buf;
         Some(obj)
     }
@@ -23,10 +23,17 @@ pub fn iter_pod<'a, T: zerocopy::FromBytes>(memory: &'a [u8]) -> PodIterator<'a,
     }
 }
 
+/// Iterate `count` items starting at `addr`. A range that falls outside the
+/// buffer yields an empty iterator rather than panicking: callers parse
+/// possibly-truncated host files at load time.
 pub fn iter_pod_n<'a, T: zerocopy::FromBytes>(
     memory: &'a [u8],
     addr: u32,
     count: u32,
 ) -> PodIterator<'a, T> {
-    iter_pod(&memory[addr as usize..][..(count as usize * size_of::<T>())])
+    let buf = (count as usize)
+        .checked_mul(size_of::<T>())
+        .and_then(|len| (addr as usize).checked_add(len))
+        .and_then(|end| memory.get(addr as usize..end));
+    iter_pod(buf.unwrap_or(&[]))
 }
