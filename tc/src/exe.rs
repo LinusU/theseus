@@ -104,14 +104,19 @@ fn read_imports(pe_file: &exe::PE, mem: &Memory) -> Vec<Import> {
     };
     let image_base = pe_file.opt_header.ImageBase;
     let image = mem.slice_all(image_base);
-    for imp in exe::read_imports(dir.as_slice(image).unwrap()) {
+    let Some(dir) = dir.as_slice(image) else {
+        return imports;
+    };
+    for imp in exe::read_imports(dir) {
         let name = std::str::from_utf8(imp.image_name(image))
-            .unwrap()
+            .unwrap_or("<invalid>")
             .to_lowercase();
         let name = name.trim_end_matches(".dll");
         for (addr, entry) in imp.iat_iter(image) {
             let func = match entry.as_import_symbol(image) {
-                exe::ImportSymbol::Name(name) => std::str::from_utf8(name).unwrap().to_string(),
+                exe::ImportSymbol::Name(name) => {
+                    std::str::from_utf8(name).unwrap_or("<invalid>").to_string()
+                }
                 exe::ImportSymbol::Ordinal(n) => format!("ordinal{n}"),
             };
             let data = is_data(name, &func);
@@ -125,4 +130,41 @@ fn read_imports(pe_file: &exe::PE, mem: &Memory) -> Vec<Import> {
         }
     }
     imports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use exe::pe::{IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY};
+    use zerocopy::FromBytes;
+
+    #[test]
+    fn read_imports_tolerates_out_of_range_directory() {
+        let mut mem = Memory::default();
+        mem.reserve("image".into(), 0x400000, 0x1000);
+
+        let mut data_directory: Box<[IMAGE_DATA_DIRECTORY]> =
+            (0..16).map(|_| IMAGE_DATA_DIRECTORY::default()).collect();
+        data_directory[IMAGE_DIRECTORY_ENTRY::IMPORT as usize] = IMAGE_DATA_DIRECTORY {
+            VirtualAddress: 0x10000,
+            Size: 0x100,
+        };
+
+        let header = <exe::pe::IMAGE_FILE_HEADER>::read_from_prefix(&[0u8; 20])
+            .unwrap()
+            .0;
+        let mut opt_header = <exe::pe::IMAGE_OPTIONAL_HEADER32>::read_from_prefix(&[0u8; 224])
+            .unwrap()
+            .0;
+        opt_header.ImageBase = 0x400000;
+
+        let pe = exe::PE {
+            header,
+            opt_header,
+            data_directory,
+            sections: vec![].into_boxed_slice(),
+        };
+
+        assert!(read_imports(&pe, &mem).is_empty());
+    }
 }

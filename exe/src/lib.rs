@@ -132,4 +132,37 @@ mod tests {
             ));
         }
     }
+
+    #[test]
+    fn data_directory_slice_rejects_overflow_and_out_of_range() {
+        use crate::file::IMAGE_DATA_DIRECTORY;
+
+        // A zero-size directory with an out-of-range start must not produce a slice.
+        let dir = IMAGE_DATA_DIRECTORY {
+            VirtualAddress: 100,
+            Size: 0,
+        };
+        assert!(dir.as_slice(&[0; 64]).is_none());
+
+        // VirtualAddress + Size must not wrap around and create a tiny "valid" slice.
+        let dir = IMAGE_DATA_DIRECTORY {
+            VirtualAddress: 1,
+            Size: u32::MAX,
+        };
+        assert!(dir.as_slice(&[0; 64]).is_none());
+
+        // A plain out-of-range range is rejected.
+        let dir = IMAGE_DATA_DIRECTORY {
+            VirtualAddress: 0x10,
+            Size: 0x100,
+        };
+        assert!(dir.as_slice(&[0; 32]).is_none());
+
+        // A fully in-range directory returns its slice.
+        let dir = IMAGE_DATA_DIRECTORY {
+            VirtualAddress: 0,
+            Size: 32,
+        };
+        assert_eq!(dir.as_slice(&[0; 64]).unwrap().len(), 32);
+    }
 }

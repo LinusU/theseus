@@ -145,10 +145,8 @@ impl IMAGE_DATA_DIRECTORY {
     }
 
     pub fn as_slice<'m>(&self, image: &'m [u8]) -> Option<&'m [u8]> {
-        if self.VirtualAddress + self.Size > image.len() as u32 {
-            return None;
-        }
-        Some(&image[self.VirtualAddress as usize..][..self.Size as usize])
+        let end = self.VirtualAddress.checked_add(self.Size)?;
+        image.get(self.VirtualAddress as usize..end as usize)
     }
 }
 
