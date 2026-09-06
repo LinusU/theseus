@@ -1287,6 +1287,9 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if !crate::ddraw::guest_range(ctx, lphDC, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let mut surface = surface.borrow_mut();
         let (width, height, bpp) = (surface.width, surface.height, surface.bytes_per_pixel);
         let bitmap = if bpp == 4 {
