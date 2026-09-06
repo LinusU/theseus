@@ -501,7 +501,28 @@ impl MainThread {
                 height as i32,
                 sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY,
             );
+            if window.is_null() {
+                log::warn!(
+                    "SDL_CreateWindow({width}x{height}) failed ({}); continuing headless",
+                    sdl_error()
+                );
+                return Window {
+                    window: std::ptr::null_mut(),
+                    renderer: std::ptr::null_mut(),
+                };
+            }
             let renderer = sdl::render::SDL_CreateRenderer(window, std::ptr::null());
+            if renderer.is_null() {
+                log::warn!(
+                    "SDL_CreateRenderer failed ({}); destroying window and continuing headless",
+                    sdl_error()
+                );
+                sdl::video::SDL_DestroyWindow(window);
+                return Window {
+                    window: std::ptr::null_mut(),
+                    renderer: std::ptr::null_mut(),
+                };
+            }
             check(sdl::render::SDL_RenderClear(renderer));
             check(sdl::render::SDL_SetDefaultTextureScaleMode(
                 renderer,
