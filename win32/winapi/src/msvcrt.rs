@@ -118,11 +118,37 @@ const MCW_DN: u32 = 0x0300_0000;
 /// The abstract denormal-control field (bits 24-25); x87 has no equivalent.
 static DENORMAL: AtomicU32 = AtomicU32::new(0);
 
+/// The abstract _EM_* exception bits are a permutation of the x87
+/// control-word mask bits, not a verbatim copy:
+///   abstract: INEXACT=0 UNDERFLOW=1 OVERFLOW=2 ZERODIVIDE=3 INVALID=4
+///             DENORMAL=19
+///   x87:      IM=0 DM=1 ZM=2 OM=3 UM=4 PM=5
+fn em_to_abstract(x87: u32) -> u32 {
+    (x87 & 0x20) >> 5 // PM -> _EM_INEXACT
+        | (x87 & 0x10) >> 3 // UM -> _EM_UNDERFLOW
+        | (x87 & 0x08) >> 1 // OM -> _EM_OVERFLOW
+        | (x87 & 0x04) << 1 // ZM -> _EM_ZERODIVIDE
+        | (x87 & 0x01) << 4 // IM -> _EM_INVALID
+        | (x87 & 0x02) << 18 // DM -> _EM_DENORMAL
+}
+
+/// The inverse of `em_to_abstract`: which x87 mask bits an abstract
+/// _EM_* mask/value selects.
+fn em_to_x87(em: u32) -> u16 {
+    ((em & 0x01) << 5 // _EM_INEXACT -> PM
+        | (em & 0x02) << 3 // _EM_UNDERFLOW -> UM
+        | (em & 0x04) << 1 // _EM_OVERFLOW -> OM
+        | (em & 0x08) >> 1 // _EM_ZERODIVIDE -> ZM
+        | (em & 0x10) >> 4 // _EM_INVALID -> IM
+        | (em & 0x0008_0000) >> 18) as u16 // _EM_DENORMAL -> DM
+}
+
 /// Translate the x87 control word into the abstract _controlfp value.
 fn abstract_control(control: u16) -> u32 {
     let control = control as u32;
-    // The six low bits carry the exception masks verbatim.
-    let mut value = control & 0x3f;
+    // The six low x87 bits are the exception masks, permuted into the
+    // abstract _EM_* layout.
+    let mut value = em_to_abstract(control & 0x3f);
     // Rounding control: same 2-bit encoding, moved from bits 10-11 to 8-9.
     value |= ((control >> 10) & 0b11) << 8;
     // Precision control: x87 {00=24, 10=53, 11=64} to abstract {0,1,2}.
@@ -141,8 +167,8 @@ fn abstract_control(control: u16) -> u32 {
 fn apply_control(control: u16, value: u32, mask: u32) -> u16 {
     let mut control = control;
     if mask & MCW_EM != 0 {
-        let m = (mask & 0x3f) as u16;
-        control = (control & !m) | ((value as u16) & m);
+        let m = em_to_x87(mask & MCW_EM);
+        control = (control & !m) | (em_to_x87(value) & m);
     }
     if mask & MCW_RC != 0 {
         control = (control & !(0b11 << 10)) | (((value >> 8) & 0b11) as u16) << 10;
@@ -235,5 +261,55 @@ pub fn rand(_ctx: &mut Context) -> u32 {
 pub fn srand(_ctx: &mut Context, seed: u32) {
     unsafe {
         RAND_STATE = seed;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x1000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn controlfp_permutates_exception_masks() {
+        let mut ctx = context();
+        // Masking only _EM_ZERODIVIDE (abstract bit 3) sets only x87 ZM
+        // (bit 2) — the abstract and x87 bit layouts differ.
+        _controlfp(&mut ctx, 0x08, MCW_EM);
+        assert_eq!(ctx.cpu.fpu.control & 0x3f, 0x04);
+        // Reading the word back reports the same abstract bits.
+        assert_eq!(_controlfp(&mut ctx, 0, 0) & MCW_EM, 0x08);
+        // Unmasking everything clears all six x87 mask bits.
+        _controlfp(&mut ctx, 0, MCW_EM);
+        assert_eq!(ctx.cpu.fpu.control & 0x3f, 0);
+        // Masking everything sets all six, including _EM_DENORMAL at
+        // abstract bit 19 -> x87 DM (bit 1).
+        _controlfp(&mut ctx, MCW_EM, MCW_EM);
+        assert_eq!(ctx.cpu.fpu.control & 0x3f, 0x3f);
+        assert_eq!(_controlfp(&mut ctx, 0, 0) & MCW_EM, MCW_EM);
+    }
+
+    #[test]
+    fn controlfp_maps_rounding_and_precision_fields() {
+        let mut ctx = context();
+        // _RC_DOWN (abstract 0x100) selects x87 round-down (bits 10-11 = 01).
+        _controlfp(&mut ctx, 0x100, MCW_RC);
+        assert_eq!((ctx.cpu.fpu.control >> 10) & 3, 1);
+        assert_eq!(_controlfp(&mut ctx, 0, 0) & MCW_RC, 0x100);
+        // _PC_53 (abstract 0x10000) selects x87 precision control 10.
+        _controlfp(&mut ctx, 0x1_0000, MCW_PC);
+        assert_eq!((ctx.cpu.fpu.control >> 8) & 3, 0b10);
+        assert_eq!(_controlfp(&mut ctx, 0, 0) & MCW_PC, 0x1_0000);
     }
 }
