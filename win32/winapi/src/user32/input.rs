@@ -545,6 +545,9 @@ pub fn GetAsyncKeyState(_ctx: &mut Context, vKey: u32) -> i16 {
 
 #[win32_derive::dllexport]
 pub fn GetKeyboardState(ctx: &mut Context, lpKeyState: u32) -> bool {
+    if !crate::ddraw::guest_range(ctx, lpKeyState, 256) {
+        return false;
+    }
     let input = state().input.borrow();
     for vkey in 0..256u32 {
         ctx.memory[lpKeyState + vkey] = input.key_state(vkey as u8);

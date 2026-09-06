@@ -490,10 +490,10 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn GetCapabilities(ctx: &mut Context, this: u32, lpCaps: u32) -> u32 {
-        if lpCaps == 0 {
+        let Some(size) = crate::Ptr::<u32>::new(lpCaps).read(&ctx.memory) else {
             return DIERR_INVALIDPARAM;
-        }
-        let size = ctx.memory.read::<u32>(lpCaps) as usize;
+        };
+        let size = size as usize;
         if !(DIDEVCAPS_MIN_SIZE..=DIDEVCAPS_SIZE).contains(&size)
             || lpCaps as usize + size > ctx.memory.bytes.len()
         {
@@ -553,8 +553,10 @@ pub mod IDirectInputDevice {
                 .input
                 .borrow()
                 .buffer_size(kind == DeviceKind::Keyboard);
-            ctx.memory
-                .write::<u32>(pdiph + DIPROPDWORD_DWDATA, size as u32);
+            let Some(field) = pdiph.checked_add(DIPROPDWORD_DWDATA) else {
+                return DIERR_INVALIDPARAM;
+            };
+            let _ = crate::Ptr::<u32>::new(field).write(&mut ctx.memory, size as u32);
             return DI_OK;
         }
         let state = lock();
@@ -564,7 +566,10 @@ pub mod IDirectInputDevice {
         let Some(stored) = device.properties.get(&rguidProp) else {
             return DIERR_INVALIDPARAM;
         };
-        let size = ctx.memory.read::<u32>(pdiph) as usize;
+        let Some(size) = crate::Ptr::<u32>::new(pdiph).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let size = size as usize;
         let len = stored.len().min(size);
         if len == 0 || pdiph as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
@@ -580,7 +585,12 @@ pub mod IDirectInputDevice {
         }
         if rguidProp == DIPROP_BUFFERSIZE {
             let (kind, _) = device(this);
-            let size = ctx.memory.read::<u32>(pdiph + DIPROPDWORD_DWDATA);
+            let Some(field) = pdiph.checked_add(DIPROPDWORD_DWDATA) else {
+                return DIERR_INVALIDPARAM;
+            };
+            let Some(size) = crate::Ptr::<u32>::new(field).read(&ctx.memory) else {
+                return DIERR_INVALIDPARAM;
+            };
             user32::state()
                 .input
                 .borrow_mut()
@@ -600,7 +610,10 @@ pub mod IDirectInputDevice {
             log::warn!("dinput SetProperty: unhandled property {rguidProp:#x}");
             return DI_OK;
         }
-        let size = ctx.memory.read::<u32>(pdiph) as usize;
+        let Some(size) = crate::Ptr::<u32>::new(pdiph).read(&ctx.memory) else {
+            return DIERR_INVALIDPARAM;
+        };
+        let size = size as usize;
         if size == 0 || pdiph as usize + size > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
@@ -711,7 +724,10 @@ pub mod IDirectInputDevice {
         let capacity = if rgdod == 0 {
             usize::MAX
         } else {
-            ctx.memory.read::<u32>(pdwInOut) as usize
+            let Some(capacity) = crate::Ptr::<u32>::new(pdwInOut).read(&ctx.memory) else {
+                return DIERR_INVALIDPARAM;
+            };
+            capacity as usize
         };
         let peek = dwFlags & DIGDD_PEEK != 0;
         let (events, overflowed) = if kind == DeviceKind::Joystick {
@@ -729,10 +745,17 @@ pub mod IDirectInputDevice {
         if rgdod != 0 {
             for (i, event) in events.iter().enumerate() {
                 // The stride comes from the caller rather than from the struct,
-                // in case it passes the larger DirectInput 8 version.
-                let addr = rgdod + i as u32 * cbObjectData;
-                ctx.memory.write(
-                    addr,
+                // in case it passes the larger DirectInput 8 version. An entry
+                // address that does not fit is skipped rather than panicking.
+                let Some(addr) = (i as u64)
+                    .checked_mul(cbObjectData as u64)
+                    .and_then(|ofs| (rgdod as u64).checked_add(ofs))
+                    .and_then(|addr| u32::try_from(addr).ok())
+                else {
+                    continue;
+                };
+                let _ = crate::Ptr::new(addr).write(
+                    &mut ctx.memory,
                     DIDEVICEOBJECTDATA {
                         dwOfs: event.ofs,
                         dwData: event.data,
@@ -742,7 +765,7 @@ pub mod IDirectInputDevice {
                 );
             }
         }
-        ctx.memory.write::<u32>(pdwInOut, events.len() as u32);
+        let _ = crate::Ptr::<u32>::new(pdwInOut).write(&mut ctx.memory, events.len() as u32);
 
         if overflowed { DI_BUFFEROVERFLOW } else { DI_OK }
     }
@@ -777,10 +800,10 @@ pub mod IDirectInputDevice {
 
     #[win32_derive::dllexport]
     pub fn GetDeviceInfo(ctx: &mut Context, this: u32, pdidi: u32) -> u32 {
-        if pdidi == 0 {
+        let Some(size) = crate::Ptr::<u32>::new(pdidi).read(&ctx.memory) else {
             return DIERR_INVALIDPARAM;
-        }
-        let size = ctx.memory.read::<u32>(pdidi) as usize;
+        };
+        let size = size as usize;
         if !(DIDEVICEINSTANCE_MIN_SIZE..=DIDEVICEINSTANCE_SIZE).contains(&size)
             || pdidi as usize + size > ctx.memory.bytes.len()
         {

@@ -111,7 +111,9 @@ fn write_port_caps(ctx: &mut Context, caps: u32) -> u32 {
     if caps == 0 {
         return E_POINTER;
     }
-    let size = ctx.memory.read::<u32>(caps);
+    let Some(size) = crate::Ptr::<u32>::new(caps).read(&ctx.memory) else {
+        return E_INVALIDARG;
+    };
     if size < PORTCAPS_FIXED || caps as usize + size as usize > ctx.memory.bytes.len() {
         return E_INVALIDARG;
     }

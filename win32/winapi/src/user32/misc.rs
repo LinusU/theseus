@@ -382,7 +382,9 @@ pub fn SetTimer(
 
 /// Read a NUL-terminated byte string without the UTF-8 check.
 fn read_bytes0(ctx: &Context, addr: u32) -> Vec<u8> {
-    let buf = &ctx.memory[addr..];
+    let Some(buf) = ctx.memory.bytes.get(addr as usize..) else {
+        return Vec::new();
+    };
     let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     buf[..nul].to_vec()
 }

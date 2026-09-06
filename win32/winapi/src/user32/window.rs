@@ -847,7 +847,7 @@ pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCoun
     let title = window.title.as_bytes();
     let copy = (nMaxCount as usize - 1).min(title.len());
     let end = lpString.addr as usize + copy + 1;
-    if end > ctx.memory.bytes.len() {
+    if lpString.addr < 0x1000 || end > ctx.memory.bytes.len() {
         return 0;
     }
     ctx.memory[lpString.addr..][..copy].copy_from_slice(&title[..copy]);
