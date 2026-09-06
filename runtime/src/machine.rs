@@ -104,7 +104,8 @@ impl Context {
     pub fn indirect(&self, addr: u32) -> Cont {
         if addr == 0 {
             self.dump();
-            panic!("jmp to null ptr");
+            log::error!("jmp to null ptr");
+            return Cont(crate::halt);
         }
         if let Some(func) = self.cache.get(addr) {
             return Cont(func);
@@ -113,10 +114,11 @@ impl Context {
         let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
             self.dump();
             crate::log_missing_addr(addr);
-            panic!(
+            log::error!(
                 "jmp to unknown addr {addr:#010x}; \
                  re-run tc with --entry-points-file (see THESEUS_MISSING_ADDRS)"
             );
+            return Cont(crate::halt);
         };
         let func = self.blocks[index].1;
         self.cache.insert(addr, func);

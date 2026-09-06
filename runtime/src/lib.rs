@@ -108,6 +108,12 @@ pub type ContFn = fn(&mut Context) -> Cont;
 #[derive(Clone, Copy)]
 pub struct Cont(pub ContFn);
 
+/// A continuation that terminates the process, used instead of panicking when
+/// the guest reaches a state the emulator cannot recover from.
+pub fn halt(_: &mut Context) -> Cont {
+    std::process::exit(1)
+}
+
 /// When making a call from host to to x86 code, we need a valid return address
 /// that is associated with a real function so that the final 'ret' from the
 /// called function succeeds, but we never invoke it.
@@ -134,10 +140,11 @@ pub fn log_missing_addr(addr: u32) {
 /// analysis didn't produce a block for.
 pub fn unknown_block(addr: u32) -> Cont {
     log_missing_addr(addr);
-    panic!(
+    log::error!(
         "jmp to unknown block {addr:#010x}; \
          re-run tc with --entry-points-file (see THESEUS_MISSING_ADDRS)"
     );
+    Cont(halt)
 }
 
 impl Context {
