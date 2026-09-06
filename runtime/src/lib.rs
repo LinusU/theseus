@@ -70,7 +70,8 @@ pub fn port_out(port: u16, data: u32, width: u32) {
 }
 
 pub fn unhandled_interrupt(vector: u8, ip: u32) -> ! {
-    panic!("unhandled x86 interrupt {vector:#x} at {ip:#x}");
+    log::error!("unhandled x86 interrupt {vector:#x} at {ip:#x}");
+    std::process::exit(1)
 }
 
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
