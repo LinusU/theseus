@@ -29,12 +29,14 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
         // write to stdout
         0x09 => {
             let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_dx());
-            let buf = &ctx.memory.bytes[addr as usize..];
-            let end = buf.iter().position(|&c| c == b'$').unwrap();
+            // An out-of-range pointer or a missing '$' terminator prints
+            // what is readable instead of panicking the host.
+            let buf = ctx.memory.bytes.get(addr as usize..).unwrap_or(&[]);
+            let end = buf.iter().position(|&c| c == b'$').unwrap_or(buf.len());
             let buf = &buf[..end];
             //trace!("write_stdout", buf);
             use std::io::Write;
-            std::io::stdout().lock().write_all(buf).unwrap();
+            let _ = std::io::stdout().lock().write_all(buf);
             ctx.cpu.regs.set_al(b'$');
         }
         // write to interrupt table
@@ -99,7 +101,11 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             let handle = ctx.cpu.regs.get_bx();
             trace!("handle_delete", handle);
             let mut state = state();
-            let _ = &mut state.files[handle as usize];
+            if state.files.get_mut(handle as usize).is_none() {
+                ctx.cpu.regs.set_ax(6); // invalid handle
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            }
             log::warn!("TODO: close file");
             ctx.cpu.regs.set_al(1); // docs say AX is clobbered, match dosbox for now
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
@@ -110,11 +116,18 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             let handle = ctx.cpu.regs.get_bx();
             let len = ctx.cpu.regs.get_cx();
             let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_dx());
-            let buf = &ctx.memory[addr..][..len as usize];
             trace!("handle_write", handle, len, addr);
+            let Some(buf) = (addr as usize)
+                .checked_add(len as usize)
+                .and_then(|end| ctx.memory.bytes.get(addr as usize..end))
+            else {
+                ctx.cpu.regs.set_ax(5); // access denied
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
             match handle {
-                1 => std::io::stdout().lock().write_all(buf).unwrap(),
-                2 => std::io::stderr().lock().write_all(buf).unwrap(),
+                1 => drop(std::io::stdout().lock().write_all(buf)),
+                2 => drop(std::io::stderr().lock().write_all(buf)),
                 _ => log::error!("TODO: dos write to file {handle} {buf:?}"),
             }
             ctx.cpu.regs.set_ax(len); // bytes written
@@ -129,12 +142,20 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("handle_seek", handle, origin, offset);
 
             let mut state = state();
-            let file = &mut state.files[handle as usize];
+            let Some(file) = state.files.get_mut(handle as usize) else {
+                ctx.cpu.regs.set_ax(6); // invalid handle
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
             let offset = match origin {
                 0 => offset,
                 1 => file.ofs as i32 + offset,
                 2 => file.buf.len() as i32 + offset,
-                _ => panic!(),
+                _ => {
+                    ctx.cpu.regs.set_ax(1); // invalid function
+                    ctx.cpu.flags.insert(runtime::Flags::CF);
+                    return None;
+                }
             } as u32;
 
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
@@ -178,7 +199,11 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("memory_resize", seg, size);
 
             let state = state();
-            assert_eq!(seg, state.psp_segment);
+            if seg != state.psp_segment {
+                ctx.cpu.regs.set_ax(9); // invalid memory block address
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            }
             let mcb = state.program_mcb(&mut ctx.memory);
             mcb.size.set(size);
 
@@ -206,12 +231,28 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                     let relo = ctx.memory.read::<u16>(params_addr + 2);
 
                     let Some(buf) = state().read_file(cmd) else {
-                        panic!()
+                        ctx.cpu.regs.set_ax(2); // file not found
+                        ctx.cpu.flags.insert(runtime::Flags::CF);
+                        return None;
                     };
-                    let header = exe::DOS::parse(&buf).unwrap();
+                    let Ok(header) = exe::DOS::parse(&buf) else {
+                        ctx.cpu.regs.set_ax(11); // invalid format
+                        ctx.cpu.flags.insert(runtime::Flags::CF);
+                        return None;
+                    };
                     let load_addr = segofs(seg, 0);
                     let data = &buf[header.image_offset()..];
                     log::info!("load {cmd:?} load_addr={seg:x}:0 size={:x}", buf.len());
+                    let Some(end) = (load_addr as usize).checked_add(data.len()) else {
+                        ctx.cpu.regs.set_ax(8); // insufficient memory
+                        ctx.cpu.flags.insert(runtime::Flags::CF);
+                        return None;
+                    };
+                    if end > ctx.memory.bytes.len() {
+                        ctx.cpu.regs.set_ax(8); // insufficient memory
+                        ctx.cpu.flags.insert(runtime::Flags::CF);
+                        return None;
+                    }
                     ctx.memory[load_addr..][..data.len()].copy_from_slice(data);
                     log::info!("TODO: relocations {relo:x}");
 
@@ -220,7 +261,11 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                     ctx.cpu.regs.set_ax(0);
                     ctx.cpu.regs.set_dx(0);
                 }
-                _ => panic!("int21 4b invalid func"),
+                _ => {
+                    ctx.cpu.regs.set_ax(1); // invalid function
+                    ctx.cpu.flags.insert(runtime::Flags::CF);
+                    return None;
+                }
             }
         }
         // error exit

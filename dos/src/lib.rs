@@ -240,8 +240,11 @@ fn int10(ctx: &mut Context) {
     match func {
         0x0 => {
             let mode = ctx.cpu.regs.get_al();
-            assert_eq!(mode, 0x13);
-            state().vga = Some(VGA::new());
+            if mode == 0x13 {
+                state().vga = Some(VGA::new());
+            } else {
+                log::error!("TODO: int 10h video mode {mode:x}");
+            }
         }
         _ => log::error!("TODO: int 10h (video) call {func:02x}"),
     }
@@ -301,7 +304,13 @@ pub fn out(ctx: &mut Context, port: u16, data: u8) {
     match port {
         0x20 => { /* end of interrupt, ignore */ }
         0x40..=0x43 => state().pit.out(ctx, port, data),
-        0x3C0..=0x3DF => state().vga.as_mut().unwrap().io_out(port, data),
+        0x3C0..=0x3DF => {
+            // The VGA device only exists after a video mode is set;
+            // earlier port writes are dropped rather than panicking.
+            if let Some(vga) = state().vga.as_mut() {
+                vga.io_out(port, data)
+            }
+        }
         _ => log::error!("TODO: out({:#x}, {:#x})", port, data),
     }
 }
