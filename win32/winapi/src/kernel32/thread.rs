@@ -25,7 +25,7 @@ static CRITICAL_SECTIONS: LazyLock<Mutex<HashMap<u32, Arc<CriticalSection>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn critical_section(addr: u32) -> Arc<CriticalSection> {
-    let mut sections = CRITICAL_SECTIONS.lock().unwrap();
+    let mut sections = CRITICAL_SECTIONS.lock().unwrap_or_else(|e| e.into_inner());
     sections
         .entry(addr)
         .or_insert_with(|| {
@@ -297,7 +297,7 @@ pub fn InitializeCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>)
 pub fn DeleteCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
     CRITICAL_SECTIONS
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .remove(&lpCriticalSection.addr);
 }
 
@@ -305,7 +305,7 @@ pub fn DeleteCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
 pub fn EnterCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
     let section = critical_section(lpCriticalSection.addr);
     let current = std::thread::current().id();
-    let mut state = section.state.lock().unwrap();
+    let mut state = section.state.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         match state.owner {
             None => {
@@ -331,14 +331,14 @@ pub fn EnterCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
 pub fn LeaveCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
     let Some(section) = CRITICAL_SECTIONS
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .get(&lpCriticalSection.addr)
         .cloned()
     else {
         return;
     };
     let current = std::thread::current().id();
-    let mut state = section.state.lock().unwrap();
+    let mut state = section.state.lock().unwrap_or_else(|e| e.into_inner());
     if state.owner != Some(current) {
         return;
     }

@@ -12,13 +12,15 @@ pub struct LockedState<S: 'static> {
 
 impl<S> LockedState<S> {
     pub fn from(lock: &'static Mutex<Option<S>>) -> Self {
-        let mut lock = lock.lock().unwrap();
+        // A panic while holding the lock poisons it; recover the guard so one
+        // bad translated call does not poison every later state access.
+        let mut lock = lock.lock().unwrap_or_else(|e| e.into_inner());
         let ptr = NonNull::from_mut(lock.as_mut().unwrap());
         Self { _lock: lock, ptr }
     }
 
     pub fn from_or_init(lock: &'static Mutex<Option<S>>, init: impl FnOnce() -> S) -> Self {
-        let mut lock = lock.lock().unwrap();
+        let mut lock = lock.lock().unwrap_or_else(|e| e.into_inner());
         let v = match lock.as_mut() {
             Some(value) => value,
             None => lock.get_or_insert_with(init),

@@ -62,7 +62,7 @@ static STATE: Mutex<State> = Mutex::new(State {
 pub(crate) static TIMER_COND: Condvar = Condvar::new();
 
 pub fn state() -> MutexGuard<'static, State> {
-    STATE.lock().unwrap()
+    STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn winmm_main(ctx: &mut Context) {

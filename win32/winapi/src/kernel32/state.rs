@@ -72,7 +72,7 @@ fn build_state(image_base: u32, resources: std::ops::Range<u32>) -> State {
 }
 
 pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
-    *STATE.lock().unwrap() = Some(build_state(image_base, resources));
+    *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(build_state(image_base, resources));
 }
 
 /// Initialize the shared state only when it is still empty, so parallel tests

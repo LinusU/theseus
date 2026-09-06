@@ -35,7 +35,7 @@ static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(|| {
 });
 
 fn registry() -> std::sync::MutexGuard<'static, Registry> {
-    REGISTRY.lock().unwrap()
+    REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The normalized path a handle opens beneath: predefined roots keep their

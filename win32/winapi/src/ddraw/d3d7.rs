@@ -2227,14 +2227,18 @@ static WARNED_TEXTURE_STAGE_STATES: LazyLock<Mutex<HashSet<(u32, u32)>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn warn_unhandled_render_state(dw_state: u32, dw_value: u32) {
-    let mut warned = WARNED_RENDER_STATES.lock().unwrap();
+    let mut warned = WARNED_RENDER_STATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if warned.insert(dw_state) {
         log::warn!("unhandled D3DRENDERSTATE({dw_state}) = {dw_value}");
     }
 }
 
 fn warn_unhandled_texture_stage_state(dw_stage: u32, dw_state: u32, dw_value: u32) {
-    let mut warned = WARNED_TEXTURE_STAGE_STATES.lock().unwrap();
+    let mut warned = WARNED_TEXTURE_STAGE_STATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if warned.insert((dw_stage, dw_state)) {
         log::warn!("unhandled D3DTSS stage={dw_stage} state={dw_state} = {dw_value}");
     }

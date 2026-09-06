@@ -238,7 +238,7 @@ fn lock() -> Lock {
 }
 
 fn init() {
-    let mut state = STATE.lock().unwrap();
+    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if state.is_none() {
         *state = Some(State {
             buffers: HashMap::default(),
