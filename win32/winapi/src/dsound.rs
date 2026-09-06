@@ -882,24 +882,29 @@ pub mod IDirectSoundBuffer {
             return DSERR_INVALIDPARAM;
         };
 
-        let (offset, len) = if dwFlags.contains(DSBLOCK::ENTIREBUFFER) {
-            (0, buffer.size)
+        let (offset, len, len2) = if dwFlags.contains(DSBLOCK::ENTIREBUFFER) {
+            (0, buffer.size, 0)
         } else {
-            let offset = dwOffset.min(buffer.size);
-            (offset, dwBytes.min(buffer.size - offset))
+            if buffer.size == 0 || dwOffset >= buffer.size || dwBytes > buffer.size {
+                return DSERR_INVALIDPARAM;
+            }
+            // A region that crosses the end of the buffer wraps around to the
+            // start, split across the two pointer pairs.
+            let len = dwBytes.min(buffer.size - dwOffset);
+            (dwOffset, len, dwBytes - len)
         };
         // Some callers rely on getting null back for an empty region.
         let addr = if len == 0 { 0 } else { buffer.addr + offset };
+        let addr2 = if len2 == 0 { 0 } else { buffer.addr };
         drop(state);
 
         if !guest_write(ctx, ppvAudioPtr1, addr) || !guest_write(ctx, pdwAudioBytes1, len) {
             return DSERR_INVALIDPARAM;
         }
-        // We never split a locked region, so the second one is always empty.
-        if ppvAudioPtr2 != 0 && !guest_write(ctx, ppvAudioPtr2, 0u32) {
+        if ppvAudioPtr2 != 0 && !guest_write(ctx, ppvAudioPtr2, addr2) {
             return DSERR_INVALIDPARAM;
         }
-        if pdwAudioBytes2 != 0 && !guest_write(ctx, pdwAudioBytes2, 0u32) {
+        if pdwAudioBytes2 != 0 && !guest_write(ctx, pdwAudioBytes2, len2) {
             return DSERR_INVALIDPARAM;
         }
         DS_OK
@@ -1198,5 +1203,111 @@ impl WavWrite {
         use std::io::Write;
         // A failed debug dump is dropped data, not a fatal error.
         let _ = self.f.write_all(data);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Buffer, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, IDirectSoundBuffer, WaveFormat, init,
+        lock,
+    };
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x10000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    fn insert_buffer(handle: u32, addr: u32, size: u32) {
+        init();
+        lock().buffers.insert(
+            handle,
+            Buffer {
+                refs: 1,
+                addr,
+                size,
+                format: WaveFormat {
+                    channels: 1,
+                    bits: 8,
+                    rate: 22050,
+                },
+                primary: false,
+                caps_flags: DSBCAPS_FLAGS::default(),
+                playing: false,
+                looping: false,
+                cursor: 0.0,
+                volume: 0,
+                pan: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn lock_wraps_a_region_past_the_buffer_end() {
+        let mut ctx = context();
+        insert_buffer(0xabcd, 0x8000, 0x100);
+
+        // Lock 0x30 bytes at offset 0xe0 in a 0x100-byte buffer: 0x20 up to
+        // the end and 0x10 wrapped around to the start.
+        let result = IDirectSoundBuffer::Lock(
+            &mut ctx,
+            0xabcd,
+            0xe0,
+            0x30,
+            0x4000,
+            0x4004,
+            0x4008,
+            0x400c,
+            DSBLOCK::default(),
+        );
+        assert_eq!(result, 0); // DS_OK
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0x80e0);
+        assert_eq!(ctx.memory.read::<u32>(0x4004), 0x20);
+        assert_eq!(ctx.memory.read::<u32>(0x4008), 0x8000);
+        assert_eq!(ctx.memory.read::<u32>(0x400c), 0x10);
+
+        lock().buffers.remove(&0xabcd);
+    }
+
+    #[test]
+    fn lock_rejects_an_out_of_range_region() {
+        let mut ctx = context();
+        insert_buffer(0xabc1, 0x8000, 0x100);
+
+        // Offset past the end and a request larger than the buffer both fail.
+        let result = IDirectSoundBuffer::Lock(
+            &mut ctx,
+            0xabc1,
+            0x200,
+            0x10,
+            0x4000,
+            0x4004,
+            0x4008,
+            0x400c,
+            DSBLOCK::default(),
+        );
+        assert_eq!(result, DSERR_INVALIDPARAM);
+        let result = IDirectSoundBuffer::Lock(
+            &mut ctx,
+            0xabc1,
+            0x10,
+            0x200,
+            0x4000,
+            0x4004,
+            0x4008,
+            0x400c,
+            DSBLOCK::default(),
+        );
+        assert_eq!(result, DSERR_INVALIDPARAM);
+
+        lock().buffers.remove(&0xabc1);
     }
 }
