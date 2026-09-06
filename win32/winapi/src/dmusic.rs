@@ -176,7 +176,9 @@ macro_rules! stub_out {
             let return_addr = ctx.memory.read::<u32>(esp);
             let out = ctx.memory.read::<u32>(esp + ($k + 1) * 4);
             if out != 0 {
-                ctx.memory.write::<u64>(out, 0);
+                // An out-of-range out-pointer loses the zero rather than
+                // panicking the host.
+                let _ = crate::Ptr::<u64>::new(out).write(&mut ctx.memory, 0);
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
             ctx.cpu.regs.eax = $ret;
@@ -191,7 +193,7 @@ macro_rules! stub_out {
             let return_addr = ctx.memory.read::<u32>(esp);
             let out = ctx.memory.read::<u32>(esp + ($k + 1) * 4);
             if out != 0 {
-                ctx.memory.write::<u32>(out, 0);
+                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
             ctx.cpu.regs.eax = $ret;
@@ -241,6 +243,42 @@ fn iid_matches(iid: &GUID, known: &[GUID]) -> bool {
     iid == &IID_IUnknown || iid == &IID_NullUnknown || known.contains(iid)
 }
 
+/// Shared CoCreateInstance body for the stub objects: check `riid` against
+/// `iids`, build a bare object on `get_vtable`'s vtable, and hand it back
+/// through `ppv`.
+fn create(
+    ctx: &mut Context,
+    riid: u32,
+    ppv: u32,
+    iids: &[GUID],
+    get_vtable: fn(&mut Context) -> u32,
+) -> u32 {
+    if ppv == 0 {
+        return E_POINTER;
+    }
+    let ppv = crate::Ptr::<u32>::new(ppv);
+    let iid = match read_guid(ctx, riid) {
+        Some(iid) => iid,
+        None => {
+            let _ = ppv.write(&mut ctx.memory, 0);
+            return E_NOINTERFACE;
+        }
+    };
+    if !iid_matches(&iid, iids) {
+        let _ = ppv.write(&mut ctx.memory, 0);
+        return E_NOINTERFACE;
+    }
+    let vtable = get_vtable(ctx);
+    let Some(obj) = new_object(ctx, vtable) else {
+        let _ = ppv.write(&mut ctx.memory, 0);
+        return E_OUTOFMEMORY;
+    };
+    if ppv.write(&mut ctx.memory, obj).is_none() {
+        return E_POINTER;
+    }
+    S_OK
+}
+
 /// Shared QueryInterface for the stub objects (this, riid, ppv).
 macro_rules! query_interface {
     ($name:ident, $iids:expr) => {
@@ -250,17 +288,19 @@ macro_rules! query_interface {
             let return_addr = ctx.memory.read::<u32>(esp);
             let this = ctx.memory.read::<u32>(esp + 4);
             let riid = ctx.memory.read::<u32>(esp + 8);
-            let ppv = ctx.memory.read::<u32>(esp + 12);
+            let ppv = crate::Ptr::<u32>::new(ctx.memory.read::<u32>(esp + 12));
             let mut ret = S_OK;
-            if ppv == 0 {
+            if ppv.addr == 0 {
                 ret = E_POINTER;
             } else {
                 match read_guid(ctx, riid) {
                     Some(iid) if iid_matches(&iid, $iids) => {
-                        ctx.memory.write::<u32>(ppv, this);
+                        if ppv.write(&mut ctx.memory, this).is_none() {
+                            ret = E_POINTER;
+                        }
                     }
                     _ => {
-                        ctx.memory.write::<u32>(ppv, 0);
+                        let _ = ppv.write(&mut ctx.memory, 0);
                         ret = E_NOINTERFACE;
                     }
                 }
@@ -293,7 +333,14 @@ pub mod performance {
         if pp_direct_music != 0 {
             let vtable = super::directmusic::get_vtable(ctx);
             match new_object(ctx, vtable) {
-                Some(dmusic) => ctx.memory.write::<u32>(pp_direct_music, dmusic),
+                Some(dmusic) => {
+                    if crate::Ptr::<u32>::new(pp_direct_music)
+                        .write(&mut ctx.memory, dmusic)
+                        .is_none()
+                    {
+                        ret = E_POINTER;
+                    }
+                }
                 None => ret = E_OUTOFMEMORY,
             }
         }
@@ -309,7 +356,7 @@ pub mod performance {
         let return_addr = ctx.memory.read::<u32>(esp);
         let pp_segment_state = ctx.memory.read::<u32>(esp + 24);
         if pp_segment_state != 0 {
-            ctx.memory.write::<u32>(pp_segment_state, 0);
+            let _ = crate::Ptr::<u32>::new(pp_segment_state).write(&mut ctx.memory, 0);
         }
         ctx.cpu.regs.eax = S_OK;
         ctx.cpu.regs.esp += 7 * 4;
@@ -336,10 +383,10 @@ pub mod performance {
         let prt_now = ctx.memory.read::<u32>(esp + 8);
         let pmt_now = ctx.memory.read::<u32>(esp + 12);
         if prt_now != 0 {
-            ctx.memory.write::<u64>(prt_now, 0);
+            let _ = crate::Ptr::<u64>::new(prt_now).write(&mut ctx.memory, 0);
         }
         if pmt_now != 0 {
-            ctx.memory.write::<u32>(pmt_now, 0);
+            let _ = crate::Ptr::<u32>::new(pmt_now).write(&mut ctx.memory, 0);
         }
         ctx.cpu.regs.eax = S_OK;
         ctx.cpu.regs.esp += 4 * 4;
@@ -367,7 +414,7 @@ pub mod performance {
         for k in 2..=4 {
             let out = ctx.memory.read::<u32>(esp + (k + 1) * 4);
             if out != 0 {
-                ctx.memory.write::<u32>(out, 0);
+                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
         }
         ctx.cpu.regs.eax = S_OK;
@@ -464,30 +511,13 @@ pub mod performance {
     );
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
-        if ppv == 0 {
-            return E_POINTER;
-        }
-        let iid = match read_guid(ctx, riid) {
-            Some(iid) => iid,
-            None => {
-                ctx.memory.write::<u32>(ppv, 0);
-                return E_NOINTERFACE;
-            }
-        };
-        if !iid_matches(
-            &iid,
+        super::create(
+            ctx,
+            riid,
+            ppv,
             &[IID_IDirectMusicPerformance, IID_IDirectMusicPerformance2],
-        ) {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_NOINTERFACE;
-        }
-        let vtable = get_vtable(ctx);
-        let Some(obj) = new_object(ctx, vtable) else {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_OUTOFMEMORY;
-        };
-        ctx.memory.write::<u32>(ppv, obj);
-        S_OK
+            get_vtable,
+        )
     }
 }
 
@@ -533,7 +563,14 @@ pub mod directmusic {
         } else {
             let vtable = super::port::get_vtable(ctx);
             match new_object(ctx, vtable) {
-                Some(port) => ctx.memory.write::<u32>(pp_port, port),
+                Some(port) => {
+                    if crate::Ptr::<u32>::new(pp_port)
+                        .write(&mut ctx.memory, port)
+                        .is_none()
+                    {
+                        ret = E_POINTER;
+                    }
+                }
                 None => ret = E_OUTOFMEMORY,
             }
         }
@@ -554,11 +591,13 @@ pub mod directmusic {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
         let out = ctx.memory.read::<u32>(esp + 8);
-        let ret = if out == 0 || out as usize + 16 > ctx.memory.bytes.len() {
+        let ret = if out == 0 {
             E_POINTER
         } else {
-            ctx.memory.write::<GUID>(out, GUID_PortSynth);
-            S_OK
+            match crate::Ptr::<GUID>::new(out).write(&mut ctx.memory, GUID_PortSynth) {
+                Some(()) => S_OK,
+                None => E_POINTER,
+            }
         };
         log::debug!("dmusic GetDefaultPort = {ret:#x} (ret={return_addr:#x})");
         ctx.cpu.regs.eax = ret;
@@ -706,27 +745,7 @@ pub mod loader {
     );
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
-        if ppv == 0 {
-            return E_POINTER;
-        }
-        let iid = match read_guid(ctx, riid) {
-            Some(iid) => iid,
-            None => {
-                ctx.memory.write::<u32>(ppv, 0);
-                return E_NOINTERFACE;
-            }
-        };
-        if !iid_matches(&iid, &[IID_IDirectMusicLoader]) {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_NOINTERFACE;
-        }
-        let vtable = get_vtable(ctx);
-        let Some(obj) = new_object(ctx, vtable) else {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_OUTOFMEMORY;
-        };
-        ctx.memory.write::<u32>(ppv, obj);
-        S_OK
+        super::create(ctx, riid, ppv, &[IID_IDirectMusicLoader], get_vtable)
     }
 }
 
@@ -753,7 +772,7 @@ pub mod composer {
         for k in 6..=8 {
             let out = ctx.memory.read::<u32>(esp + (k + 1) * 4);
             if out != 0 {
-                ctx.memory.write::<u32>(out, 0);
+                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
             }
         }
         log::debug!("dmusic AutoTransition (ret={return_addr:#x})");
@@ -783,26 +802,6 @@ pub mod composer {
     );
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
-        if ppv == 0 {
-            return E_POINTER;
-        }
-        let iid = match read_guid(ctx, riid) {
-            Some(iid) => iid,
-            None => {
-                ctx.memory.write::<u32>(ppv, 0);
-                return E_NOINTERFACE;
-            }
-        };
-        if !iid_matches(&iid, &[IID_IDirectMusicComposer]) {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_NOINTERFACE;
-        }
-        let vtable = get_vtable(ctx);
-        let Some(obj) = new_object(ctx, vtable) else {
-            ctx.memory.write::<u32>(ppv, 0);
-            return E_OUTOFMEMORY;
-        };
-        ctx.memory.write::<u32>(ppv, obj);
-        S_OK
+        super::create(ctx, riid, ppv, &[IID_IDirectMusicComposer], get_vtable)
     }
 }
