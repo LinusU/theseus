@@ -139,7 +139,14 @@ pub fn GetModuleFileNameA(
     if !crate::ddraw::guest_range(ctx, lpFilename.addr, copy as u32 + 1) {
         return 0;
     }
-    ctx.memory[lpFilename.addr..][..copy].copy_from_slice(&name.as_bytes()[..copy]);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpFilename.addr as usize..)
+        .and_then(|b| b.get_mut(..copy))
+    {
+        dst.copy_from_slice(&name.as_bytes()[..copy]);
+    }
     ctx.memory.write::<u8>(lpFilename.addr + copy as u32, 0);
     copy as u32
 }
