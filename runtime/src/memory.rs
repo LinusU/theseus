@@ -10,6 +10,9 @@ pub struct Memory<'a> {
     /// When true, panic on access to low memory.
     /// TODO: full memory mapping access controls etc.
     pub null_page: bool,
+    /// Defensive sink for out-of-bounds `[]` indexing so guests do not
+    /// panic the host.
+    dummy: [u8; 1],
 }
 
 /// A trait for types that can be read from memory with .read().
@@ -25,6 +28,7 @@ impl<'a> Memory<'a> {
         Memory {
             bytes,
             null_page: true,
+            dummy: [0],
         }
     }
 
@@ -34,6 +38,7 @@ impl<'a> Memory<'a> {
                 std::slice::from_raw_parts_mut(self.bytes.as_mut_ptr(), self.bytes.len())
             },
             null_page: self.null_page,
+            dummy: [0],
         }
     }
 
@@ -180,7 +185,16 @@ impl<'a> std::ops::Index<u32> for Memory<'a> {
     #[track_caller]
     fn index(&self, addr: u32) -> &Self::Output {
         self.check_access(addr);
-        &self.bytes[addr as usize]
+        let start = addr as usize;
+        if let Some(byte) = self.bytes.get(start) {
+            byte
+        } else {
+            log::error!(
+                "out-of-bounds byte read at {addr:#x} (caller {})",
+                std::panic::Location::caller()
+            );
+            &self.dummy[0]
+        }
     }
 }
 
@@ -188,7 +202,16 @@ impl<'a> std::ops::IndexMut<u32> for Memory<'a> {
     #[track_caller]
     fn index_mut(&mut self, addr: u32) -> &mut Self::Output {
         self.check_access(addr);
-        &mut self.bytes[addr as usize]
+        let start = addr as usize;
+        if self.bytes.get(start).is_some() {
+            &mut self.bytes[start]
+        } else {
+            log::error!(
+                "out-of-bounds byte write at {addr:#x} (caller {})",
+                std::panic::Location::caller()
+            );
+            &mut self.dummy[0]
+        }
     }
 }
 
@@ -198,7 +221,9 @@ impl<'a> std::ops::Index<std::ops::RangeFrom<u32>> for Memory<'a> {
     #[track_caller]
     fn index(&self, index: std::ops::RangeFrom<u32>) -> &Self::Output {
         self.check_access(index.start);
-        &self.bytes[index.start as usize..]
+        self.bytes
+            .get(index.start as usize..)
+            .unwrap_or(&self.dummy[..0])
     }
 }
 
@@ -206,7 +231,11 @@ impl<'a> std::ops::IndexMut<std::ops::RangeFrom<u32>> for Memory<'a> {
     #[track_caller]
     fn index_mut(&mut self, index: std::ops::RangeFrom<u32>) -> &mut Self::Output {
         self.check_access(index.start);
-        &mut self.bytes[index.start as usize..]
+        if let Some(slice) = self.bytes.get_mut(index.start as usize..) {
+            slice
+        } else {
+            &mut self.dummy[..0]
+        }
     }
 }
 
@@ -216,7 +245,9 @@ impl<'a> std::ops::Index<std::ops::Range<u32>> for Memory<'a> {
     #[track_caller]
     fn index(&self, index: std::ops::Range<u32>) -> &Self::Output {
         self.check_access(index.start);
-        &self.bytes[index.start as usize..index.end as usize]
+        self.bytes
+            .get(index.start as usize..index.end as usize)
+            .unwrap_or(&self.dummy[..0])
     }
 }
 
@@ -224,7 +255,11 @@ impl<'a> std::ops::IndexMut<std::ops::Range<u32>> for Memory<'a> {
     #[track_caller]
     fn index_mut(&mut self, index: std::ops::Range<u32>) -> &mut Self::Output {
         self.check_access(index.start);
-        &mut self.bytes[index.start as usize..index.end as usize]
+        if let Some(slice) = self.bytes.get_mut(index.start as usize..index.end as usize) {
+            slice
+        } else {
+            &mut self.dummy[..0]
+        }
     }
 }
 
@@ -252,5 +287,27 @@ mod tests {
         let memory = Memory::leak_new(0x2000);
         memory.bytes[0x1000..0x1005].copy_from_slice(b"caf\xe9\0");
         assert_eq!(memory.read_str(0x1000), "");
+    }
+
+    #[test]
+    fn index_does_not_panic_on_out_of_bounds() {
+        let mut memory = Memory::leak_new(0x100);
+
+        // Single-byte out-of-bounds reads return 0 and writes hit the dummy sink.
+        assert_eq!(memory[0x1000], 0);
+        memory[0x1000] = 0xab;
+        assert_eq!(memory[0x1000], 0xab);
+
+        // Range and RangeFrom out-of-bounds produce empty slices.
+        assert_eq!(memory[0x1000..0x1001].len(), 0);
+        assert_eq!(memory[0x1000..].len(), 0);
+        memory[0x1000..0x1001].fill(0xcd);
+        memory[0x1000..].fill(0xcd);
+
+        // In-bound access still works and is not touched by the out-of-bounds writes.
+        memory[0x10] = 0x42;
+        assert_eq!(memory[0x10], 0x42);
+        memory[0x10..0x12].copy_from_slice(&[0x12, 0x34]);
+        assert_eq!(&memory[0x10..0x12], &[0x12, 0x34]);
     }
 }
