@@ -290,12 +290,12 @@ impl FPU {
             }
             let mut ival = abs as u64;
             bytes = [0u8; 10];
-            for i in 0..9 {
+            for byte in bytes[..9].iter_mut() {
                 let low = (ival % 10) as u8;
                 ival /= 10;
                 let high = (ival % 10) as u8;
                 ival /= 10;
-                bytes[i] = (high << 4) | low;
+                *byte = (high << 4) | low;
             }
             bytes[9] = if sign { 0x80 } else { 0x00 };
         }

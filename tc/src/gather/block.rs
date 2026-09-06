@@ -123,21 +123,11 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
     /// Check an instruction for validity, bailing if it is not.
     /// This can happen when decoding randomly invalid data.
     fn check_instr(&self, instr: &iced_x86::Instruction) -> anyhow::Result<()> {
-        match instr.mnemonic() {
-            iced_x86::Mnemonic::In
-            | iced_x86::Mnemonic::Out
-            | iced_x86::Mnemonic::Insb
-            | iced_x86::Mnemonic::Insw
-            | iced_x86::Mnemonic::Insd
-            | iced_x86::Mnemonic::Outsb
-            | iced_x86::Mnemonic::Outsw
-            | iced_x86::Mnemonic::Outsd
-                if !self.traverse.module.is_dos() =>
-            {
-                anyhow::bail!("port I/O instruction in non-DOS code");
-            }
-            iced_x86::Mnemonic::INVALID => anyhow::bail!("invalid instruction"),
-            _ => {}
+        // Port I/O is decoded everywhere: DOS code drives real devices and
+        // Windows code lowers to the explicit port_in/port_out model, so
+        // only true decode garbage is a reason to drop a discovered block.
+        if instr.mnemonic() == iced_x86::Mnemonic::INVALID {
+            anyhow::bail!("invalid instruction");
         }
         Ok(())
     }
