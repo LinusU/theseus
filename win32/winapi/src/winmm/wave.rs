@@ -35,7 +35,7 @@ fn guest_read<T: zerocopy::FromBytes>(ctx: &Context, addr: u32) -> Option<T> {
     if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
         return None;
     }
-    <T>::read_from_prefix(&ctx.memory.bytes[addr as usize..])
+    <T>::read_from_prefix(ctx.memory.bytes.get(addr as usize..)?)
         .ok()
         .map(|(value, _)| value)
 }
@@ -48,7 +48,7 @@ where
     if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
         return None;
     }
-    <T>::mut_from_prefix(&mut ctx.memory.bytes[addr as usize..])
+    <T>::mut_from_prefix(ctx.memory.bytes.get_mut(addr as usize..)?)
         .ok()
         .map(|(value, _)| value)
 }
@@ -235,13 +235,18 @@ fn thread_proc(
                     let (data, len) = (header.lpData as usize, header.dwBufferLength as usize);
                     let Some(end) = data
                         .checked_add(len)
-                        .filter(|&end| end <= ctx.memory.bytes.len())
+                        .filter(|&end| data >= 0x1000 && end <= ctx.memory.bytes.len())
                     else {
                         log::error!("waveOut: WAVEHDR buffer {data:#x}+{len:#x} out of range");
                         pending.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     };
-                    stream.put_data(&ctx.memory.bytes[data..end]);
+                    let Some(buf) = ctx.memory.bytes.get(data..end) else {
+                        log::error!("waveOut: WAVEHDR buffer {data:#x}+{len:#x} out of range");
+                        pending.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    };
+                    stream.put_data(buf);
                     total_pending += header.dwBufferLength;
                     queued_blocks.push_back(QueuedBlock {
                         addr,

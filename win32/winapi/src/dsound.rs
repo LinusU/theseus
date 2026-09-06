@@ -64,7 +64,7 @@ fn guest_read<T: FromBytes>(ctx: &Context, addr: u32) -> Option<T> {
     if !usable_range(ctx, addr, std::mem::size_of::<T>() as u32) {
         return None;
     }
-    <T>::read_from_prefix(&ctx.memory.bytes[addr as usize..])
+    <T>::read_from_prefix(ctx.memory.bytes.get(addr as usize..)?)
         .ok()
         .map(|(value, _)| value)
 }
