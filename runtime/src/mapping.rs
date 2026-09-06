@@ -32,7 +32,9 @@ pub struct Mappings {
 }
 
 pub fn round_to_page(size: u32) -> u32 {
-    (size + 0x1000 - 1) & !(0x1000 - 1)
+    // A size that cannot be rounded up saturates past every caller's limit
+    // instead of wrapping to a small bogus reservation.
+    size.saturating_add(0x1000 - 1) & !(0x1000 - 1)
 }
 
 impl Mappings {
@@ -247,6 +249,25 @@ mod tests {
             mappings.try_alloc("tail".into(), 0x7000, 0x12000),
             Some(0xa000)
         );
+    }
+
+    #[test]
+    fn round_to_page_saturates_past_u32_max() {
+        assert_eq!(round_to_page(0x1), 0x1000);
+        assert_eq!(round_to_page(0x1000), 0x1000);
+        assert_eq!(round_to_page(0x1001), 0x2000);
+        assert_eq!(round_to_page(0xffff_f000), 0xffff_f000);
+        // Sizes that cannot round up saturate high enough to fail every
+        // caller's limit check instead of wrapping to a small reservation.
+        assert_eq!(round_to_page(0xffff_f001), 0xffff_f000);
+        assert_eq!(round_to_page(u32::MAX), 0xffff_f000);
+    }
+
+    #[test]
+    fn try_alloc_rejects_sizes_past_the_address_space() {
+        let mut mappings = Mappings::from(vec![mapping(0x0, 0x1000)]);
+        assert_eq!(mappings.try_alloc("huge".into(), u32::MAX, 0x10000), None);
+        assert_eq!(mappings.vec().len(), 1);
     }
 
     #[test]
