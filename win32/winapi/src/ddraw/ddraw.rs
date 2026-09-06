@@ -276,6 +276,20 @@ impl ColorKey {
     }
 }
 
+/// Expand 8bpp indexed pixels to ABGR8888 through `entries`. A palette can
+/// legally have fewer than 256 entries (DDPCAPS_4BIT etc.); out-of-range
+/// indices fall back to black rather than panicking the host.
+fn expand_palettized(pixels: &[u8], entries: &[PALETTEENTRY], buf: &mut Vec<u8>) {
+    for &p in pixels {
+        let entry = entries.get(p as usize);
+        // ABGR8888 layout: R,G,B,A in byte order.
+        buf.push(entry.map_or(0, |e| e.peRed));
+        buf.push(entry.map_or(0, |e| e.peGreen));
+        buf.push(entry.map_or(0, |e| e.peBlue));
+        buf.push(0);
+    }
+}
+
 pub struct Surface {
     pub addr: u32,
     /// COM reference count. An app that balances AddRef/Release expects the
@@ -390,14 +404,7 @@ impl Surface {
                 let palette = palette.as_ref()?;
                 let entries = &palette.borrow().entries;
                 let mut buf = Vec::with_capacity(pixels.len() * 4);
-                for &p in pixels {
-                    let entry = &entries[p as usize];
-                    // ABGR8888 layout: R,G,B,A in byte order.
-                    buf.push(entry.peRed);
-                    buf.push(entry.peGreen);
-                    buf.push(entry.peBlue);
-                    buf.push(0);
-                }
+                expand_palettized(pixels, entries, &mut buf);
                 buf.into()
             }
             2 => {
@@ -1090,4 +1097,37 @@ pub fn DirectDrawCreateClipper(
 #[win32_derive::dllexport]
 pub fn GetDXVB(_ctx: &mut Context) -> u32 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PALETTEENTRY, expand_palettized};
+
+    fn entry(r: u8, g: u8, b: u8) -> PALETTEENTRY {
+        PALETTEENTRY {
+            peRed: r,
+            peGreen: g,
+            peBlue: b,
+            peFlags: 0,
+        }
+    }
+
+    #[test]
+    fn palettized_expansion_falls_back_beyond_the_palette() {
+        // A 2-entry palette (DDPCAPS_1BIT) indexing pixel values 0..=255:
+        // indices past the table read black instead of panicking.
+        let entries = vec![entry(10, 20, 30), entry(40, 50, 60)];
+        let pixels = [0u8, 1, 2, 255];
+        let mut buf = Vec::new();
+        expand_palettized(&pixels, &entries, &mut buf);
+        assert_eq!(
+            buf,
+            vec![
+                10, 20, 30, 0, // index 0
+                40, 50, 60, 0, // index 1
+                0, 0, 0, 0, // index 2: out of range -> black
+                0, 0, 0, 0, // index 255: out of range -> black
+            ]
+        );
+    }
 }
