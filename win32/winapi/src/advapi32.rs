@@ -109,8 +109,16 @@ pub fn GetUserNameA(
     {
         dst.copy_from_slice(name);
     }
-    ctx.memory.write::<u8>(lpBuffer.addr + name.len() as u32, 0);
-    pcbBuffer.write(&mut ctx.memory, name.len() as u32 + 1);
+    let output_len = name.len() + 1;
+    if crate::Ptr::<u8>::new(lpBuffer.addr + name.len() as u32)
+        .write(&mut ctx.memory, 0)
+        .is_none()
+        || pcbBuffer
+            .write(&mut ctx.memory, output_len as u32)
+            .is_none()
+    {
+        return false;
+    }
     true
 }
 
@@ -353,6 +361,13 @@ mod tests {
             &mut ctx,
             crate::Ptr::new(0x3ffe),
             crate::Ptr::new(0x2000)
+        ));
+
+        // A valid buffer with a non-null but out-of-range size pointer fails.
+        assert!(!GetUserNameA(
+            &mut ctx,
+            crate::Ptr::new(0x2000),
+            crate::Ptr::new(0xffff_fff0)
         ));
 
         // A value set through a good pointer can be queried; a bad data

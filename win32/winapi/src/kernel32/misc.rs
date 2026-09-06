@@ -78,8 +78,13 @@ pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -
     {
         dst.copy_from_slice(name);
     }
-    ctx.memory.write::<u8>(lpBuffer.addr + name.len() as u32, 0);
-    nSize.write(&mut ctx.memory, name.len() as u32);
+    if Ptr::<u8>::new(lpBuffer.addr + name.len() as u32)
+        .write(&mut ctx.memory, 0)
+        .is_none()
+        || nSize.write(&mut ctx.memory, name.len() as u32).is_none()
+    {
+        return false;
+    }
     true
 }
 
@@ -464,15 +469,32 @@ mod tests {
     }
 
     #[test]
-    fn computer_name_rejects_truncated_output() {
+    fn computer_name_rejects_truncated_and_bad_pointers() {
         let mut ctx = context();
         ctx.memory.write::<u32>(0x1000, 8);
 
+        // Buffer too small for "THESEUS\0" (needs 8 bytes).
         assert!(!GetComputerNameA(
             &mut ctx,
             Ptr::new(0x3fff),
             Ptr::new(0x1000),
         ));
+
+        // A non-null but out-of-range size pointer fails.
+        assert!(!GetComputerNameA(
+            &mut ctx,
+            Ptr::new(0x2000),
+            Ptr::new(0xffff_ff00),
+        ));
+
+        // Success path writes the name, null terminator, and length.
+        assert!(GetComputerNameA(
+            &mut ctx,
+            Ptr::new(0x2000),
+            Ptr::new(0x1000)
+        ));
+        assert_eq!(&ctx.memory.bytes[0x2000..0x2008], b"THESEUS\0");
+        assert_eq!(ctx.memory.read::<u32>(0x1000), 7);
     }
 
     #[test]
