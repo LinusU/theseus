@@ -273,7 +273,9 @@ pub fn WaitMessage(_ctx: &mut Context) -> bool {
 impl MessageQueue {
     fn paint_msg(&self) -> Option<MSG> {
         let window = self.window.as_ref()?.borrow();
-        if !window.dirty {
+        // A hidden window is not sent WM_PAINT; its update region waits
+        // until it is shown again.
+        if !window.dirty || !window.visible {
             return None;
         }
 

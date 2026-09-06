@@ -32,6 +32,9 @@ pub struct Window {
     /// A wndproc installed by SetWindowLong(GWL_WNDPROC) subclassing; when
     /// set it wins over the class wndproc at dispatch time.
     pub subclass_proc: Option<u32>,
+    /// The DC BeginPaint handed out for the in-progress paint, released by
+    /// EndPaint rather than trusting the guest's PAINTSTRUCT contents.
+    pub paint_dc: Option<HDC>,
     pub x: i32,
     pub y: i32,
     pub width: u32,
@@ -162,11 +165,13 @@ impl State {
             dirty: true,
             title: args.name.clone(),
             enabled: true,
-            visible: false,
+            // WS_VISIBLE (0x10000000) windows are shown at creation.
+            visible: args.style & 0x1000_0000 != 0,
             user_data: 0,
             hinstance: args.hinstance,
             id: args.id,
             subclass_proc: None,
+            paint_dc: None,
             x: args.x,
             y: args.y,
             width,
@@ -428,7 +433,7 @@ pub fn MoveWindow(
     // MAX_WINDOW_DIM via the u32 cast.
     window.resize(ctx, nWidth.max(0) as u32, nHeight.max(0) as u32);
     if bRepaint {
-        // ...
+        window.dirty = true;
     };
     true // sucess
 }
@@ -799,6 +804,9 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
         gdi32::lock().release_dc(hdc);
         return HDC::null();
     }
+    if let Some(window) = state().window.borrow().as_ref() {
+        window.borrow_mut().paint_dc = Some(hdc);
+    }
     hdc
 }
 
@@ -812,10 +820,14 @@ pub fn EndPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> boo
     if window.hwnd != hWnd {
         return false;
     }
-    let Some(paint) = lpPaint.read(&ctx.memory) else {
+    // The struct must be readable, but the DC to release is the one
+    // BeginPaint handed out — not whatever the guest wrote into it.
+    if lpPaint.read(&ctx.memory).is_none() {
         return false;
-    };
-    gdi32::lock().release_dc(paint.hdc);
+    }
+    if let Some(hdc) = window.paint_dc.take() {
+        gdi32::lock().release_dc(hdc);
+    }
     window.dirty = false;
     window.flush(ctx);
     true
@@ -866,8 +878,8 @@ pub fn ReleaseDC(ctx: &mut Context, hWnd: HWND, hDC: HDC) -> i32 {
             window.borrow_mut().flush(ctx);
         }
     }
-    gdi32::lock().release_dc(hDC);
-    1 // success
+    // The return value reports whether the DC was actually released.
+    i32::from(gdi32::lock().release_dc(hDC))
 }
 
 #[win32_derive::dllexport]
@@ -1313,6 +1325,7 @@ mod tests {
             hinstance: 0,
             id: 0,
             subclass_proc: None,
+            paint_dc: None,
             x: 0,
             y: 0,
             width: 1,

@@ -18,8 +18,10 @@ impl State {
         self.dcs.add(dc)
     }
 
-    pub fn release_dc(&mut self, hdc: HDC) {
-        self.dcs.remove(hdc);
+    /// Remove the DC from the table, reporting whether the handle named a
+    /// live DC — `ReleaseDC` returns that to its caller.
+    pub fn release_dc(&mut self, hdc: HDC) -> bool {
+        self.dcs.remove(hdc).is_some()
     }
 }
 
