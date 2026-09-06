@@ -19,6 +19,11 @@ pub type HFONT = HGDIOBJ;
 pub struct State {
     pub dcs: Handles<DC>,
     pub objects: Handles<Object>,
+    /// Pixel addresses gdi32 heap-allocated for bitmap objects
+    /// (CreateCompatibleBitmap); DeleteObject frees the matching block.
+    /// Bitmap pixels pointing into guest- or window-owned memory are never
+    /// in this set.
+    pub heap_bitmap_pixels: std::collections::HashSet<u32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -29,6 +34,7 @@ pub fn lock() -> Lock {
         // avoid low-numbered object handles to avoid conflicting with COLOR_* constants for HBRUSH
         objects: Handles::new(0x1000),
         dcs: Default::default(),
+        heap_bitmap_pixels: Default::default(),
     })
 }
 

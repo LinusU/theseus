@@ -827,7 +827,9 @@ pub fn CreateCompatibleBitmap(ctx: &mut Context, _hdc: HDC, cx: i32, cy: i32) ->
         return HANDLE::null();
     };
     let bitmap = Bitmap::new_simple(w, h, pixels);
-    gdi32::lock().new_bitmap_handle(bitmap).0
+    let mut state = gdi32::lock();
+    state.heap_bitmap_pixels.insert(pixels);
+    state.new_bitmap_handle(bitmap).0
 }
 
 #[win32_derive::dllexport]

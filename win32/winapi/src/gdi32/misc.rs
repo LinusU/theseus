@@ -5,11 +5,28 @@ use crate::{HANDLE, gdi32::HDC};
 pub type HGDIOBJ = u32;
 
 #[win32_derive::dllexport]
-pub fn DeleteObject(_ctx: &mut Context, ho: HGDIOBJ) -> bool {
-    crate::gdi32::lock()
-        .objects
-        .remove(HANDLE::from_raw(ho))
-        .is_some()
+pub fn DeleteObject(ctx: &mut Context, ho: HGDIOBJ) -> bool {
+    let mut state = crate::gdi32::lock();
+    let handle = HANDLE::from_raw(ho);
+    // Deleting an object that is still selected into a DC fails.
+    let selected = state.dcs.iter().any(|(_, dc)| {
+        dc.bitmap.0 == handle || dc.pen.0 == handle || dc.brush.0 == handle || dc.font.0 == handle
+    });
+    if selected {
+        return false;
+    }
+    let Some(object) = state.objects.remove(handle) else {
+        return false;
+    };
+    // A heap-allocated bitmap's pixel buffer goes back to the process heap.
+    if let crate::gdi32::Object::Bitmap(bitmap) = object
+        && state.heap_bitmap_pixels.remove(&bitmap.pixels)
+    {
+        crate::kernel32::lock()
+            .process_heap
+            .free(&mut ctx.memory, bitmap.pixels);
+    }
+    true
 }
 
 #[win32_derive::dllexport]
@@ -120,8 +137,8 @@ pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: u32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{GetDeviceCaps, GetDeviceCapsArg};
-    use crate::gdi32::HDC;
+    use super::{DeleteObject, GetDeviceCaps, GetDeviceCapsArg};
+    use crate::gdi32::{self, HDC};
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -164,5 +181,22 @@ mod tests {
             GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::SIZEPALETTE as u32),
             0
         );
+    }
+
+    #[test]
+    fn delete_object_rejects_an_object_selected_into_a_dc() {
+        let mut ctx = context();
+        let bitmap = gdi32::Bitmap::new_simple(2, 2, 0x3000);
+        let hdc = gdi32::lock().new_memory_dc(bitmap);
+        let hbitmap = gdi32::lock().dcs.get(hdc).unwrap().bitmap.0;
+
+        // A selected object cannot be deleted, and survives the attempt.
+        assert!(!DeleteObject(&mut ctx, hbitmap.to_raw()));
+        assert!(gdi32::lock().objects.get(hbitmap).is_some());
+
+        // Once the DC is gone the delete succeeds, and fails when repeated.
+        gdi32::lock().release_dc(&mut ctx.memory, hdc);
+        assert!(DeleteObject(&mut ctx, hbitmap.to_raw()));
+        assert!(!DeleteObject(&mut ctx, hbitmap.to_raw()));
     }
 }
