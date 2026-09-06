@@ -1662,15 +1662,20 @@ pub mod IDirectDrawSurface7 {
         {
             return DD::ERR_INVALIDPARAMS;
         }
-        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+        let Some(tag) = Ptr::<GUID>::new(guidTag).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        let Ok((data, _)) =
-            <[u8]>::ref_from_prefix_with_elems(&ctx.memory[lpData..], cbSize as usize)
+        let Some(end) = (lpData as usize).checked_add(cbSize as usize) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        let Some(data) = ctx
+            .memory
+            .bytes
+            .get(lpData as usize..end)
+            .map(|b| b.to_vec())
         else {
             return DD::ERR_INVALIDPARAMS;
         };
-        let data = data.to_vec();
         let surfaces = state().surf.borrow();
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
@@ -1693,7 +1698,7 @@ pub mod IDirectDrawSurface7 {
         {
             return DD::ERR_INVALIDPARAMS;
         }
-        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+        let Some(tag) = Ptr::<GUID>::new(guidTag).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
         let surfaces = state().surf.borrow();
@@ -1714,7 +1719,14 @@ pub mod IDirectDrawSurface7 {
         if !crate::ddraw::guest_range(ctx, lpBuffer, data.len() as u32) {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory[lpBuffer..][..data.len()].copy_from_slice(&data);
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(lpBuffer as usize..)
+            .and_then(|b| b.get_mut(..data.len()))
+        {
+            dst.copy_from_slice(&data);
+        }
         DD::OK
     }
 
@@ -1725,7 +1737,7 @@ pub mod IDirectDrawSurface7 {
         {
             return DD::ERR_INVALIDPARAMS;
         }
-        let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
+        let Some(tag) = Ptr::<GUID>::new(guidTag).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
         let surfaces = state().surf.borrow();
