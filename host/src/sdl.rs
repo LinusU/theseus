@@ -20,11 +20,6 @@ fn check(res: bool) {
     }
 }
 
-fn check_ptr<T>(t: *mut T) -> *mut T {
-    check(!t.is_null());
-    t
-}
-
 pub struct MainThread {
     headless: bool,
     /// Mouse buttons currently held. Button events carry no mask of their own,
@@ -313,7 +308,7 @@ impl MainThread {
             let event = unsafe {
                 let mut event = MaybeUninit::uninit();
                 if !sdl::events::SDL_WaitEvent(event.as_mut_ptr()) {
-                    panic!();
+                    panic!("SDL_WaitEvent failed: {}", sdl_error());
                 };
                 event.assume_init()
             };
@@ -396,14 +391,23 @@ impl Window {
             };
         }
         unsafe {
-            let texture = check_ptr(sdl::render::SDL_CreateTexture(
+            let texture = sdl::render::SDL_CreateTexture(
                 self.renderer,
                 // this means RGBA in memory order
                 sdl::pixels::SDL_PIXELFORMAT_ABGR8888,
                 sdl::render::SDL_TEXTUREACCESS_TARGET,
                 width as i32,
                 height as i32,
-            ));
+            );
+            if texture.is_null() {
+                // A surface the renderer refuses (oversized dimensions,
+                // memory pressure) presents as headless rather than
+                // panicking the host.
+                log::warn!(
+                    "SDL_CreateTexture({width}x{height}) failed ({}); continuing headless",
+                    sdl_error()
+                );
+            }
             Surface {
                 texture,
                 width,
