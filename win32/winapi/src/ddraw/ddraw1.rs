@@ -197,7 +197,7 @@ pub mod IDirectDraw {
             ) {
                 return DD::ERR_INVALIDPARAMS;
             }
-            let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpSurfaceDesc..])
+            let Some(desc) = crate::Ptr::<DDSURFACEDESC>::new(lpSurfaceDesc).read(&ctx.memory)
             else {
                 return DD::ERR_INVALIDPARAMS;
             };
@@ -384,8 +384,7 @@ pub mod IDirectDraw {
         {
             return DD::ERR_INVALIDPARAMS;
         }
-        let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc..])
-        else {
+        let Some(desc) = crate::Ptr::<DDSURFACEDESC>::new(lpDDSurfaceDesc).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
         if desc.dwSize != std::mem::size_of::<DDSURFACEDESC>() as u32 {
