@@ -134,13 +134,6 @@ pub fn abi_enum(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 })
             }
         }
-
-        impl crate::FromABIParam for #name {
-            #[allow(unused)]
-            fn from_abi(value: u32) -> Self {
-                #name::try_from(value).unwrap()
-            }
-        }
     }
     .into()
 }

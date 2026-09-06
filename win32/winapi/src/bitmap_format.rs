@@ -2,7 +2,7 @@
 
 use zerocopy::FromBytes;
 
-use crate::{FromABIParam, gdi32::COLORREF};
+use crate::gdi32::COLORREF;
 
 #[derive(Debug, Eq, PartialEq, win32_derive::ABIEnum)]
 pub enum BI {
@@ -75,8 +75,8 @@ impl BITMAPINFOHEADER {
         (self.biHeight as i32) > 0
     }
 
-    pub fn compression(&self) -> BI {
-        BI::from_abi(self.biCompression)
+    pub fn compression(&self) -> Result<BI, u32> {
+        BI::try_from(self.biCompression)
     }
 }
 
