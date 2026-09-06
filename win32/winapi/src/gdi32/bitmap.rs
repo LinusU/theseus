@@ -104,7 +104,9 @@ pub fn StretchBlt(
         bmp_src.read_pixels(
             pixels_src,
             if bmp_src.is_bottom_up {
-                hSrc - y_src - 1
+                // GDI coordinates are top-down; a bottom-up source's last
+                // buffer row is the image's first.
+                bmp_src.height - y_src - 1
             } else {
                 y_src
             },
@@ -148,6 +150,31 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn stretch_blt_reads_a_bottom_up_subregion() {
+        let mut ctx = context();
+        // A 1x4 32bpp bottom-up source at 0x2000: buffer row r holds the
+        // image's r-th row up from the bottom.
+        for row in 0..4u32 {
+            ctx.memory.write::<u32>(0x2000 + row * 4, 0x100 + row);
+        }
+        let src = crate::bitmap_format::Bitmap {
+            width: 1,
+            height: 4,
+            is_bottom_up: true,
+            bit_count: 32,
+            palette: Box::new([]),
+            pixels: 0x2000,
+        };
+        let src_dc = gdi32::lock().new_memory_dc(src);
+        let dst_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x3000));
+        // Image row 2 in top-down GDI coordinates is buffer row 4-2-1 = 1.
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 2, 1, 1, 0xcc0020
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x101);
+    }
+
     fn dib_info32(ctx: &mut Context, addr: u32) {
         let header: [u8; 40] = [
             0x28, 0x00, 0x00, 0x00, // biSize = 40
@@ -179,6 +206,43 @@ mod tests {
             SetDIBitsToDevice(&mut ctx, hdc, 0, 0, 1, 1, 0, 0, 0, 1, lpvBits, lpbmi, 0),
             0
         );
+    }
+
+    #[test]
+    fn set_di_bits_reads_a_bottom_up_subregion() {
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x2000));
+        // A 1x2 32bpp bottom-up DIB: header at 0x100, pixels at 0x300 with
+        // buffer row 0 holding the image's bottom row.
+        let mut header = [0u8; 40];
+        header[0..4].copy_from_slice(&40u32.to_le_bytes()); // biSize
+        header[4..8].copy_from_slice(&1u32.to_le_bytes()); // biWidth
+        header[8..12].copy_from_slice(&2u32.to_le_bytes()); // biHeight
+        header[12..14].copy_from_slice(&1u16.to_le_bytes()); // biPlanes
+        header[14..16].copy_from_slice(&32u16.to_le_bytes()); // biBitCount
+        ctx.memory.bytes[0x100..0x100 + 40].copy_from_slice(&header);
+        ctx.memory.write::<u32>(0x300, 0xbb); // image row 0 (bottom)
+        ctx.memory.write::<u32>(0x304, 0xaa); // image row 1 (top)
+        // ySrc=1 selects the top row of the image: buffer row 1.
+        assert_eq!(
+            SetDIBitsToDevice(
+                &mut ctx,
+                hdc,
+                0,
+                0,
+                1,
+                1,
+                0,
+                1,
+                0,
+                1,
+                Ptr::new(0x300),
+                Ptr::new(0x100),
+                0
+            ),
+            1
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x2000), 0xaa);
     }
 }
 
@@ -248,7 +312,10 @@ pub fn SetDIBitsToDevice(
         return 0;
     }
 
-    let src_end = lpvBits.addr as u64 + (h as u64 * bmp_src.stride() as u64);
+    // The read spans the DIB rows the blit touches: lpvBits is the start of
+    // the pixel array and ySrc + h is the last row read, so a nonzero ySrc
+    // needs more than h rows of buffer.
+    let src_end = lpvBits.addr as u64 + ((ySrc + h) as u64 * bmp_src.stride() as u64);
     let Ok([pixels_src, pixels_dst]) = ctx.memory.bytes.get_disjoint_mut([
         lpvBits.addr as usize..src_end as usize,
         bmp_dst.pixels_range(),
@@ -264,18 +331,14 @@ pub fn SetDIBitsToDevice(
         let dst = &mut pixels_dst
             [(yDest + y) as usize * bmp_dst.stride() as usize + xDest as usize * 4..]
             [..w as usize * 4];
-        let y_src = ySrc + y;
-        bmp_src.read_pixels(
-            pixels_src,
-            if bmp_src.is_bottom_up {
-                h - y_src - 1
-            } else {
-                y_src
-            },
-            xSrc,
-            xSrc + w,
-            dst,
-        );
+        let y_src = if bmp_src.is_bottom_up {
+            // ySrc counts up from the bottom of a bottom-up DIB, so the
+            // destination's first row reads the top of the region.
+            ySrc + h - 1 - y
+        } else {
+            ySrc + y
+        };
+        bmp_src.read_pixels(pixels_src, y_src, xSrc, xSrc + w, dst);
     }
 
     cLines
