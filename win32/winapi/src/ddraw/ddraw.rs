@@ -853,7 +853,7 @@ pub fn blit_copy(
         }
     }
 
-    let (rows, row_bytes, row_count, bpp) = {
+    let (rows, row_bytes, row_count, src_fmt) = {
         let mut src = src_rc.borrow_mut();
         let Some(addr) = src.lock(&mut ctx.memory) else {
             return DD::ERR_OUTOFMEMORY;
@@ -877,52 +877,177 @@ pub fn blit_copy(
             };
             rows.extend_from_slice(row);
         }
-        (rows, row_bytes, row_count, bpp)
+        (rows, row_bytes, row_count, PixelFmt::new(&src))
     };
 
     let mut dst = dst_rc.borrow_mut();
-    if dst.bytes_per_pixel != bpp {
-        log::warn!("blit between different pixel formats");
-        return DD::OK;
-    }
+    let dst_fmt = PixelFmt::new(&dst);
     let Some(addr) = dst.lock(&mut ctx.memory) else {
         return DD::ERR_OUTOFMEMORY;
     };
-    let stride = dst.width * bpp;
     let want = dst_rect.unwrap_or_else(|| RECT::from_size(dst.width, dst.height));
     let rect = want.clip_to_size(dst.width, dst.height);
-    let result = write_blit(
-        &mut ctx.memory,
-        addr,
-        stride,
-        &want,
-        &rect,
-        &rows,
-        row_bytes / bpp as usize,
-        row_count,
-        bpp,
-        color_key,
-        dst_color_key,
-    );
+    let result = if src_fmt.same_layout(&dst_fmt) {
+        write_blit(
+            &mut ctx.memory,
+            addr,
+            dst.width * src_fmt.bpp as u32,
+            &want,
+            &rect,
+            &rows,
+            row_bytes / src_fmt.bpp,
+            row_count,
+            src_fmt.bpp as u32,
+            color_key,
+            dst_color_key,
+        )
+    } else {
+        write_blit_convert(
+            &mut ctx.memory,
+            addr,
+            dst.width * dst_fmt.bpp as u32,
+            &want,
+            &rect,
+            &rows,
+            row_bytes / src_fmt.bpp,
+            row_count,
+            &src_fmt,
+            &dst_fmt,
+            color_key,
+            dst_color_key,
+        )
+    };
     dst.present(&mut ctx.memory);
     result
 }
 
-/// One pixel's value for color-key comparison.
+/// One pixel's little-endian value for color-key comparison and format
+/// conversion.
 fn pixel_value(pixel: &[u8], bpp: u32) -> Option<u32> {
-    match bpp {
-        1 => pixel.first().copied().map(u32::from),
-        2 => pixel
-            .get(..2)
-            .and_then(|b| b.try_into().ok())
-            .map(u16::from_le_bytes)
-            .map(u32::from),
-        4 => pixel
-            .get(..4)
-            .and_then(|b| b.try_into().ok())
-            .map(u32::from_le_bytes),
-        _ => None,
+    if !(1..=4).contains(&bpp) {
+        return None;
     }
+    Some(
+        pixel
+            .get(..bpp as usize)?
+            .iter()
+            .enumerate()
+            .fold(0u32, |v, (i, b)| v | (*b as u32) << (8 * i)),
+    )
+}
+
+/// A surface's pixel layout for cross-format blits: the DDPIXELFORMAT
+/// channel masks for RGB formats, plus a copy of the palette for indexed
+/// surfaces.
+struct PixelFmt {
+    bpp: usize,
+    /// DDPF_RGB: the channel masks describe red/green/blue/alpha (as
+    /// opposed to a z-buffer or FourCC layout).
+    rgb: bool,
+    r: u32,
+    g: u32,
+    b: u32,
+    a: u32,
+    /// The surface's palette entries, needed to decode indexed pixels.
+    palette: Option<Vec<PALETTEENTRY>>,
+}
+
+impl PixelFmt {
+    fn new(surface: &Surface) -> PixelFmt {
+        PixelFmt {
+            bpp: surface.bytes_per_pixel as usize,
+            rgb: surface.pixel_format.dwFlags & 0x40 != 0,
+            r: surface.pixel_format.dwRBitMask,
+            g: surface.pixel_format.dwGBitMask,
+            b: surface.pixel_format.dwBBitMask,
+            a: surface.pixel_format.dwRGBAlphaBitMask,
+            palette: surface.palette.as_ref().map(|p| p.borrow().entries.clone()),
+        }
+    }
+
+    /// Whether pixels can be copied verbatim: same depth and, for RGB
+    /// formats, the same channel masks. Indexed-to-indexed blits copy
+    /// palette indices verbatim; DirectDraw does not remap between
+    /// palettes.
+    fn same_layout(&self, other: &PixelFmt) -> bool {
+        self.bpp == other.bpp
+            && (self.bpp == 1
+                || !self.rgb && !other.rgb
+                || (self.r, self.g, self.b, self.a) == (other.r, other.g, other.b, other.a))
+    }
+
+    /// Whether a blit can convert to or from this format: an indexed
+    /// surface needs its palette, deeper surfaces need RGB channel masks.
+    fn convertible(&self) -> bool {
+        if self.bpp == 1 {
+            self.palette.is_some()
+        } else {
+            self.rgb
+        }
+    }
+
+    /// Decode one pixel to 8-bit RGBA. `None` when the format is not
+    /// decodable — a paletteless indexed pixel or a short slice.
+    fn decode(&self, pixel: &[u8]) -> Option<(u8, u8, u8, u8)> {
+        let v = pixel_value(pixel, self.bpp as u32)?;
+        if self.bpp == 1 {
+            let e = self.palette.as_deref()?.get(v as usize);
+            return e.map(|e| (e.peRed, e.peGreen, e.peBlue, 255));
+        }
+        Some((
+            mask_to_u8(v, self.r, 0),
+            mask_to_u8(v, self.g, 0),
+            mask_to_u8(v, self.b, 0),
+            mask_to_u8(v, self.a, 255),
+        ))
+    }
+
+    /// Encode 8-bit RGBA as this format's raw pixel value. `None` for a
+    /// paletteless indexed destination.
+    fn encode(&self, rgba: (u8, u8, u8, u8)) -> Option<u32> {
+        if self.bpp == 1 {
+            let (r, g, b) = (i32::from(rgba.0), i32::from(rgba.1), i32::from(rgba.2));
+            return self
+                .palette
+                .as_deref()?
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, e)| {
+                    let (dr, dg, db) = (
+                        i32::from(e.peRed) - r,
+                        i32::from(e.peGreen) - g,
+                        i32::from(e.peBlue) - b,
+                    );
+                    dr * dr + dg * dg + db * db
+                })
+                .map(|(i, _)| i as u32);
+        }
+        Some(
+            u8_to_mask(rgba.0, self.r)
+                | u8_to_mask(rgba.1, self.g)
+                | u8_to_mask(rgba.2, self.b)
+                | u8_to_mask(rgba.3, self.a),
+        )
+    }
+}
+
+/// Scale a DDPIXELFORMAT channel out of `v` to 8 bits; `default` when the
+/// format has no such channel (alpha on an opaque format reads as 255).
+fn mask_to_u8(v: u32, mask: u32, default: u8) -> u8 {
+    if mask == 0 {
+        return default;
+    }
+    let max = (1u64 << mask.count_ones()) - 1;
+    ((((v & mask) >> mask.trailing_zeros()) as u64 * 255 + max / 2) / max) as u8
+}
+
+/// Scale an 8-bit channel into a DDPIXELFORMAT mask position.
+fn u8_to_mask(v: u8, mask: u32) -> u32 {
+    if mask == 0 {
+        return 0;
+    }
+    let max = (1u64 << mask.count_ones()) - 1;
+    ((((v as u64) * max + 127) / 255) as u32) << mask.trailing_zeros() & mask
 }
 
 /// Whether a `rect` worth of pixels starting at `addr` with `pitch` bytes per
@@ -1056,6 +1181,75 @@ fn dst_key_allows(memory: &Memory, at: u32, bpp: u32, dst_color_key: &Option<Col
         return false;
     };
     pixel_value(pixel, bpp).is_some_and(|v| key.matches(v))
+}
+
+/// Write staged source rows into a destination surface of a different
+/// format, converting each pixel through 8-bit RGBA. Handles the same
+/// clipping, stretching, and color keys as `write_blit`; the per-pixel
+/// conversion cost is only paid on cross-format blits.
+#[allow(clippy::too_many_arguments)]
+fn write_blit_convert(
+    memory: &mut Memory,
+    addr: u32,
+    pitch: u32,
+    want: &RECT,
+    rect: &RECT,
+    rows: &[u8],
+    src_w: usize,
+    src_h: usize,
+    src: &PixelFmt,
+    dst: &PixelFmt,
+    color_key: Option<ColorKey>,
+    dst_color_key: Option<ColorKey>,
+) -> DD {
+    if !src.convertible() || !dst.convertible() {
+        log::warn!(
+            "blit between unconvertible pixel formats ({}bpp -> {}bpp)",
+            src.bpp * 8,
+            dst.bpp * 8
+        );
+        return DD::OK;
+    }
+    if !dst_range_valid(memory, addr, pitch, dst.bpp as u32, rect) {
+        return DD::ERR_INVALIDPARAMS;
+    }
+    let dst_w = (want.right as i64 - want.left as i64).max(0);
+    let dst_h = (want.bottom as i64 - want.top as i64).max(0);
+    if dst_w <= 0 || dst_h <= 0 || src_w == 0 || src_h == 0 {
+        return DD::OK;
+    }
+    let src_row_bytes = src_w * src.bpp;
+    for dy in rect.top..rect.bottom {
+        let sy = ((dy as i64 - want.top as i64) * src_h as i64 / dst_h) as usize;
+        for dx in rect.left..rect.right {
+            let sx = ((dx as i64 - want.left as i64) * src_w as i64 / dst_w) as usize;
+            let start = sy * src_row_bytes + sx * src.bpp;
+            let Some(pixel) = rows.get(start..).and_then(|b| b.get(..src.bpp)) else {
+                continue;
+            };
+            if let Some(key) = &color_key {
+                let Some(value) = pixel_value(pixel, src.bpp as u32) else {
+                    log::warn!("colorkey blit at {} bytes per pixel", src.bpp);
+                    return DD::OK;
+                };
+                if key.matches(value) {
+                    continue;
+                }
+            }
+            let at = addr + dy as u32 * pitch + dx as u32 * dst.bpp as u32;
+            if !dst_key_allows(memory, at, dst.bpp as u32, &dst_color_key) {
+                continue;
+            }
+            let Some(rgba) = src.decode(pixel) else {
+                continue;
+            };
+            let Some(v) = dst.encode(rgba) else {
+                continue;
+            };
+            memory.write_bytes(at, &v.to_le_bytes()[..dst.bpp]);
+        }
+    }
+    DD::OK
 }
 
 pub fn surface_src_color_key(surface: u32) -> Option<ColorKey> {
@@ -1356,7 +1550,10 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorKey, PALETTEENTRY, RECT, expand_palettized, lock_offset, write_blit};
+    use super::{
+        ColorKey, PALETTEENTRY, PixelFmt, RECT, expand_palettized, lock_offset, write_blit,
+        write_blit_convert,
+    };
     use crate::ddraw::types::DD;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -1519,6 +1716,184 @@ mod tests {
                 2,
                 1,
                 4,
+                None,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0);
+    }
+
+    fn rgb565() -> PixelFmt {
+        PixelFmt {
+            bpp: 2,
+            rgb: true,
+            r: 0xF800,
+            g: 0x07E0,
+            b: 0x001F,
+            a: 0,
+            palette: None,
+        }
+    }
+
+    #[test]
+    fn write_blit_convert_expands_indexed_pixels_to_565() {
+        let mut ctx = context();
+        let src = PixelFmt {
+            bpp: 1,
+            rgb: false,
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+            palette: Some(vec![entry(255, 0, 0), entry(0, 255, 0)]),
+        };
+        let rows = [0u8, 1];
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(2, 1);
+        assert_eq!(
+            write_blit_convert(
+                &mut ctx.memory,
+                0x4000,
+                4,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                &src,
+                &rgb565(),
+                None,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x4000), 0xF800);
+        assert_eq!(ctx.memory.read::<u16>(0x4002), 0x07E0);
+    }
+
+    #[test]
+    fn write_blit_convert_repositions_channels_to_32bpp() {
+        let mut ctx = context();
+        // ARGB8888: alpha in the top byte, red next.
+        let dst = PixelFmt {
+            bpp: 4,
+            rgb: true,
+            r: 0x00FF_0000,
+            g: 0x0000_FF00,
+            b: 0x0000_00FF,
+            a: 0xFF00_0000,
+            palette: None,
+        };
+        // A single 565 red pixel.
+        let rows = 0xF800u16.to_le_bytes();
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 1,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(1, 1);
+        assert_eq!(
+            write_blit_convert(
+                &mut ctx.memory,
+                0x4000,
+                4,
+                &want,
+                &rect,
+                &rows,
+                1,
+                1,
+                &rgb565(),
+                &dst,
+                None,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0xFFFF_0000);
+    }
+
+    #[test]
+    fn write_blit_convert_applies_the_source_color_key() {
+        let mut ctx = context();
+        let src = PixelFmt {
+            bpp: 1,
+            rgb: false,
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+            palette: Some(vec![entry(255, 0, 0), entry(0, 255, 0)]),
+        };
+        let rows = [0u8, 1];
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(2, 1);
+        // Index 0 is transparent; only index 1 lands.
+        let key = Some(ColorKey { low: 0, high: 0 });
+        assert_eq!(
+            write_blit_convert(
+                &mut ctx.memory,
+                0x4000,
+                4,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                &src,
+                &rgb565(),
+                key,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x4000), 0);
+        assert_eq!(ctx.memory.read::<u16>(0x4002), 0x07E0);
+    }
+
+    #[test]
+    fn write_blit_convert_skips_a_paletteless_indexed_source() {
+        let mut ctx = context();
+        let src = PixelFmt {
+            bpp: 1,
+            rgb: false,
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+            palette: None,
+        };
+        let rows = [0u8, 1];
+        let want = RECT {
+            left: 0,
+            top: 0,
+            right: 2,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(2, 1);
+        assert_eq!(
+            write_blit_convert(
+                &mut ctx.memory,
+                0x4000,
+                4,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                &src,
+                &rgb565(),
                 None,
                 None
             ),
