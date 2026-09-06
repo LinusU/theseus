@@ -189,7 +189,10 @@ pub fn SelectObject(ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
         return HGDIOBJ::null();
     }
     let caller = {
-        let ret = ctx.memory.read::<u32>(ctx.cpu.regs.esp);
+        // Diagnostic only: a corrupt stack pointer must not panic the host.
+        let ret = crate::Ptr::<u32>::new(ctx.cpu.regs.esp)
+            .read(&ctx.memory)
+            .unwrap_or(0);
         if ret == runtime::RETURN_FROM_X86_ADDR32 {
             ctx.cpu.regs.eip_context
         } else {
