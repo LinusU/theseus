@@ -508,7 +508,14 @@ pub mod IDirectSound {
         if size < 4 || !usable_range(ctx, lpDSCaps, size) {
             return DSERR_INVALIDPARAM;
         }
-        ctx.memory[lpDSCaps + 4..][..(size as usize).saturating_sub(4)].fill(0);
+        if let Some(rest) = ctx
+            .memory
+            .bytes
+            .get_mut(lpDSCaps as usize + 4..)
+            .and_then(|b| b.get_mut(..(size as usize).saturating_sub(4)))
+        {
+            rest.fill(0);
+        }
         // Fields past the caller's declared dwSize are left alone; writing
         // them unconditionally could run past the validated range.
         if size >= 8 {
