@@ -24,7 +24,9 @@ impl Heap {
     }
 
     fn range(&self) -> std::ops::Range<u32> {
-        self.addr..self.addr + self.size
+        // A heap whose claimed range wraps the 32-bit space saturates at the
+        // top of memory rather than wrapping into low addresses.
+        self.addr..self.addr.saturating_add(self.size)
     }
 
     pub fn try_alloc(&self, mem: &mut Memory, size: u32) -> Option<u32> {
@@ -177,7 +179,7 @@ struct FreeNode {
 
 impl FreeNode {
     fn range(&self) -> std::ops::Range<u32> {
-        self.addr..self.addr + self.size
+        self.addr..self.addr.saturating_add(self.size)
     }
 }
 
