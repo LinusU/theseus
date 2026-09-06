@@ -971,6 +971,12 @@ pub mod IDirect3DDevice7 {
         // The rect list restricts the clear; none means the whole surface.
         // D3DRECT is {x1,y1,x2,y2} i32s, 16 bytes each.
         let rects: Vec<(i32, i32, i32, i32)> = if dwCount != 0 && lpRects != 0 {
+            let Some(bytes) = dwCount.checked_mul(16) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            if !crate::ddraw::ddraw::guest_range(ctx, lpRects, bytes) {
+                return DD::ERR_INVALIDPARAMS;
+            }
             (0..dwCount)
                 .map(|i| {
                     let base = lpRects + i * 16;
@@ -989,13 +995,23 @@ pub mod IDirect3DDevice7 {
         // surface. Calls `write` per scanline run to fill.
         let fill = |ctx: &mut Context,
                     surf: &std::rc::Rc<RefCell<crate::ddraw::Surface>>,
-                    write: &dyn Fn(&mut Context, u32, usize)| {
+                    write: &dyn Fn(&mut [u8])| {
             let mut surf = surf.borrow_mut();
             let addr = surf.lock(&mut ctx.memory);
             let bpp = surf.bytes_per_pixel;
             let stride = surf.width * bpp;
+            let write_range = |ctx: &mut Context, at: u32, len: usize, f: &dyn Fn(&mut [u8])| {
+                let start = at as usize;
+                let Some(end) = start.checked_add(len) else {
+                    return;
+                };
+                let Some(buf) = ctx.memory.bytes.get_mut(start..end) else {
+                    return;
+                };
+                f(buf);
+            };
             if rects.is_empty() {
-                write(ctx, addr, (surf.height * stride) as usize);
+                write_range(ctx, addr, (surf.height * stride) as usize, write);
                 return;
             }
             for &(x1, y1, x2, y2) in &rects {
@@ -1004,10 +1020,11 @@ pub mod IDirect3DDevice7 {
                 let top = y1.max(0).min(surf.height as i32) as u32;
                 let bottom = y2.max(0).min(surf.height as i32) as u32;
                 for y in top..bottom {
-                    write(
+                    write_range(
                         ctx,
                         addr + y * stride + left * bpp,
                         (right.saturating_sub(left) * bpp) as usize,
+                        write,
                     );
                 }
             }
@@ -1037,9 +1054,9 @@ pub mod IDirect3DDevice7 {
                         surf.borrow().height,
                     );
                 }
-                fill(ctx, &zbuf, &|ctx, at, len| {
+                fill(ctx, &zbuf, &|buf| {
                     let bytes = z.to_le_bytes();
-                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(2) {
+                    for chunk in buf.chunks_exact_mut(2) {
                         chunk.copy_from_slice(&bytes);
                     }
                 });
@@ -1056,9 +1073,9 @@ pub mod IDirect3DDevice7 {
         let bpp = surf.borrow().bytes_per_pixel;
         match bpp {
             4 => {
-                fill(ctx, &surf, &|ctx, at, len| {
+                fill(ctx, &surf, &|buf| {
                     let bytes = dwColor.to_le_bytes();
-                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(4) {
+                    for chunk in buf.chunks_exact_mut(4) {
                         chunk.copy_from_slice(&bytes);
                     }
                 });
@@ -1069,15 +1086,15 @@ pub mod IDirect3DDevice7 {
                 let b = (dwColor & 0xFF) as u16;
                 let pixel: u16 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
                 let bytes = pixel.to_le_bytes();
-                fill(ctx, &surf, &|ctx, at, len| {
-                    for chunk in ctx.memory[at..][..len].chunks_exact_mut(2) {
+                fill(ctx, &surf, &|buf| {
+                    for chunk in buf.chunks_exact_mut(2) {
                         chunk.copy_from_slice(&bytes);
                     }
                 });
             }
             _ => {
-                fill(ctx, &surf, &|ctx, at, len| {
-                    ctx.memory[at..][..len].fill(0);
+                fill(ctx, &surf, &|buf| {
+                    buf.fill(0);
                 });
             }
         }
