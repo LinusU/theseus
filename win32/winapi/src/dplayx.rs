@@ -231,8 +231,12 @@ pub mod IDirectPlayLobby3A {
         lplpDP2: u32,
         _pUnkOuter: u32,
     ) -> u32 {
-        if lplpDP2 != 0 {
-            let _ = crate::Ptr::<u32>::new(lplpDP2).write(&mut _ctx.memory, 0);
+        if lplpDP2 != 0
+            && crate::Ptr::<u32>::new(lplpDP2)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -248,8 +252,12 @@ pub mod IDirectPlayLobby3A {
         _lpAddressBuffer: u32,
         lpdwAddressBufferSize: u32,
     ) -> u32 {
-        if lpdwAddressBufferSize != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwAddressBufferSize).write(&mut _ctx.memory, 0);
+        if lpdwAddressBufferSize != 0
+            && crate::Ptr::<u32>::new(lpdwAddressBufferSize)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -300,7 +308,12 @@ pub mod IDirectPlayLobby3A {
         if lpdwSize == 0 {
             return E_POINTER;
         }
-        let _ = crate::Ptr::<u32>::new(lpdwSize).write(&mut _ctx.memory, 0);
+        if crate::Ptr::<u32>::new(lpdwSize)
+            .write(&mut _ctx.memory, 0)
+            .is_none()
+        {
+            return E_POINTER;
+        }
         E_FAIL
     }
 
@@ -314,11 +327,19 @@ pub mod IDirectPlayLobby3A {
         _lpData: u32,
         lpdwDataSize: u32,
     ) -> u32 {
-        if lpdwMessageFlags != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwMessageFlags).write(&mut _ctx.memory, 0);
+        if lpdwMessageFlags != 0
+            && crate::Ptr::<u32>::new(lpdwMessageFlags)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
-        if lpdwDataSize != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwDataSize).write(&mut _ctx.memory, 0);
+        if lpdwDataSize != 0
+            && crate::Ptr::<u32>::new(lpdwDataSize)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -332,8 +353,12 @@ pub mod IDirectPlayLobby3A {
         _lpConn: u32,
         _hReceiveEvent: u32,
     ) -> u32 {
-        if lpdwAppID != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwAppID).write(&mut _ctx.memory, 0);
+        if lpdwAppID != 0
+            && crate::Ptr::<u32>::new(lpdwAppID)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -381,8 +406,12 @@ pub mod IDirectPlayLobby3A {
         _lpAddress: u32,
         lpdwAddressSize: u32,
     ) -> u32 {
-        if lpdwAddressSize != 0 {
-            let _ = crate::Ptr::<u32>::new(lpdwAddressSize).write(&mut _ctx.memory, 0);
+        if lpdwAddressSize != 0
+            && crate::Ptr::<u32>::new(lpdwAddressSize)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -396,8 +425,12 @@ pub mod IDirectPlayLobby3A {
         lplpDP3: u32,
         _pUnkOuter: u32,
     ) -> u32 {
-        if lplpDP3 != 0 {
-            let _ = crate::Ptr::<u32>::new(lplpDP3).write(&mut _ctx.memory, 0);
+        if lplpDP3 != 0
+            && crate::Ptr::<u32>::new(lplpDP3)
+                .write(&mut _ctx.memory, 0)
+                .is_none()
+        {
+            return E_POINTER;
         }
         E_FAIL
     }
@@ -491,5 +524,23 @@ mod tests {
             E_NOINTERFACE
         );
         assert_eq!(ctx.memory.read::<u32>(0x1100), 0);
+    }
+
+    #[test]
+    fn connect_rejects_low_and_writes_valid_output_pointer() {
+        let mut ctx = context();
+
+        assert_eq!(
+            IDirectPlayLobby3A::Connect(&mut ctx, 0, 0, 0x500, 0),
+            E_POINTER
+        );
+
+        assert_eq!(
+            IDirectPlayLobby3A::Connect(&mut ctx, 0, 0, 0x3000, 0),
+            E_FAIL
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
+
+        assert_eq!(IDirectPlayLobby3A::Connect(&mut ctx, 0, 0, 0, 0), E_FAIL);
     }
 }
