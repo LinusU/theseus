@@ -646,9 +646,13 @@ mod tests {
     }
 
     fn read_cstr(ctx: &Context, addr: u32) -> String {
-        let buf = &ctx.memory[addr..];
-        let nul = buf.iter().position(|&b| b == 0).unwrap();
-        std::str::from_utf8(&buf[..nul]).unwrap().to_string()
+        let buf = ctx.memory.bytes.get(addr as usize..).unwrap_or(&[]);
+        let Some(nul) = buf.iter().position(|&b| b == 0) else {
+            return String::new();
+        };
+        std::str::from_utf8(&buf[..nul])
+            .unwrap_or_default()
+            .to_string()
     }
 
     fn read_wstr(ctx: &Context, addr: u32) -> Vec<u16> {
