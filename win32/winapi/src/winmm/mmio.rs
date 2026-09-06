@@ -182,6 +182,9 @@ pub fn mciSendCommandA(
         const MCI_STATUS_ITEM: u32 = 0x100;
         const MCI_STATUS_MODE: u32 = 4;
         const MCI_MODE_STOP: u32 = 527;
+        if dwParam2 < 0x1000 {
+            return 0;
+        }
         // dwItem sits past dwCallback and dwReturn; a device that plays
         // nothing is stopped, and every other item reads as zero.
         let value = if dwParam1 & MCI_STATUS_ITEM != 0 {
@@ -509,6 +512,8 @@ mod tests {
         // An unusable params pointer is ignored rather than panicking.
         let oob = ctx.memory.bytes.len() as u32;
         assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, oob), 0);
+        assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, 0x500), 0);
+        assert_eq!(mciSendCommandA(&mut ctx, 0, 0x814, 0x100, 0), 0);
     }
 
     #[test]
