@@ -109,8 +109,8 @@ pub fn EnumDisplaySettingsA(
     const DM_PELSHEIGHT: u32 = 0x0010_0000;
     const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
 
-    if lpDevMode.addr < 0x1000
-        || !matches!(iModeNum, ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS)
+    if !matches!(iModeNum, ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS)
+        || !crate::ddraw::guest_range(ctx, lpDevMode.addr, 0x78)
     {
         return false;
     }
@@ -143,7 +143,9 @@ pub fn ChangeDisplaySettingsA(ctx: &mut Context, lpDevMode: Ptr<u8>, _dwFlags: u
     if lpDevMode.addr == 0 {
         return DISP_CHANGE_SUCCESSFUL;
     }
-    if lpDevMode.addr < 0x1000 || ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94 {
+    if !crate::ddraw::guest_range(ctx, lpDevMode.addr, 0x7c)
+        || ctx.memory.read::<u16>(lpDevMode.addr + 0x24) < 0x94
+    {
         return DISP_CHANGE_BADMODE;
     }
 

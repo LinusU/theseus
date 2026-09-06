@@ -95,7 +95,7 @@ const DIERR_UNSUPPORTED: u32 = E_NOINTERFACE;
 /// Shared COM identity check: the object answers for `IID_IUnknown` and any
 /// interface GUIDs in `accepted`.
 fn query_interface(ctx: &mut Context, this: u32, riid: u32, ppv: u32, accepted: &[GUID]) -> u32 {
-    if ppv == 0 {
+    if !crate::ddraw::guest_range(ctx, ppv, 4) {
         return E_POINTER;
     }
     if riid == 0 {
@@ -239,6 +239,9 @@ pub fn DirectInputCreateA(
     ppDI: u32,
     _punkOuter: u32,
 ) -> u32 {
+    if !crate::ddraw::guest_range(ctx, ppDI, 4) {
+        return DIERR_INVALIDPARAM;
+    }
     let mut kernel32 = kernel32::lock();
     let Some(ptr) = IDirectInput::new(ctx, &mut kernel32.process_heap) else {
         return DIERR_OUTOFMEMORY;
@@ -299,6 +302,9 @@ pub mod IDirectInput {
         lplpDirectInputDevice: u32,
         _pUnkOuter: u32,
     ) -> u32 {
+        if !crate::ddraw::guest_range(ctx, lplpDirectInputDevice, 4) {
+            return DIERR_INVALIDPARAM;
+        }
         let Some(guid) = crate::Ptr::<GUID>::new(lpGUID).read(&ctx.memory) else {
             return DIERR_INVALIDPARAM;
         };
@@ -666,7 +672,7 @@ pub mod IDirectInputDevice {
                 return DIERR_INVALIDPARAM;
             }
         };
-        if lpvData as usize + len > ctx.memory.bytes.len() {
+        if lpvData < 0x1000 || lpvData as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
         let mut buf = vec![0u8; len];
@@ -872,7 +878,7 @@ pub mod IDirectInputDevice {
         _punkOuter: u32,
     ) -> u32 {
         if lplpde != 0 {
-            ctx.memory.write::<u32>(lplpde, 0);
+            let _ = crate::Ptr::<u32>::new(lplpde).write(&mut ctx.memory, 0);
         }
         DIERR_UNSUPPORTED
     }
