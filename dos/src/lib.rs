@@ -126,7 +126,8 @@ pub fn load(exe: &EXEData, command_line: Option<&str>) -> Context {
     state.psp_segment = (exe.image_base >> 4) as u16;
 
     // TODO: values copied from dosbox
-    *state.program_mcb(&mut memory) = MCB {
+    let mcb = state.program_mcb(&mut memory).unwrap();
+    *mcb = MCB {
         typ: b'M',
         owner: U16::new(0x813),
         size: U16::new(0x2cb1),
@@ -225,8 +226,11 @@ impl State {
         read_file(path)
     }
 
-    fn program_mcb<'a>(&self, mem: &'a mut Memory) -> &'a mut MCB {
-        MCB::mut_from_bytes(&mut mem[segofs(self.psp_segment - 1, 0)..][..0x10]).unwrap()
+    fn program_mcb<'a>(&self, mem: &'a mut Memory) -> Option<&'a mut MCB> {
+        let start = segofs(self.psp_segment.wrapping_sub(1), 0) as usize;
+        let end = start.checked_add(0x10)?;
+        let slice = mem.bytes.get_mut(start..end)?;
+        MCB::mut_from_bytes(slice).ok()
     }
 }
 

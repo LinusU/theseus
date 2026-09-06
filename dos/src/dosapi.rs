@@ -204,7 +204,11 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             }
-            let mcb = state.program_mcb(&mut ctx.memory);
+            let Some(mcb) = state.program_mcb(&mut ctx.memory) else {
+                ctx.cpu.regs.set_ax(9); // invalid memory block address
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
             mcb.size.set(size);
 
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
