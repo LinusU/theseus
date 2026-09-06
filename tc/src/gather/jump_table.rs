@@ -46,10 +46,9 @@ impl<'a> Traverse<'a> {
                 };
                 addr = prev;
             }
-            if addr as usize + 4 > self.mem.bytes.len() {
+            let Some(target) = self.mem.try_read::<u32>(addr) else {
                 break;
-            }
-            let target = self.mem.read::<u32>(addr);
+            };
             let valid = code.contains(&target) && self.looks_like_code(target);
             if !valid && known_len.is_none() {
                 break;

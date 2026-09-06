@@ -36,9 +36,26 @@ impl Memory {
             .0
     }
 
+    pub fn try_read<T: zerocopy::FromBytes>(&self, addr: u32) -> Option<T> {
+        <T>::read_from_prefix(self.bytes.get(addr as usize..)?)
+            .ok()
+            .map(|(val, _)| val)
+    }
+
     pub fn write<T: zerocopy::IntoBytes + zerocopy::Immutable>(&mut self, addr: u32, val: T) {
         val.write_to_prefix(&mut self.bytes[addr as usize..])
             .unwrap();
+    }
+
+    pub fn try_write<T: zerocopy::IntoBytes + zerocopy::Immutable>(
+        &mut self,
+        addr: u32,
+        val: T,
+    ) -> bool {
+        let Some(buf) = self.bytes.get_mut(addr as usize..) else {
+            return false;
+        };
+        val.write_to_prefix(buf).is_ok()
     }
 
     pub fn write_bytes(&mut self, addr: u32, data: &[u8]) {

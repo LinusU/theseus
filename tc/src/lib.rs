@@ -292,7 +292,8 @@ impl State {
         let mut func_addr = 0xfafbfc00;
         for import in module.imports.iter_mut() {
             if import.iat_addr == 0 {
-                panic!("{import:#x?}");
+                log::warn!("skipping import with zero IAT address: {import:#x?}");
+                continue;
             }
             if import.data {
                 import.addr = data_addr;
@@ -301,7 +302,9 @@ impl State {
                 import.addr = func_addr;
                 func_addr += 1;
             }
-            self.mem.write::<u32>(import.iat_addr, import.addr);
+            if !self.mem.try_write::<u32>(import.iat_addr, import.addr) {
+                log::warn!("could not write IAT for import: {import:#x?}");
+            }
         }
     }
 

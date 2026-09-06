@@ -302,10 +302,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 // `call [foo@IAT]` means `call foo`, the IAT is the pointer to the real function.
                 new_instr.hint = Some(format!("{}::{}_stdcall", imp.dll, imp.func));
             } else {
-                if addr as usize + 4 > self.traverse.mem.bytes.len() {
+                let Some(target) = self.traverse.mem.try_read::<u32>(addr) else {
                     anyhow::bail!("jmp to invalid address");
-                }
-                let target = self.traverse.mem.read::<u32>(addr);
+                };
                 if self.traverse.module.code_memory().contains(&target) {
                     self.traverse.queue.add_candidate(target);
                 }
