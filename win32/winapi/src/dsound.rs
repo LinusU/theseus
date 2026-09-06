@@ -47,6 +47,7 @@ const DS_OK: u32 = 0;
 const WAVE_FORMAT_PCM: u16 = 1;
 const DSERR_NODRIVER: u32 = make_dserror(120);
 const DSERR_INVALIDPARAM: u32 = 0x80070057;
+const DSERR_OUTOFMEMORY: u32 = 0x8007000e;
 
 /// Whether `addr..addr + bytes` is a range a guest may supply: outside the
 /// null page and fully inside emulated memory.
@@ -424,10 +425,6 @@ pub mod IDirectSound {
             return DSERR_INVALIDPARAM;
         };
 
-        let mut kernel32 = kernel32::lock();
-        let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
-        drop(kernel32);
-
         let primary = desc.dwFlags.contains(DSBCAPS_FLAGS::PRIMARYBUFFER);
         let format = if desc.lpwfxFormat != 0 {
             let Some(fmt) = guest_read::<WAVEFORMATEX>(ctx, desc.lpwfxFormat) else {
@@ -442,15 +439,28 @@ pub mod IDirectSound {
             WaveFormat::default()
         };
 
-        let mut state = lock();
         // The primary buffer describes the output mix rather than holding
-        // samples, so it gets no memory of its own.
-        let (data, size) = if primary {
-            (0, 0)
-        } else {
-            let size = desc.dwBufferBytes;
-            (state.heap().alloc(&mut ctx.memory, size), size)
+        // samples, so it gets no memory of its own. dwBufferBytes is guest
+        // data, so report out-of-memory instead of panicking on a size the
+        // shared buffer heap cannot satisfy.
+        let (data, size) = {
+            let mut state = lock();
+            if primary {
+                (0, 0)
+            } else {
+                let size = desc.dwBufferBytes;
+                match state.heap().try_alloc(&mut ctx.memory, size) {
+                    Some(addr) => (addr, size),
+                    None => return DSERR_OUTOFMEMORY,
+                }
+            }
         };
+
+        let mut kernel32 = kernel32::lock();
+        let addr = IDirectSoundBuffer::new(ctx, &mut kernel32.process_heap);
+        drop(kernel32);
+
+        let mut state = lock();
         state.buffers.insert(
             addr,
             Buffer {
