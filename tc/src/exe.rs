@@ -1,13 +1,14 @@
 //! EXE loading.
 
+use anyhow::{Context, Result};
 use runtime::segofs;
 
 use crate::{DOSModule, Import, Module, WindowsModule, memory::Memory};
 
-pub fn load_exe(mem: &mut Memory, buf: Vec<u8>) -> Module {
-    match exe::parse(&buf).unwrap() {
-        exe::Parse::PE(pe) => Module::Windows(load_pe(mem, &buf, pe)),
-        exe::Parse::DOS(dos) => Module::DOS(load_dos(mem, &buf, dos)),
+pub fn load_exe(mem: &mut Memory, buf: Vec<u8>) -> Result<Module> {
+    match exe::parse(&buf).context("parsing executable")? {
+        exe::Parse::PE(pe) => Ok(Module::Windows(load_pe(mem, &buf, pe))),
+        exe::Parse::DOS(dos) => Ok(Module::DOS(load_dos(mem, &buf, dos))),
     }
 }
 
@@ -18,12 +19,17 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
 
     let load_segment = psp_segment + 0x10;
     let load_addr = segofs(load_segment, 0);
-    let data = &buf[dos.image_offset()..];
+    let data = buf.get(dos.image_offset()..).unwrap_or(&[]);
     mem.reserve("dos data".into(), load_addr, data.len() as u32);
-    mem.slice_mut(load_addr, data.len() as u32)
-        .copy_from_slice(data);
+    if !data.is_empty() {
+        mem.slice_mut(load_addr, data.len() as u32)
+            .copy_from_slice(data);
+    }
 
-    dos.apply_relocations(load_segment, &mut mem.bytes[load_addr as usize..]);
+    dos.apply_relocations(
+        load_segment,
+        &mut mem.bytes[load_addr as usize..][..data.len()],
+    );
 
     DOSModule {
         is_com: false,

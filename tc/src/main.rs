@@ -104,13 +104,13 @@ fn run() -> anyhow::Result<()> {
         );
     }
 
-    let buf = std::fs::read(&args.exe).unwrap();
+    let buf = std::fs::read(&args.exe)?;
     if args.exe.to_ascii_lowercase().ends_with(".com") {
         state.module = Module::DOS(tc::com::load_com(&mut state.mem, buf));
     } else if args.exe.to_ascii_lowercase().ends_with(".exe")
         || args.exe.to_ascii_lowercase().ends_with(".icd")
     {
-        state.module = tc::exe::load_exe(&mut state.mem, buf);
+        state.module = tc::exe::load_exe(&mut state.mem, buf)?;
         state.init_imports();
     } else {
         anyhow::bail!("unexpected file extension; expected .com, .exe, or .icd");
