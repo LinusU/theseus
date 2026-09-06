@@ -102,7 +102,7 @@ fn winmm_main(ctx: &mut Context) {
             if !timer.periodic {
                 lock.timers.remove(&id);
             } else if let Some(t) = lock.timers.get_mut(&id) {
-                t.next = now + t.period;
+                t.next = now.saturating_add(t.period);
             }
             timers.push(timer);
         }

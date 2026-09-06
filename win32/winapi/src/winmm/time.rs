@@ -92,7 +92,10 @@ pub fn timeSetEvent(
             Timer {
                 id,
                 period: uDelay,
-                next: host::host().time() + uDelay,
+                // Saturate rather than wrap: the worker compares
+                // `next <= now` directly, so a wrapped `next` would fire
+                // immediately instead of far in the future.
+                next: host::host().time().saturating_add(uDelay),
                 periodic: fuEvent.periodic,
                 notify,
                 user_data: dwUser,
