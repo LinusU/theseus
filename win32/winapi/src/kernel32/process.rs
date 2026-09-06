@@ -79,7 +79,11 @@ fn align_to_4(x: usize) -> usize {
 
 impl kernel32::State {
     pub fn init_process(&mut self, ctx: &mut Context) {
-        let process_data_addr = self.mappings.alloc("process data".into(), 0x1000);
+        let memory_size = ctx.memory.bytes.len() as u32;
+        let process_data_addr = self
+            .mappings
+            .try_alloc("process data".into(), 0x1000, memory_size)
+            .expect("process data mapping could not be allocated");
 
         let origin = ctx.memory.as_ptr() as usize;
         let Some(end) = process_data_addr.checked_add(0x1000) else {
@@ -130,7 +134,10 @@ impl kernel32::State {
         // Games of this era load whole asset archives into the process heap,
         // so give it room; the address space is ours to spend.
         let heap_size = 64 << 20;
-        let heap_addr = self.mappings.alloc("process heap".into(), heap_size);
+        let heap_addr = self
+            .mappings
+            .try_alloc("process heap".into(), heap_size, memory_size)
+            .expect("process heap mapping could not be allocated");
         let process_heap = Heap::new(heap_addr, heap_size);
         peb.ProcessHeap = process_heap.addr;
         self.process_heap = process_heap;

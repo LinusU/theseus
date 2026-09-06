@@ -114,10 +114,15 @@ impl kernel32::State {
 
     // shared between the process initial thread and create_thread
     pub fn init_thread(&mut self, ctx: &mut Context, peb_addr: u32) {
-        let teb_addr = self.mappings.alloc(
-            format!("thread {} TEB", ctx.thread_id),
-            std::mem::size_of::<TEB>() as u32,
-        );
+        let memory_size = ctx.memory.bytes.len() as u32;
+        let teb_addr = self
+            .mappings
+            .try_alloc(
+                format!("thread {} TEB", ctx.thread_id),
+                std::mem::size_of::<TEB>() as u32,
+                memory_size,
+            )
+            .expect("thread TEB mapping could not be allocated");
         let teb = Ptr::<TEB>::new(teb_addr)
             .aligned_mut(&mut ctx.memory)
             .unwrap();
@@ -128,7 +133,12 @@ impl kernel32::State {
         let stack_size = 64 << 10;
         let stack_addr = self
             .mappings
-            .alloc(format!("thread {} stack", ctx.thread_id), stack_size);
+            .try_alloc(
+                format!("thread {} stack", ctx.thread_id),
+                stack_size,
+                memory_size,
+            )
+            .expect("thread stack mapping could not be allocated");
         let stack_pointer = stack_addr + stack_size;
         ctx.cpu.regs.esp = stack_pointer;
         ctx.cpu.regs.ebp = stack_pointer;

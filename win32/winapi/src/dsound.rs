@@ -241,16 +241,19 @@ fn init() {
 }
 
 impl State {
-    fn heap(&mut self) -> &Heap {
-        self.heap.get_or_insert_with(|| {
+    fn heap(&mut self, memory_size: u32) -> Option<&mut Heap> {
+        if self.heap.is_none() {
             // Games allocate a buffer per sound instance and are lax about
             // releasing them, so leave plenty of room.
             const HEAP_SIZE: u32 = 64 << 20;
-            let addr = kernel32::lock()
-                .mappings
-                .alloc("dsound buffers".into(), HEAP_SIZE);
-            Heap::new(addr, HEAP_SIZE)
-        })
+            let addr = kernel32::lock().mappings.try_alloc(
+                "dsound buffers".into(),
+                HEAP_SIZE,
+                memory_size,
+            )?;
+            self.heap = Some(Heap::new(addr, HEAP_SIZE));
+        }
+        self.heap.as_mut()
     }
 
     fn stream(&mut self) -> &host::AudioStream {
@@ -451,7 +454,11 @@ pub mod IDirectSound {
                 (0, 0)
             } else {
                 let size = desc.dwBufferBytes;
-                match state.heap().try_alloc(&mut ctx.memory, size) {
+                let memory_size = ctx.memory.bytes.len() as u32;
+                let Some(heap) = state.heap(memory_size) else {
+                    return DSERR_OUTOFMEMORY;
+                };
+                match heap.try_alloc(&mut ctx.memory, size) {
                     Some(addr) => (addr, size),
                     None => return DSERR_OUTOFMEMORY,
                 }
@@ -652,7 +659,10 @@ pub mod IDirectSoundBuffer {
                 .values()
                 .any(|other| other.addr == buffer.addr);
             if buffer.addr != 0 && !shared {
-                state.heap().free(&mut ctx.memory, buffer.addr);
+                let memory_size = ctx.memory.bytes.len() as u32;
+                if let Some(heap) = state.heap(memory_size) {
+                    heap.free(&mut ctx.memory, buffer.addr);
+                }
             }
         }
         0
