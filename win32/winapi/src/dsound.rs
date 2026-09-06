@@ -787,7 +787,9 @@ pub mod IDirectSoundBuffer {
                     wFormatTag: WAVE_FORMAT_PCM,
                     nChannels: format.channels as u16,
                     nSamplesPerSec: format.rate,
-                    nAvgBytesPerSec: format.rate * block_align as u32,
+                    // The guest picks the rate; saturate rather than wrap a
+                    // bogus nAvgBytesPerSec.
+                    nAvgBytesPerSec: format.rate.saturating_mul(block_align as u32),
                     nBlockAlign: block_align,
                     wBitsPerSample: format.bits as u16,
                     cbSize: 0,
