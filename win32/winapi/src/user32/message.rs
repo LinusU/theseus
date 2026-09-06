@@ -663,6 +663,16 @@ pub fn GetMessageW(
 }
 
 #[win32_derive::dllexport]
+pub fn TranslateAcceleratorA(
+    _ctx: &mut Context,
+    _hWnd: HWND,
+    _hAccTable: HACCEL,
+    _lpMsg: Ptr<MSG>,
+) -> i32 {
+    stub!(0) // no translation
+}
+
+#[win32_derive::dllexport]
 pub fn TranslateAcceleratorW(
     _ctx: &mut Context,
     _hWnd: HWND,

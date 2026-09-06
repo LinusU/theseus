@@ -1,7 +1,7 @@
 use runtime::*;
 
 use super::*;
-use crate::{Ptr, dllexport::win32flags, gdi32, handle::HANDLE, kernel32, stub};
+use crate::{Ptr, dllexport::win32flags, gdi32, handle::HANDLE, kernel32};
 
 #[win32_derive::dllexport]
 pub fn LoadCursorA(_ctx: &mut Context, hInstance: HINSTANCE, lpCursorName: Ptr<u8>) -> HCURSOR {
@@ -89,13 +89,60 @@ pub type HCURSOR = u32;
 pub type HICON = u32;
 pub type HMENU = u32;
 
+/// Resolve an int-resource or string name and look it up in the module's
+/// resource section. The resource's guest address is the opaque load handle:
+/// it is stable, unique per resource, and valid for the module's lifetime.
+fn load_named_resource(
+    ctx: &Context,
+    hInstance: HINSTANCE,
+    addr: u32,
+    typ: u32,
+    wide: bool,
+) -> u32 {
+    let wide_name;
+    let name = if is_intresource(addr) {
+        exe::ResourceName::Id(addr)
+    } else {
+        // Resource names are Unicode; the ANSI form widens each byte.
+        wide_name = if wide {
+            ctx.memory.read_wstr(addr)
+        } else {
+            widestring::U16String::from_str(ctx.memory.read_str(addr))
+        };
+        exe::ResourceName::Name(&wide_name)
+    };
+    let Some(buf) =
+        kernel32::lock().find_resource(ctx, hInstance, exe::ResourceName::Id(typ), name)
+    else {
+        return 0;
+    };
+    unsafe { buf.as_ptr().offset_from_unsigned(ctx.memory.as_ptr()) as u32 }
+}
+
+#[win32_derive::dllexport]
+pub fn LoadAcceleratorsA(ctx: &mut Context, hInstance: HINSTANCE, lpTableName: Ptr<u8>) -> HACCEL {
+    load_named_resource(
+        ctx,
+        hInstance,
+        lpTableName.addr,
+        9, /* RT_ACCELERATOR */
+        false,
+    )
+}
+
 #[win32_derive::dllexport]
 pub fn LoadAcceleratorsW(
-    _ctx: &mut Context,
-    _hInstance: HINSTANCE,
-    _lpTableName: Ptr<u16>, /* WSTR */
+    ctx: &mut Context,
+    hInstance: HINSTANCE,
+    lpTableName: Ptr<u16>, /* WSTR */
 ) -> HACCEL {
-    stub!(0)
+    load_named_resource(
+        ctx,
+        hInstance,
+        lpTableName.addr,
+        9, /* RT_ACCELERATOR */
+        true,
+    )
 }
 
 #[win32_derive::dllexport]
@@ -117,12 +164,17 @@ pub fn LoadIconW(
 }
 
 #[win32_derive::dllexport]
+pub fn LoadMenuA(ctx: &mut Context, hInstance: HINSTANCE, lpMenuName: Ptr<u8>) -> HMENU {
+    load_named_resource(ctx, hInstance, lpMenuName.addr, 4 /* RT_MENU */, false)
+}
+
+#[win32_derive::dllexport]
 pub fn LoadMenuW(
-    _ctx: &mut Context,
-    _hInstance: HINSTANCE,
-    _lpMenuName: Ptr<u16>, /* WSTR */
+    ctx: &mut Context,
+    hInstance: HINSTANCE,
+    lpMenuName: Ptr<u16>, /* WSTR */
 ) -> HMENU {
-    stub!(0)
+    load_named_resource(ctx, hInstance, lpMenuName.addr, 4 /* RT_MENU */, true)
 }
 
 fn find_string(ctx: &Context, hInstance: HINSTANCE, uID: u32) -> Option<&[u8]> {
