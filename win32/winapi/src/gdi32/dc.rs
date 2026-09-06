@@ -245,6 +245,10 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
         if lpString.addr < 0x1000 || end as usize > ctx.memory.bytes.len() {
             return false;
         }
+    } else {
+        // Drawing zero characters is a no-op; do not touch the (possibly
+        // invalid) pointer so a guest cannot panic the host.
+        return true;
     }
     let string = ctx.memory[lpString.addr..][..count].to_vec();
     let mut state = gdi32::lock();
