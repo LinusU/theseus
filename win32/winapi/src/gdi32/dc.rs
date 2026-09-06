@@ -396,7 +396,9 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
         return false;
     };
     let bitmap = dc.bitmap();
-    assert!(bitmap.is_simple());
+    if !bitmap.is_simple() {
+        return false;
+    }
     let stride = bitmap.stride();
     let width = bitmap.width;
     let height = bitmap.height;
