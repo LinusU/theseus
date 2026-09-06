@@ -1235,7 +1235,12 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         }
         let mut light = [0u8; D3DLIGHT7_SIZE];
-        light.copy_from_slice(&ctx.memory[lpLight..][..D3DLIGHT7_SIZE]);
+        let start = lpLight as usize;
+        let end = start + D3DLIGHT7_SIZE;
+        let Some(src) = ctx.memory.bytes.get(start..end) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        light.copy_from_slice(src);
         let mut devices = d3d_state().devices.borrow_mut();
         let Some(device) = devices.get_mut(&this) else {
             return DD::ERR_INVALIDPARAMS;
@@ -1259,7 +1264,12 @@ pub mod IDirect3DDevice7 {
         if !crate::ddraw::ddraw::guest_range(ctx, lpLight, D3DLIGHT7_SIZE as u32) {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory[lpLight..][..D3DLIGHT7_SIZE].copy_from_slice(light);
+        let start = lpLight as usize;
+        let end = start + D3DLIGHT7_SIZE;
+        let Some(dst) = ctx.memory.bytes.get_mut(start..end) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        dst.copy_from_slice(light);
         DD::OK
     }
 
