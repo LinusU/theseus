@@ -207,8 +207,9 @@ pub fn mciSendCommandA(
 
 #[win32_derive::dllexport]
 pub fn mmioOpenA(ctx: &mut Context, szFilename: u32, _lpmmioinfo: u32, _dwOpenFlags: u32) -> u32 {
-    if szFilename == 0 {
-        // Opening a memory buffer rather than a file; no caller needs it.
+    if szFilename < 0x1000 {
+        // A null name opens a memory buffer (unsupported) and a low non-null
+        // pointer is invalid; both fail the open with a null HMMIO.
         log::warn!("mmioOpenA: no filename");
         return 0;
     }
@@ -520,6 +521,10 @@ mod tests {
     fn mmio_calls_reject_out_of_range_guest_pointers() {
         let mut ctx = context();
         let oob = ctx.memory.bytes.len() as u32; // just past the end
+
+        // Null and low filename pointers fail the open outright.
+        assert_eq!(mmioOpenA(&mut ctx, 0, 0, 0), 0);
+        assert_eq!(mmioOpenA(&mut ctx, 0x500, 0, 0), 0);
 
         assert_eq!(mmioRead(&mut ctx, 7, 0x1000, 16), MMIO_FAILURE);
         assert_eq!(
