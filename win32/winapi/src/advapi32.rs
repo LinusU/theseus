@@ -185,12 +185,17 @@ pub fn RegOpenKeyExA(
     ERROR_SUCCESS
 }
 
-fn value_name(ctx: &Context, addr: u32) -> String {
+/// A null name asks for the key's default value; a low non-null pointer is
+/// invalid and yields `None`.
+fn value_name(ctx: &Context, addr: u32, wide: bool) -> Option<String> {
     if addr == 0 {
-        // A null name asks for the key's default value.
-        String::new()
+        Some(String::new())
+    } else if addr < 0x1000 {
+        None
+    } else if wide {
+        Some(ctx.memory.read_wstr(addr).to_string_lossy().to_uppercase())
     } else {
-        ctx.memory.read_str(addr).to_uppercase()
+        Some(ctx.memory.read_str(addr).to_uppercase())
     }
 }
 
@@ -202,6 +207,14 @@ fn reg_query_value(
     lp_data: u32,
     lpcb_data: u32,
 ) -> u32 {
+    // Null out-pointers are legal "don't care" markers, but a low non-null
+    // pointer would read or write the emulated null page.
+    if (lp_type != 0 && lp_type < 0x1000)
+        || (lpcb_data != 0 && lpcb_data < 0x1000)
+        || (lp_data != 0 && lp_data < 0x1000)
+    {
+        return ERROR_INVALID_PARAMETER;
+    }
     let reg = registry();
     let Some(path) = key_path(&reg, hkey) else {
         return ERROR_INVALID_HANDLE;
@@ -248,7 +261,9 @@ pub fn RegQueryValueExA(
     lpData: u32,
     lpcbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    let name = value_name(ctx, lpValueName);
+    let Some(name) = value_name(ctx, lpValueName, false) else {
+        return ERROR_INVALID_PARAMETER;
+    };
     reg_query_value(ctx, hKey, name, lpType, lpData, lpcbData)
 }
 
@@ -262,13 +277,8 @@ pub fn RegQueryValueExW(
     lpData: u32,
     lpcbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    let name = if lpValueName == 0 {
-        String::new()
-    } else {
-        ctx.memory
-            .read_wstr(lpValueName)
-            .to_string_lossy()
-            .to_uppercase()
+    let Some(name) = value_name(ctx, lpValueName, true) else {
+        return ERROR_INVALID_PARAMETER;
     };
     reg_query_value(ctx, hKey, name, lpType, lpData, lpcbData)
 }
@@ -283,13 +293,8 @@ pub fn RegSetValueExW(
     lpData: u32,
     cbData: u32,
 ) -> u32 /* WIN32_ERROR */ {
-    let name = if lpValueName == 0 {
-        String::new()
-    } else {
-        ctx.memory
-            .read_wstr(lpValueName)
-            .to_string_lossy()
-            .to_uppercase()
+    let Some(name) = value_name(ctx, lpValueName, true) else {
+        return ERROR_INVALID_PARAMETER;
     };
     let mut reg = registry();
     let Some(path) = key_path(&reg, hKey) else {
@@ -297,6 +302,8 @@ pub fn RegSetValueExW(
     };
     let data = if lpData == 0 {
         Vec::new()
+    } else if lpData < 0x1000 {
+        return ERROR_INVALID_PARAMETER;
     } else {
         let Some(bytes) = ctx
             .memory
@@ -363,6 +370,34 @@ mod tests {
         // Setting through a bad data pointer is an explicit error.
         assert_eq!(
             RegSetValueExW(&mut ctx, HKCR, 0, 0, 1, 0xffff_fff0, 8),
+            ERROR_INVALID_PARAMETER
+        );
+
+        // Low non-null value-name pointers are invalid, not the default value.
+        assert_eq!(
+            RegQueryValueExA(&mut ctx, HKCR, 0x500, 0, 0, 0, 0),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0x500, 0, 0, 0, 0),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegSetValueExW(&mut ctx, HKCR, 0x500, 0, 1, 0x3000, 4),
+            ERROR_INVALID_PARAMETER
+        );
+
+        // Low out-pointers fail instead of touching the null page.
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0, 0, 0x500, 0x2000, 0x2000),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0, 0, 0, 0x500, 0x2000),
+            ERROR_INVALID_PARAMETER
+        );
+        assert_eq!(
+            RegSetValueExW(&mut ctx, HKCR, 0, 0, 1, 0x500, 4),
             ERROR_INVALID_PARAMETER
         );
 
