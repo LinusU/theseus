@@ -351,14 +351,20 @@ pub fn LeaveCriticalSection(_ctx: &mut Context, lpCriticalSection: Ptr<()>) {
 
 #[win32_derive::dllexport]
 pub fn InterlockedIncrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
-    let value = Addend.read(&ctx.memory).unwrap_or_default().wrapping_add(1);
+    let Some(value) = Addend.read(&ctx.memory) else {
+        return 0;
+    };
+    let value = value.wrapping_add(1);
     let _ = Addend.write(&mut ctx.memory, value);
     value
 }
 
 #[win32_derive::dllexport]
 pub fn InterlockedDecrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
-    let value = Addend.read(&ctx.memory).unwrap_or_default().wrapping_sub(1);
+    let Some(value) = Addend.read(&ctx.memory) else {
+        return 0;
+    };
+    let value = value.wrapping_sub(1);
     let _ = Addend.write(&mut ctx.memory, value);
     value
 }
@@ -391,7 +397,9 @@ pub fn SetThreadPriority(
 
 #[cfg(test)]
 mod tests {
-    use super::{TlsAlloc, TlsFree, TlsGetValue, TlsSetValue};
+    use super::{
+        InterlockedDecrement, InterlockedIncrement, TlsAlloc, TlsFree, TlsGetValue, TlsSetValue,
+    };
     use crate::kernel32::ensure_test_state;
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -435,6 +443,25 @@ mod tests {
 
     fn teb_last_error(ctx: &mut Context) -> u32 {
         crate::kernel32::teb(ctx).unwrap().LastErrorValue
+    }
+
+    #[test]
+    fn interlocked_ops_reject_unreadable_pointers() {
+        use crate::Ptr;
+
+        let mut ctx = context();
+        ctx.memory.write::<i32>(0x1000, 41);
+
+        assert_eq!(InterlockedIncrement(&mut ctx, Ptr::new(0x1000)), 42);
+        assert_eq!(ctx.memory.read::<i32>(0x1000), 42);
+
+        assert_eq!(InterlockedDecrement(&mut ctx, Ptr::new(0x1000)), 41);
+        assert_eq!(ctx.memory.read::<i32>(0x1000), 41);
+
+        // A bad pointer returns zero and leaves the value untouched.
+        assert_eq!(InterlockedIncrement(&mut ctx, Ptr::new(0xffff_ff00)), 0);
+        assert_eq!(InterlockedDecrement(&mut ctx, Ptr::new(0xffff_ff00)), 0);
+        assert_eq!(ctx.memory.read::<i32>(0x1000), 41);
     }
 
     #[test]
