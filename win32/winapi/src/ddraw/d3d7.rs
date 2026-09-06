@@ -2601,9 +2601,10 @@ fn rasterize(
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
                 for i in 0..(w * h) {
                     let p = ctx.memory.read::<u16>(addr + i * 2);
-                    out.push((((p >> 11) & 0x1f) << 3) as u8);
-                    out.push((((p >> 5) & 0x3f) << 2) as u8);
-                    out.push(((p & 0x1f) << 3) as u8);
+                    let (r, g, b, _a) = decode_texel(p, tex_fmt);
+                    out.push(r);
+                    out.push(g);
+                    out.push(b);
                 }
                 let _ = std::fs::write(&path, out);
             }
@@ -2711,11 +2712,19 @@ fn rasterize(
 
     let vsize = vertex_size(dwVertexTypeDesc);
     let stride = t.rt_width * t.rt_bpp;
-    // THESEUS_PROBE=x,y logs every draw that writes that render-target pixel.
-    let probe_addr = std::env::var("THESEUS_PROBE").ok().and_then(|s| {
-        let (x, y) = s.split_once(',')?;
-        Some(t.rt_addr + y.parse::<u32>().ok()? * stride + x.parse::<u32>().ok()? * 2)
+    // THESEUS_PROBE=x,y logs every draw that writes that render-target
+    // pixel; THESEUS_PROBE=x,y,w,h widens it to a rectangle for artifacts
+    // that move between runs.
+    let probe = std::env::var("THESEUS_PROBE").ok().and_then(|s| {
+        let mut f = s.split(',').map(|p| p.parse::<i32>().ok());
+        Some((
+            f.next()??,
+            f.next()??,
+            f.next().flatten().unwrap_or(0),
+            f.next().flatten().unwrap_or(0),
+        ))
     });
+    let mut probe_hit = false;
     // Z-testing is only meaningful when a z-buffer is actually attached.
     let zbuf_addr = if t.zenable != 0 && std::env::var("THESEUS_NO_ZTEST").is_err() {
         t.zbuf_addr
@@ -3050,7 +3059,12 @@ fn rasterize(
                 ctx.memory.write::<u16>(pixel_addr, color);
                 pixels_written += 1;
                 last_color = color;
-                if probe_addr == Some(pixel_addr) {
+                if !probe_hit
+                    && probe.is_some_and(|(x, y, w, h)| {
+                        (x..=x + w).contains(&px) && (y..=y + h).contains(&py)
+                    })
+                {
+                    probe_hit = true;
                     log::warn!(
                         "rasterize probe: prim={dptPrimitiveType} fvf={dwVertexTypeDesc:#x} tri={tri:?} rt={:#x} tex={:#x} fmt={} {}x{} mips={} color={color:#06x} sa={} zen={} zw={} zf={} atest={} afunc={} aref={} blend={} sb={} db={} a=({},{},z={} d={:#x} uv={},{}) b=({},{},z={} d={:#x} uv={},{}) c=({},{},z={} d={:#x} uv={},{})",
                         t.rt_addr,
@@ -3108,9 +3122,10 @@ fn rasterize(
                                     .and_then(|b| <[u8; 2]>::try_from(b).ok())
                                     .map(u16::from_le_bytes)
                                     .unwrap_or(0);
-                                out.push((((p >> 11) & 0x1f) << 3) as u8);
-                                out.push((((p >> 5) & 0x3f) << 2) as u8);
-                                out.push(((p & 0x1f) << 3) as u8);
+                                let (r, g, b, _a) = decode_texel(p, t.tex_fmt);
+                                out.push(r);
+                                out.push(g);
+                                out.push(b);
                             }
                             let path = format!("/tmp/probe_tex_{ta:08x}.ppm");
                             let _ = std::fs::write(&path, out);
