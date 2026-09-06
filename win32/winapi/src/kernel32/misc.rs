@@ -60,10 +60,14 @@ pub fn IsProcessorFeaturePresent(_ctx: &mut Context, ProcessorFeature: u32) -> b
 #[win32_derive::dllexport]
 pub fn GetComputerNameA(ctx: &mut Context, lpBuffer: Ptr<u8>, nSize: Ptr<u32>) -> bool {
     let name = b"THESEUS";
-    let size = nSize.read(&ctx.memory).unwrap_or(0);
+    if nSize.addr < 0x1000 || lpBuffer.addr < 0x1000 {
+        return false;
+    }
+    let Some(size) = nSize.read(&ctx.memory) else {
+        return false;
+    };
     let output_len = name.len() + 1;
-    if lpBuffer.addr < 0x1000
-        || (size as usize) < output_len
+    if (size as usize) < output_len
         || (lpBuffer.addr as usize)
             .checked_add(output_len)
             .is_none_or(|end| end > ctx.memory.bytes.len())
@@ -485,6 +489,13 @@ mod tests {
             &mut ctx,
             Ptr::new(0x2000),
             Ptr::new(0xffff_ff00),
+        ));
+
+        // A non-null size pointer in the null page fails without a log.
+        assert!(!GetComputerNameA(
+            &mut ctx,
+            Ptr::new(0x2000),
+            Ptr::new(0x500)
         ));
 
         // Success path writes the name, null terminator, and length.

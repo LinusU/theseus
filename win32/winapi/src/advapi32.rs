@@ -94,7 +94,12 @@ pub fn GetUserNameA(
     pcbBuffer: crate::Ptr<u32>,
 ) -> bool {
     let name = b"user";
-    let size = pcbBuffer.read(&ctx.memory).unwrap_or(0);
+    if pcbBuffer.addr < 0x1000 || lpBuffer.addr < 0x1000 {
+        return false;
+    }
+    let Some(size) = pcbBuffer.read(&ctx.memory) else {
+        return false;
+    };
     if (size as usize) < name.len() + 1 {
         return false;
     }
@@ -368,6 +373,18 @@ mod tests {
             &mut ctx,
             crate::Ptr::new(0x2000),
             crate::Ptr::new(0xffff_fff0)
+        ));
+
+        // Low non-null pointers in either argument fail without touching the null page.
+        assert!(!GetUserNameA(
+            &mut ctx,
+            crate::Ptr::new(0x2000),
+            crate::Ptr::new(0x500)
+        ));
+        assert!(!GetUserNameA(
+            &mut ctx,
+            crate::Ptr::new(0x500),
+            crate::Ptr::new(0x2000)
         ));
 
         // A value set through a good pointer can be queried; a bad data
