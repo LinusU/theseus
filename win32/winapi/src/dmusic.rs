@@ -928,8 +928,11 @@ pub mod music_object {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return E_POINTER;
         }
+        let ppv_out = crate::Ptr::<u32>::new(ppv);
         let Some(iid) = read_guid(ctx, riid) else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            if ppv_out.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
             return E_NOINTERFACE;
         };
         if iid_matches(&iid, &[IID_IDirectMusicObject]) {
@@ -945,8 +948,9 @@ pub mod music_object {
             super::segment::create(ctx, riid, ppv)
         } else if iid == IID_IPersistStream {
             super::persist_stream::create(ctx, riid, ppv)
+        } else if ppv_out.write(&mut ctx.memory, 0).is_none() {
+            E_POINTER
         } else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
             E_NOINTERFACE
         }
     }
@@ -1113,8 +1117,11 @@ pub mod persist_stream {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return E_POINTER;
         }
+        let ppv_out = crate::Ptr::<u32>::new(ppv);
         let Some(iid) = read_guid(ctx, riid) else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            if ppv_out.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
             return E_NOINTERFACE;
         };
         if iid == IID_IPersistStream || iid == IID_IPersist || iid_matches(&iid, &[IID_IUnknown]) {
@@ -1130,8 +1137,9 @@ pub mod persist_stream {
             super::segment::create(ctx, riid, ppv)
         } else if iid == IID_IDirectMusicObject {
             super::music_object::create(ctx, riid, ppv)
+        } else if ppv_out.write(&mut ctx.memory, 0).is_none() {
+            E_POINTER
         } else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
             E_NOINTERFACE
         }
     }
@@ -1316,8 +1324,11 @@ pub mod segment {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return E_POINTER;
         }
+        let ppv_out = crate::Ptr::<u32>::new(ppv);
         let Some(iid) = read_guid(ctx, riid) else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            if ppv_out.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
             return E_NOINTERFACE;
         };
         if iid_matches(
@@ -1343,8 +1354,9 @@ pub mod segment {
             super::music_object::create(ctx, riid, ppv)
         } else if iid == IID_IPersistStream || iid == IID_IPersist {
             super::persist_stream::create(ctx, riid, ppv)
+        } else if ppv_out.write(&mut ctx.memory, 0).is_none() {
+            E_POINTER
         } else {
-            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
             E_NOINTERFACE
         }
     }
