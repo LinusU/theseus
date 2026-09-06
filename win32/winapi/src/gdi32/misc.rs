@@ -78,7 +78,11 @@ pub enum GetDeviceCapsArg {
 }
 
 #[win32_derive::dllexport]
-pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: GetDeviceCapsArg) -> i32 {
+pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: u32) -> i32 {
+    let Ok(index) = GetDeviceCapsArg::try_from(index) else {
+        log::warn!("GetDeviceCaps({index}): unknown device capability");
+        return 0;
+    };
     use GetDeviceCapsArg::*;
     // Capabilities of the emulated 640x480 32bpp raster display at 60 Hz and
     // 96 DPI, matching the user32 display-mode model.
@@ -136,19 +140,28 @@ mod tests {
     fn device_caps_match_the_emulated_display() {
         let mut ctx = context();
         let hdc = HDC::null();
-        assert_eq!(GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::HORZRES), 640);
-        assert_eq!(GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::VERTRES), 480);
         assert_eq!(
-            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::BITSPIXEL),
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::HORZRES as u32),
+            640
+        );
+        assert_eq!(
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::VERTRES as u32),
+            480
+        );
+        assert_eq!(
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::BITSPIXEL as u32),
             32
         );
-        assert_eq!(GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::VREFRESH), 60);
         assert_eq!(
-            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::NUMCOLORS),
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::VREFRESH as u32),
+            60
+        );
+        assert_eq!(
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::NUMCOLORS as u32),
             -1
         );
         assert_eq!(
-            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::SIZEPALETTE),
+            GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::SIZEPALETTE as u32),
             0
         );
     }
