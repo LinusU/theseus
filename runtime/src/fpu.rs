@@ -370,24 +370,24 @@ impl FPU {
 
     pub fn store_env(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
         memory.write(addr, self.control);
-        memory.write(addr.wrapping_add(4), self.status());
-        memory.write(addr.wrapping_add(8), self.tag_word());
-        memory.write(addr.wrapping_add(12), 0u32);
-        memory.write(addr.wrapping_add(16), 0u16);
-        memory.write(addr.wrapping_add(18), 0u16);
-        memory.write(addr.wrapping_add(20), 0u32);
-        memory.write(addr.wrapping_add(24), 0u16);
+        memory.write(addr.saturating_add(4), self.status());
+        memory.write(addr.saturating_add(8), self.tag_word());
+        memory.write(addr.saturating_add(12), 0u32);
+        memory.write(addr.saturating_add(16), 0u16);
+        memory.write(addr.saturating_add(18), 0u16);
+        memory.write(addr.saturating_add(20), 0u32);
+        memory.write(addr.saturating_add(24), 0u16);
         self.control |= 0x003f;
     }
 
     pub fn store_env16(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
         memory.write(addr, self.control);
-        memory.write(addr.wrapping_add(2), self.status());
-        memory.write(addr.wrapping_add(4), self.tag_word());
-        memory.write(addr.wrapping_add(6), 0u16);
-        memory.write(addr.wrapping_add(8), 0u16);
-        memory.write(addr.wrapping_add(10), 0u16);
-        memory.write(addr.wrapping_add(12), 0u16);
+        memory.write(addr.saturating_add(2), self.status());
+        memory.write(addr.saturating_add(4), self.tag_word());
+        memory.write(addr.saturating_add(6), 0u16);
+        memory.write(addr.saturating_add(8), 0u16);
+        memory.write(addr.saturating_add(10), 0u16);
+        memory.write(addr.saturating_add(12), 0u16);
         self.control |= 0x003f;
     }
 
@@ -412,15 +412,15 @@ impl FPU {
 
     pub fn load_env(&mut self, memory: &crate::Memory<'_>, addr: u32) {
         self.control = memory.read(addr);
-        let status: u16 = memory.read(addr.wrapping_add(4));
-        let tag: u16 = memory.read(addr.wrapping_add(8));
+        let status: u16 = memory.read(addr.saturating_add(4));
+        let tag: u16 = memory.read(addr.saturating_add(8));
         self.load_status(status, tag);
     }
 
     pub fn load_env16(&mut self, memory: &crate::Memory<'_>, addr: u32) {
         self.control = memory.read(addr);
-        let status: u16 = memory.read(addr.wrapping_add(2));
-        let tag: u16 = memory.read(addr.wrapping_add(4));
+        let status: u16 = memory.read(addr.saturating_add(2));
+        let tag: u16 = memory.read(addr.saturating_add(4));
         self.load_status(status, tag);
     }
 
@@ -436,7 +436,7 @@ impl FPU {
         self.store_env(memory, addr);
         for (index, value) in self.st.iter().enumerate() {
             memory.write(
-                addr.wrapping_add(28 + index as u32 * 10),
+                addr.saturating_add(28 + index as u32 * 10),
                 F80::from_f64(*value),
             );
         }
@@ -447,7 +447,7 @@ impl FPU {
         self.store_env16(memory, addr);
         for (index, value) in self.st.iter().enumerate() {
             memory.write(
-                addr.wrapping_add(14 + index as u32 * 10),
+                addr.saturating_add(14 + index as u32 * 10),
                 F80::from_f64(*value),
             );
         }
@@ -458,7 +458,7 @@ impl FPU {
         self.load_env(memory, addr);
         for (index, value) in self.st.iter_mut().enumerate() {
             *value = memory
-                .read::<F80>(addr.wrapping_add(28 + index as u32 * 10))
+                .read::<F80>(addr.saturating_add(28 + index as u32 * 10))
                 .to_f64();
         }
     }
@@ -467,7 +467,7 @@ impl FPU {
         self.load_env16(memory, addr);
         for (index, value) in self.st.iter_mut().enumerate() {
             *value = memory
-                .read::<F80>(addr.wrapping_add(14 + index as u32 * 10))
+                .read::<F80>(addr.saturating_add(14 + index as u32 * 10))
                 .to_f64();
         }
     }
@@ -488,13 +488,13 @@ impl FPU {
     /// (FOP, the exception pointers, MXCSR, and the XMM registers) are zeroed,
     /// matching the pointer fields in the 28-byte environment image.
     pub fn fxsave(&mut self, memory: &mut crate::Memory<'_>, addr: u32) {
-        memory[addr..addr.wrapping_add(512)].fill(0);
+        memory[addr..addr.saturating_add(512)].fill(0);
         memory.write(addr, self.control);
-        memory.write(addr.wrapping_add(2), self.status());
-        memory.write(addr.wrapping_add(4), self.abridged_tag());
+        memory.write(addr.saturating_add(2), self.status());
+        memory.write(addr.saturating_add(4), self.abridged_tag());
         for (index, value) in self.st.iter().enumerate() {
             memory.write(
-                addr.wrapping_add(32 + index as u32 * 16),
+                addr.saturating_add(32 + index as u32 * 16),
                 F80::from_f64(*value),
             );
         }
@@ -504,8 +504,8 @@ impl FPU {
     /// The unmodeled XMM registers and MXCSR are ignored.
     pub fn fxrstor(&mut self, memory: &crate::Memory<'_>, addr: u32) {
         self.control = memory.read(addr);
-        let status: u16 = memory.read(addr.wrapping_add(2));
-        let abridged: u8 = memory.read(addr.wrapping_add(4));
+        let status: u16 = memory.read(addr.saturating_add(2));
+        let abridged: u8 = memory.read(addr.saturating_add(4));
         // Expand the abridged tag bits into the full tag word's empty/valid
         // encoding so load_status can detect an all-empty stack.
         let mut tag = u16::MAX;
@@ -517,7 +517,7 @@ impl FPU {
         self.load_status(status, tag);
         for (index, value) in self.st.iter_mut().enumerate() {
             *value = memory
-                .read::<F80>(addr.wrapping_add(32 + index as u32 * 16))
+                .read::<F80>(addr.saturating_add(32 + index as u32 * 16))
                 .to_f64();
         }
     }
