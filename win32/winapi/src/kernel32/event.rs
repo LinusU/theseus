@@ -165,7 +165,13 @@ pub fn WaitForMultipleObjects(
     const WAIT_FAILED: u32 = u32::MAX;
     const INFINITE: u32 = u32::MAX;
 
-    if nCount == 0 {
+    if nCount == 0 || nCount > 64 {
+        return WAIT_FAILED;
+    }
+    let Some(array_bytes) = nCount.checked_mul(4) else {
+        return WAIT_FAILED;
+    };
+    if lpHandles.addr == 0 || !crate::ddraw::guest_range(ctx, lpHandles.addr, array_bytes) {
         return WAIT_FAILED;
     }
     let mut waitables = Vec::with_capacity(nCount as usize);
