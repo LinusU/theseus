@@ -39,7 +39,7 @@ pub struct IMAGE_IMPORT_DESCRIPTOR {
 
 impl IMAGE_IMPORT_DESCRIPTOR {
     pub fn image_name<'m>(&self, image: &'m [u8]) -> &'m [u8] {
-        c_str(&image[self.Name as usize..])
+        c_str(image.get(self.Name as usize..).unwrap_or(&[]))
     }
 
     /// Return an iterator over entries in the ILT, which describe imported functions.
@@ -54,7 +54,8 @@ impl IMAGE_IMPORT_DESCRIPTOR {
         };
 
         // Import Lookup Table (section 6.4.2)
-        iter_pod::<ILTEntry>(&image[addr as usize..]).take_while(|entry| entry.0 != 0)
+        iter_pod::<ILTEntry>(image.get(addr as usize..).unwrap_or(&[]))
+            .take_while(|entry| entry.0 != 0)
     }
 
     /// Return an iterator over (IAT entry address, ILT entry) pairs.
@@ -101,8 +102,9 @@ impl ILTEntry {
         } else {
             // First two bytes at offset are hint/name table index, used to look up
             // the name faster in the DLL; we just skip them.
-            let sym_name = c_str(&image[entry as usize + 2..]);
-            ImportSymbol::Name(sym_name)
+            let start = (entry as usize).checked_add(2);
+            let name_buf = start.and_then(|start| image.get(start..)).unwrap_or(&[]);
+            ImportSymbol::Name(c_str(name_buf))
         }
     }
 }

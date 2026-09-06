@@ -104,4 +104,32 @@ mod tests {
         section[20..24].copy_from_slice(&0x8000_fff0u32.to_le_bytes()); // dir ptr
         assert!(find_resource(&section, query().0, query().1).is_none());
     }
+
+    #[test]
+    fn malformed_import_descriptors_do_not_panic() {
+        use crate::imports::ILTEntry;
+        use zerocopy::FromBytes;
+
+        // Build an import directory with one descriptor whose fields all point
+        // outside the (tiny) image buffer.
+        let mut import_dir = vec![0u8; 20];
+        import_dir[0..4].copy_from_slice(&200u32.to_le_bytes()); // OriginalFirstThunk
+        import_dir[12..16].copy_from_slice(&100u32.to_le_bytes()); // Name
+        import_dir[16..20].copy_from_slice(&50u32.to_le_bytes()); // FirstThunk
+
+        let image = vec![0u8; 64];
+        for imp in crate::read_imports(&import_dir) {
+            // These used to slice the image buffer directly and panic.
+            assert!(imp.image_name(&image).is_empty());
+            assert_eq!(imp.ilt(&image).count(), 0);
+
+            let ilt = <ILTEntry>::read_from_prefix(&300u32.to_le_bytes())
+                .unwrap()
+                .0;
+            assert!(matches!(
+                ilt.as_import_symbol(&image),
+                crate::ImportSymbol::Name(&[])
+            ));
+        }
+    }
 }
