@@ -193,6 +193,13 @@ pub struct MEMORYSTATUS {
 
 #[win32_derive::dllexport]
 pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
+    if !crate::ddraw::guest_range(
+        ctx,
+        lpBuffer.addr,
+        std::mem::size_of::<MEMORYSTATUS>() as u32,
+    ) {
+        return;
+    }
     let capacity = ctx.memory.bytes.len() as u32;
     let status = MEMORYSTATUS {
         dwLength: std::mem::size_of::<MEMORYSTATUS>() as u32,
@@ -448,9 +455,9 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GetComputerNameA, GetPrivateProfileStringW, GetSystemInfo, SYSTEM_INFO,
-        SetConsoleCtrlHandler, SetUnhandledExceptionFilter, lstrcpyW, lstrlenW,
-        processor_feature_present,
+        GetComputerNameA, GetPrivateProfileStringW, GetSystemInfo, GlobalMemoryStatus,
+        MEMORYSTATUS, SYSTEM_INFO, SetConsoleCtrlHandler, SetUnhandledExceptionFilter, lstrcpyW,
+        lstrlenW, processor_feature_present,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -481,6 +488,22 @@ mod tests {
         // A valid pointer writes the page size at offset 4.
         GetSystemInfo(&mut ctx, Ptr::new(0x1000));
         assert_eq!(ctx.memory.read::<u32>(0x1000 + 4), 0x1000);
+    }
+
+    #[test]
+    fn global_memory_status_rejects_bad_output_pointers() {
+        let mut ctx = context();
+        let size = std::mem::size_of::<MEMORYSTATUS>() as u32;
+        // Low and far out-of-range output pointers are rejected without panic.
+        GlobalMemoryStatus(&mut ctx, Ptr::new(0x500));
+        GlobalMemoryStatus(&mut ctx, Ptr::new(0xffff_fff0));
+        // A valid pointer writes the length and the emulated memory capacity.
+        GlobalMemoryStatus(&mut ctx, Ptr::new(0x1000));
+        assert_eq!(ctx.memory.read::<u32>(0x1000), size);
+        assert_eq!(
+            ctx.memory.read::<u32>(0x1000 + 8),
+            ctx.memory.bytes.len() as u32
+        );
     }
 
     #[test]
