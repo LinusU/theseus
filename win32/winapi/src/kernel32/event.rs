@@ -203,14 +203,13 @@ pub fn WaitForMultipleObjects(
                 all = false;
             }
         }
-        if (!bWaitAll && any.is_some()) || (bWaitAll && all) {
-            if bWaitAll {
-                for waitable in &waitables {
-                    waitable.consume();
-                }
-                return WAIT_OBJECT_0;
+        if bWaitAll && all {
+            for waitable in &waitables {
+                waitable.consume();
             }
-            let index = any.unwrap();
+            return WAIT_OBJECT_0;
+        }
+        if let Some(index) = any {
             waitables[index].consume();
             return WAIT_OBJECT_0 + index as u32;
         }
