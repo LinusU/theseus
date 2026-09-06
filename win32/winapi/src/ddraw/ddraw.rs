@@ -937,8 +937,10 @@ fn write_blit(
         return DD::ERR_INVALIDPARAMS;
     }
     let row_bytes = src_w * bpp as usize;
-    let dst_w = (want.right - want.left).max(0) as i64;
-    let dst_h = (want.bottom - want.top).max(0) as i64;
+    // Widen before subtracting: a guest rect's edges can be far enough
+    // apart to overflow i32.
+    let dst_w = (want.right as i64 - want.left as i64).max(0);
+    let dst_h = (want.bottom as i64 - want.top as i64).max(0);
     if dst_w as usize != src_w || dst_h as usize != src_h {
         if dst_w <= 0 || dst_h <= 0 || src_w == 0 || src_h == 0 {
             return DD::OK;
@@ -969,14 +971,20 @@ fn write_blit(
 
     // Whatever the clip took off the top and left has to come off the
     // source as well, otherwise the image slides instead of being cropped.
-    let skip_x = (rect.left - want.left).max(0) as usize * bpp as usize;
-    let skip_y = (rect.top - want.top).max(0) as usize;
+    let skip_x = (rect.left as i64 - want.left as i64).max(0) as usize * bpp as usize;
+    let skip_y = (rect.top as i64 - want.top as i64).max(0) as usize;
     let copy_bytes = row_bytes
         .saturating_sub(skip_x)
         .min(((rect.right - rect.left).max(0) as u32 * bpp) as usize);
     let copy_rows = src_h
         .saturating_sub(skip_y)
         .min((rect.bottom - rect.top).max(0) as usize);
+    // A `want` edge far outside the destination can push the source skip
+    // past the end of the staged rows; with nothing to write the loop is a
+    // no-op, and computing its slice index would panic instead.
+    if copy_bytes == 0 || copy_rows == 0 {
+        return DD::OK;
+    }
     for i in 0..copy_rows {
         let dst_start = addr + (rect.top + i as i32) as u32 * pitch + rect.left as u32 * bpp;
         let row = &rows[(i + skip_y) * row_bytes + skip_x..][..copy_bytes];
@@ -1434,6 +1442,39 @@ mod tests {
         );
         assert_eq!(ctx.memory.read::<u32>(0x4000), 0x11);
         assert_eq!(ctx.memory.read::<u32>(0x4004), 0xbb);
+    }
+
+    #[test]
+    fn write_blit_clips_a_far_offscreen_rect_without_panicking() {
+        let mut ctx = context();
+        // A same-size blit whose unclipped destination sits far off the
+        // left edge must crop to nothing instead of indexing the staged
+        // source rows past their end.
+        let rows = [0x11, 0, 0, 0, 0x22, 0, 0, 0];
+        let want = RECT {
+            left: -1_000_000,
+            top: 0,
+            right: -999_998,
+            bottom: 1,
+        };
+        let rect = want.clip_to_size(4, 1);
+        assert_eq!(
+            write_blit(
+                &mut ctx.memory,
+                0x4000,
+                16,
+                &want,
+                &rect,
+                &rows,
+                2,
+                1,
+                4,
+                None,
+                None
+            ),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x4000), 0);
     }
 
     #[test]
