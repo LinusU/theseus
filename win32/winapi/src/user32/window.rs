@@ -938,8 +938,15 @@ pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCoun
     if lpString.addr < 0x1000 || end > ctx.memory.bytes.len() {
         return 0;
     }
-    ctx.memory[lpString.addr..][..copy].copy_from_slice(&title[..copy]);
-    ctx.memory[lpString.addr + copy as u32] = 0;
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpString.addr as usize..)
+        .and_then(|b| b.get_mut(..copy))
+    {
+        dst.copy_from_slice(&title[..copy]);
+    }
+    ctx.memory.write::<u8>(lpString.addr + copy as u32, 0);
     copy as i32
 }
 
@@ -983,8 +990,15 @@ fn get_class_name(ctx: &mut Context, hWnd: HWND, addr: u32, nMaxCount: i32, wide
         if addr < 0x1000 || end > ctx.memory.bytes.len() {
             return 0;
         }
-        ctx.memory[addr..][..copy].copy_from_slice(&bytes[..copy]);
-        ctx.memory[addr + copy as u32] = 0;
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(addr as usize..)
+            .and_then(|b| b.get_mut(..copy))
+        {
+            dst.copy_from_slice(&bytes[..copy]);
+        }
+        ctx.memory.write::<u8>(addr + copy as u32, 0);
         copy as i32
     }
 }
