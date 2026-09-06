@@ -185,7 +185,8 @@ pub mod IDirectDraw {
         lpContext: u32,
         lpEnumCallback: u32,
     ) -> DD {
-        if lpEnumCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
         // A filter desc limits enumeration to modes matching its DDSD fields.
@@ -292,7 +293,8 @@ pub mod IDirectDraw {
         // enumerate hypothetical surfaces, which the emulated model reports
         // none of.
         const DDENUMSURFACES_DOESEXIST: u32 = 0x1;
-        if dwFlags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumSurfacesCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if dwFlags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumSurfacesCallback < 0x1000 {
             return DD::OK;
         }
         let addrs: Vec<u32> = state().surf.borrow().keys().cloned().collect();
@@ -729,7 +731,8 @@ pub mod IDirectDrawSurface {
         lpContext: u32,
         lpEnumSurfacesCallback: u32,
     ) -> DD {
-        if lpEnumSurfacesCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumSurfacesCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
         let attached: Vec<u32> = {

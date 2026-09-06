@@ -414,6 +414,10 @@ pub fn SetTimer(
     {
         return 0;
     }
+    // A low non-null TIMERPROC would dispatch to a missing block and halt.
+    if lpTimerFunc.addr != 0 && lpTimerFunc.addr < 0x1000 {
+        return 0;
+    }
     state().message_queue.borrow_mut().set_timer(
         hWnd,
         nIDEvent,

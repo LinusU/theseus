@@ -240,7 +240,9 @@ pub fn _initterm(ctx: &mut Context, begin: Ptr<u32>, end: Ptr<u32>) {
         let Some(f) = Ptr::<u32>::new(entry).read(&ctx.memory) else {
             break;
         };
-        if f != 0 {
+        // A null-page entry is not a callable function; skip it rather than
+        // halting on the missing-block dispatch.
+        if f >= 0x1000 {
             let cont = ctx.indirect(f);
             ctx.call32_x86(cont, vec![]);
         }

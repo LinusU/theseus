@@ -183,8 +183,9 @@ pub fn CreateThread(
     _dwCreationFlags: u32, /* THREAD_CREATION_FLAGS */
     lpThreadId: Ptr<u32>,
 ) -> HANDLE {
-    // A null start address would panic in the spawned thread's indirect().
-    if lpStartAddress.addr == 0 {
+    // A null or low start address would halt in the spawned thread's
+    // indirect() dispatch.
+    if lpStartAddress.addr < 0x1000 {
         return HANDLE::null();
     }
     let mut lock = kernel32::lock();

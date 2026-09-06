@@ -231,7 +231,8 @@ pub mod IDirectDraw7 {
         lpContext: u32,
         lpEnumCallback: u32,
     ) -> DD {
-        if lpEnumCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
         // A filter desc limits enumeration to modes matching its DDSD fields.
@@ -352,7 +353,8 @@ pub mod IDirectDraw7 {
         // created; only DOESEXIST reports live ones. The teardown path wants
         // every live surface, so matching is not implemented.
         const DDENUMSURFACES_DOESEXIST: u32 = 0x1;
-        if flags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if flags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumCallback < 0x1000 {
             return DD::OK;
         }
         // Snapshot the list: the callback may release surfaces mid-walk.
@@ -1111,7 +1113,8 @@ pub mod IDirectDrawSurface7 {
         lpContext: u32,
         lpEnumSurfacesCallback: u32,
     ) -> DD {
-        if lpEnumSurfacesCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumSurfacesCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
         let attached: Vec<u32> = {

@@ -709,7 +709,8 @@ pub(crate) fn alloc_string(ctx: &mut Context, s: &str) -> Option<u32> {
 
 #[win32_derive::dllexport]
 pub fn DirectDrawEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> DD {
-    if lpCallback == 0 {
+    // A null-page callback would dispatch to a missing block and halt.
+    if lpCallback < 0x1000 {
         return DD::ERR_GENERIC;
     }
     let Some(desc) = alloc_string(ctx, "Primary Display Driver\0") else {
@@ -731,7 +732,8 @@ pub fn DirectDrawEnumerateExA(
     lpContext: u32,
     _dwFlags: u32,
 ) -> DD {
-    if lpCallback == 0 {
+    // A null-page callback would dispatch to a missing block and halt.
+    if lpCallback < 0x1000 {
         return DD::ERR_GENERIC;
     }
     let Some(guid_addr) = ({

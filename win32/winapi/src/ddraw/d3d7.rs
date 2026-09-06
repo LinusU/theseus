@@ -530,7 +530,8 @@ pub mod IDirect3D7 {
         lpEnumDevicesCallback: u32,
         lpUserArg: u32,
     ) -> DD {
-        if lpEnumDevicesCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumDevicesCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
 
@@ -673,7 +674,8 @@ pub mod IDirect3D7 {
         lpEnumCallback: u32,
         lpContext: u32,
     ) -> DD {
-        if lpEnumCallback == 0 {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpEnumCallback < 0x1000 {
             return DD::ERR_INVALIDPARAMS;
         }
         for fmt in zbuffer_formats() {
@@ -871,7 +873,8 @@ pub mod IDirect3DDevice7 {
         lpd3dEnumPixelProc: u32,
         lpArg: u32,
     ) -> DD {
-        if lpd3dEnumPixelProc == 0 || !d3d_state().devices.borrow().contains_key(&this) {
+        // A null-page callback would dispatch to a missing block and halt.
+        if lpd3dEnumPixelProc < 0x1000 || !d3d_state().devices.borrow().contains_key(&this) {
             return DD::ERR_INVALIDPARAMS;
         }
         for fmt in texture_formats() {

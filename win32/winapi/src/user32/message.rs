@@ -545,8 +545,8 @@ pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
         return 0;
     };
     // A WM_TIMER whose lParam names a SetTimer callback goes to that
-    // TIMERPROC, not to the window procedure.
-    if msg.message == WM::TIMER as u32 && msg.lParam != 0 {
+    // TIMERPROC, not to the window procedure; a low lParam is not callable.
+    if msg.message == WM::TIMER as u32 && msg.lParam >= 0x1000 {
         ctx.call32_x86(
             ctx.indirect(msg.lParam),
             vec![
@@ -564,10 +564,11 @@ pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
         match (window.as_ref(), wndclass.as_ref()) {
             (Some(window), Some(wndclass)) if window.borrow().hwnd == msg.hwnd => {
                 // A SetWindowLong(GWL_WNDPROC) subclass wins over the
-                // class's registered procedure.
+                // class's registered procedure; a stored low pointer is not
+                // callable and falls back to the class proc.
                 match window.borrow().subclass_proc {
-                    Some(addr) => ctx.indirect(addr),
-                    None => wndclass.wndproc,
+                    Some(addr) if addr >= 0x1000 => ctx.indirect(addr),
+                    _ => wndclass.wndproc,
                 }
             }
             // Thread messages and messages for windows we do not model have
@@ -768,10 +769,11 @@ pub fn SendMessageW(
             window.subclass_proc
         };
         // A SetWindowLong(GWL_WNDPROC) subclass wins over the class's
-        // registered procedure.
+        // registered procedure; a stored low pointer is not callable and
+        // falls back to the class proc.
         match subclass {
-            Some(addr) => ctx.indirect(addr),
-            None => {
+            Some(addr) if addr >= 0x1000 => ctx.indirect(addr),
+            _ => {
                 let wndclass = state().wndclass.borrow();
                 let Some(wndclass) = wndclass.as_ref() else {
                     return 0;
