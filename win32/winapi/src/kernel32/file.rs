@@ -157,7 +157,9 @@ pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
     let Some(name) = read_path(ctx, lpFileName.addr) else {
         return INVALID_FILE_ATTRIBUTES;
     };
-    file_attributes(&resolve_path(&name))
+    let attrs = file_attributes(&resolve_path(&name));
+    log::debug!("GetFileAttributesA({name:?}) -> {attrs:x}");
+    attrs
 }
 
 #[win32_derive::dllexport]
@@ -711,6 +713,7 @@ pub fn FindFirstFileA(
         return crate::HANDLE::invalid();
     };
     let pattern = pattern.replace('\\', "/");
+    log::debug!("FindFirstFileA({pattern:?})");
     let (dir, file_pattern) = match pattern.rfind('/') {
         Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),
         None => (".", &pattern[..]),
