@@ -86,28 +86,33 @@ pub fn StretchBlt(
         return false;
     }
 
-    let xSrc = xSrc as u32;
-    let ySrc = ySrc as u32;
-    let xDst = xDest as u32;
-    let yDst = yDest as u32;
-    let wSrc = wSrc as u32;
-    let hSrc = hSrc as u32;
-    let wDst = wDest as u32;
-    // Widen to u64 so a negative or huge start coordinate cannot wrap
-    // past the check.
-    if xSrc as u64 + wSrc as u64 > bmp_src.width as u64
-        || ySrc as u64 + hSrc as u64 > bmp_src.height as u64
-        || xDst as u64 + wDst as u64 > bmp_dst.width as u64
-        || yDst as u64 + hSrc as u64 > bmp_dst.height as u64
-    {
-        return false;
+    // GDI clips a partially offscreen blit rather than failing it: compute
+    // the pixels skipped at the near edges and the shared length that
+    // remains, in i64 so a negative or huge start coordinate cannot wrap
+    // the check.
+    let x_skip = (-(xDest as i64)).max(-(xSrc as i64)).max(0);
+    let y_skip = (-(yDest as i64)).max(-(ySrc as i64)).max(0);
+    let width = (wDest as i64 - x_skip)
+        .min(bmp_dst.width as i64 - xDest as i64 - x_skip)
+        .min(bmp_src.width as i64 - xSrc as i64 - x_skip);
+    let height = (hDest as i64 - y_skip)
+        .min(bmp_dst.height as i64 - yDest as i64 - y_skip)
+        .min(bmp_src.height as i64 - ySrc as i64 - y_skip);
+    if width <= 0 || height <= 0 {
+        // A fully clipped blit is well-formed but draws nothing.
+        return true;
     }
+    let (w, h) = (width as u32, height as u32);
+    let x_src = (xSrc as i64 + x_skip) as u32;
+    let y_src = (ySrc as i64 + y_skip) as u32;
+    let x_dst = (xDest as i64 + x_skip) as u32;
+    let y_dst = (yDest as i64 + y_skip) as u32;
 
-    for y in 0..hDest as u32 {
+    for y in 0..h {
         let dst = &mut pixels_dst
-            [(yDst + y) as usize * bmp_dst.stride() as usize + xDst as usize * 4..]
-            [..wDst as usize * 4];
-        let y_src = ySrc + y;
+            [(y_dst + y) as usize * bmp_dst.stride() as usize + x_dst as usize * 4..]
+            [..w as usize * 4];
+        let y_src = y_src + y;
         bmp_src.read_pixels(
             pixels_src,
             if bmp_src.is_bottom_up {
@@ -117,8 +122,8 @@ pub fn StretchBlt(
             } else {
                 y_src
             },
-            xSrc,
-            xSrc + wSrc,
+            x_src,
+            x_src + w,
             dst,
         );
     }
@@ -127,8 +132,8 @@ pub fn StretchBlt(
 }
 
 /// The fill-style raster ops (BLACKNESS, WHITENESS, DSTINVERT) ignore the
-/// source DC; the destination rect is bounds-checked the same way the copy
-/// path checks it.
+/// source DC; the destination rect is clipped to the bitmap the same way
+/// the copy path clips.
 fn rop_fill(
     ctx: &mut Context,
     hdc: HDC,
@@ -146,14 +151,20 @@ fn rop_fill(
     if !bmp.is_simple() {
         return false;
     }
-    let (x, y, w, h) = (x_dest as u32, y_dest as u32, w as u32, h as u32);
-    if x as u64 + w as u64 > bmp.width as u64 || y as u64 + h as u64 > bmp.height as u64 {
-        return false;
+    let x_skip = (-(x_dest as i64)).max(0);
+    let y_skip = (-(y_dest as i64)).max(0);
+    let w = (w as i64 - x_skip).min(bmp.width as i64 - x_dest as i64 - x_skip);
+    let h = (h as i64 - y_skip).min(bmp.height as i64 - y_dest as i64 - y_skip);
+    if w <= 0 || h <= 0 {
+        // A fully clipped fill is well-formed but draws nothing.
+        return true;
     }
     let Some(pixels) = ctx.memory.bytes.get_mut(bmp.pixels_range()) else {
         return false;
     };
-    for row in 0..h {
+    let x = (x_dest as i64 + x_skip) as u32;
+    let y = (y_dest as i64 + y_skip) as u32;
+    for row in 0..h as u32 {
         let dst = &mut pixels[((y + row) * bmp.stride() + x * 4) as usize..][..w as usize * 4];
         match rop {
             0x0000_0042 => dst.fill(0),
@@ -273,6 +284,25 @@ mod tests {
             0x550009
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
+    }
+
+    #[test]
+    fn stretch_blt_clips_negative_destination_coordinates() {
+        let mut ctx = context();
+        // A 3x1 32bpp top-down source at 0x2000.
+        for (col, value) in [0xaau32, 0xbb, 0xcc].iter().enumerate() {
+            ctx.memory.write::<u32>(0x2000 + col as u32 * 4, *value);
+        }
+        let src_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(3, 1, 0x2000));
+        let dst_dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(2, 1, 0x3000));
+        ctx.memory.bytes[0x3000..0x3008].fill(0x77);
+        // xDest=-1 with w=2: only source column 1 lands on destination
+        // column 0, and the rest of the destination is left alone.
+        assert!(StretchBlt(
+            &mut ctx, dst_dc, -1, 0, 2, 1, src_dc, 0, 0, 2, 1, 0xcc0020
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xbb);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0x77777777);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
