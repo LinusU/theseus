@@ -317,7 +317,7 @@ pub fn MessageBoxA(
     // We have no dialogs, but the C runtime reports fatal errors this way, so
     // the text is worth surfacing.
     let read = |ptr: Ptr<u8>| {
-        if ptr.addr == 0 {
+        if ptr.addr < 0x1000 {
             String::new()
         } else {
             ctx.memory.read_str(ptr.addr).to_owned()
