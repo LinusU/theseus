@@ -2936,7 +2936,13 @@ fn rasterize(
                             let (ta, tw, th) = base_level;
                             let mut out = format!("P6\n{tw} {th}\n255\n").into_bytes();
                             for i in 0..(tw * th) {
-                                let p = ctx.memory.read::<u16>(ta + i * 2);
+                                let p = ctx
+                                    .memory
+                                    .bytes
+                                    .get((ta + i * 2) as usize..(ta + (i + 1) * 2) as usize)
+                                    .and_then(|b| <[u8; 2]>::try_from(b).ok())
+                                    .map(u16::from_le_bytes)
+                                    .unwrap_or(0);
                                 out.push((((p >> 11) & 0x1f) << 3) as u8);
                                 out.push((((p >> 5) & 0x3f) << 2) as u8);
                                 out.push(((p & 0x1f) << 3) as u8);
