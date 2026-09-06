@@ -411,7 +411,8 @@ mod tests {
         ctx.memory.bytes[0x100..0x100 + 40].copy_from_slice(&header);
         ctx.memory.write::<u32>(0x300, 0xbb); // image row 0 (bottom)
         ctx.memory.write::<u32>(0x304, 0xaa); // image row 1 (top)
-        // ySrc=1 selects the top row of the image: buffer row 1.
+        // The buffer provides both scan lines and ySrc=1 selects the top
+        // row of the image: buffer row 1.
         assert_eq!(
             SetDIBitsToDevice(
                 &mut ctx,
@@ -423,7 +424,7 @@ mod tests {
                 0,
                 1,
                 0,
-                1,
+                2,
                 Ptr::new(0x300),
                 Ptr::new(0x100),
                 0
@@ -431,6 +432,61 @@ mod tests {
             1
         );
         assert_eq!(ctx.memory.read::<u32>(0x2000), 0xaa);
+    }
+
+    #[test]
+    fn set_di_bits_offsets_lpvbits_by_start_scan() {
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x2000));
+        // A 1x2 32bpp bottom-up DIB whose buffer provides only scan line 1.
+        let mut header = [0u8; 40];
+        header[0..4].copy_from_slice(&40u32.to_le_bytes()); // biSize
+        header[4..8].copy_from_slice(&1u32.to_le_bytes()); // biWidth
+        header[8..12].copy_from_slice(&2u32.to_le_bytes()); // biHeight
+        header[12..14].copy_from_slice(&1u16.to_le_bytes()); // biPlanes
+        header[14..16].copy_from_slice(&32u16.to_le_bytes()); // biBitCount
+        ctx.memory.bytes[0x100..0x100 + 40].copy_from_slice(&header);
+        ctx.memory.write::<u32>(0x300, 0xcc); // the single provided row
+        // StartScan=1, cLines=1, ySrc=1: the buffer's only row is image
+        // scan line 1.
+        assert_eq!(
+            SetDIBitsToDevice(
+                &mut ctx,
+                hdc,
+                0,
+                0,
+                1,
+                1,
+                0,
+                1,
+                1,
+                1,
+                Ptr::new(0x300),
+                Ptr::new(0x100),
+                0
+            ),
+            1
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x2000), 0xcc);
+        // A region outside the provided scan lines fails.
+        assert_eq!(
+            SetDIBitsToDevice(
+                &mut ctx,
+                hdc,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                Ptr::new(0x300),
+                Ptr::new(0x100),
+                0
+            ),
+            0
+        );
     }
 }
 
@@ -475,7 +531,12 @@ pub fn SetDIBitsToDevice(
     };
     let (bmp_src, _) = Bitmap::parse(header);
 
-    if StartScan != 0 || ColorUse != 0 || cLines != h {
+    // Only DIB_RGB_COLORS is modeled; the buffer holds image scan lines
+    // StartScan..StartScan+cLines and the requested region must lie inside.
+    if ColorUse != 0
+        || ySrc < StartScan
+        || ySrc as u64 + h as u64 > StartScan as u64 + cLines as u64
+    {
         return 0;
     }
     if bmp_src.width == 0 || bmp_src.height == 0 {
@@ -500,10 +561,8 @@ pub fn SetDIBitsToDevice(
         return 0;
     }
 
-    // The read spans the DIB rows the blit touches: lpvBits is the start of
-    // the pixel array and ySrc + h is the last row read, so a nonzero ySrc
-    // needs more than h rows of buffer.
-    let src_end = lpvBits.addr as u64 + ((ySrc + h) as u64 * bmp_src.stride() as u64);
+    // lpvBits covers exactly cLines rows starting at scan line StartScan.
+    let src_end = lpvBits.addr as u64 + (cLines as u64 * bmp_src.stride() as u64);
     let Ok([pixels_src, pixels_dst]) = ctx.memory.bytes.get_disjoint_mut([
         lpvBits.addr as usize..src_end as usize,
         bmp_dst.pixels_range(),
@@ -526,8 +585,10 @@ pub fn SetDIBitsToDevice(
         } else {
             ySrc + y
         };
-        bmp_src.read_pixels(pixels_src, y_src, xSrc, xSrc + w, dst);
+        // The buffer's first row is image scan line StartScan.
+        bmp_src.read_pixels(pixels_src, y_src - StartScan, xSrc, xSrc + w, dst);
     }
 
-    cLines
+    // The API reports the number of scan lines copied, not provided.
+    h
 }
