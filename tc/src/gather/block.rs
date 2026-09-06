@@ -230,7 +230,8 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                         self.traverse.queue.enqueue(ip);
                     }
                 }
-                Ret | Retf | Iret | Iretd | Ud2 => {}
+                // UD0-UD2 all trap as #UD and end the block like UD2 does.
+                Ret | Retf | Iret | Iretd | Ud0 | Ud1 | Ud2 => {}
                 Into => {
                     let ip = self.block_ip.with_local(instr.next_ip32());
                     self.traverse.queue.enqueue(ip);
@@ -241,7 +242,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                     self.traverse.queue.enqueue(ip);
                 }
                 Syscall | Sysexit | Sysret => anyhow::bail!("syscall not implemented"),
-                _ => todo!("{ip} control flow {}", instr),
+                _ => anyhow::bail!("{ip} control flow {}", instr),
             }
             break;
         }
