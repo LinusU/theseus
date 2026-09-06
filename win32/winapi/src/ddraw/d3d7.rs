@@ -422,6 +422,8 @@ pub struct D3DState {
     unwritten_textures: RefCell<std::collections::HashSet<u32>>,
     /// Texture surface addresses already dumped via THESEUS_TEX_DUMP.
     dumped_textures: RefCell<std::collections::HashSet<u32>>,
+    /// Texture surfaces already reported for unrecognized pixel masks.
+    odd_textures: RefCell<std::collections::HashSet<u32>>,
     state_blocks: RefCell<std::collections::HashSet<u32>>,
     next_state_block: std::cell::Cell<u32>,
 }
@@ -2301,6 +2303,9 @@ fn blend_565(dst: u16, src: u16, sa: f32, sblend: u32, dblend: u32) -> u16 {
 const TEXFMT_RGB565: u8 = 0;
 const TEXFMT_A1R5G5B5: u8 = 1;
 const TEXFMT_A4R4G4B4: u8 = 2;
+/// Any other 16bpp layout (e.g. X1R5G5B5); still decoded as 565 but
+/// reported once so a misclassified texture is diagnosable.
+const TEXFMT_OTHER: u8 = 3;
 
 /// Decode one raw texture word to 8-bit (r, g, b, a).
 fn decode_texel(p: u16, fmt: u8) -> (u8, u8, u8, u8) {
@@ -2524,7 +2529,10 @@ fn rasterize(
         drop(surfs);
 
         // Classify the texture's channel masks so alpha-bearing formats
-        // decode properly instead of being read as opaque 565.
+        // decode properly instead of being read as opaque 565. Formats
+        // outside the recognized set log once per texture so unusual
+        // guest-declared masks are visible instead of silently decoding
+        // as 565.
         let tex_fmt = tex_surf
             .as_ref()
             .map(|s| {
@@ -2533,8 +2541,14 @@ fn rasterize(
                     TEXFMT_A1R5G5B5
                 } else if pf.dwRGBAlphaBitMask == 0xf000 && pf.dwRBitMask == 0x0f00 {
                     TEXFMT_A4R4G4B4
-                } else {
+                } else if pf.dwRBitMask == 0xf800
+                    && pf.dwGBitMask == 0x07e0
+                    && pf.dwBBitMask == 0x001f
+                    && pf.dwRGBAlphaBitMask == 0
+                {
                     TEXFMT_RGB565
+                } else {
+                    TEXFMT_OTHER
                 }
             })
             .unwrap_or(TEXFMT_RGB565);
@@ -2561,6 +2575,19 @@ fn rasterize(
             if s_borrow.pixels.is_none() && d3d_state().unwritten_textures.borrow_mut().insert(tex)
             {
                 log::debug!("rasterize: texture {tex:#x} ({w}x{h}) was never locked or blitted");
+            }
+            if tex_fmt == TEXFMT_OTHER && d3d_state().odd_textures.borrow_mut().insert(tex) {
+                let pf = &s_borrow.pixel_format;
+                log::debug!(
+                    "rasterize: texture {tex:#x} ({w}x{h}) has unrecognized pixel format flags={:#x} fourcc={:#x} rgb={} r={:#x} g={:#x} b={:#x} a={:#x}",
+                    pf.dwFlags,
+                    pf.dwFourCC,
+                    pf.dwRGBBitCount,
+                    pf.dwRBitMask,
+                    pf.dwGBitMask,
+                    pf.dwBBitMask,
+                    pf.dwRGBAlphaBitMask,
+                );
             }
             let pixels_addr = s_borrow.pixels;
             drop(s_borrow);
