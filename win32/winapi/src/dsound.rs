@@ -509,12 +509,20 @@ pub mod IDirectSound {
             return DSERR_INVALIDPARAM;
         }
         ctx.memory[lpDSCaps + 4..][..(size as usize).saturating_sub(4)].fill(0);
-        ctx.memory.write::<u32>(
-            lpDSCaps + 4,
-            DSCAPS_PRIMARYSTEREO | DSCAPS_PRIMARY16BIT | DSCAPS_CONTINUOUSRATE,
-        );
-        ctx.memory.write::<u32>(lpDSCaps + 8, 100); // dwMinSecondarySampleRate
-        ctx.memory.write::<u32>(lpDSCaps + 12, 100000); // dwMaxSecondarySampleRate
+        // Fields past the caller's declared dwSize are left alone; writing
+        // them unconditionally could run past the validated range.
+        if size >= 8 {
+            ctx.memory.write::<u32>(
+                lpDSCaps + 4,
+                DSCAPS_PRIMARYSTEREO | DSCAPS_PRIMARY16BIT | DSCAPS_CONTINUOUSRATE,
+            );
+        }
+        if size >= 12 {
+            ctx.memory.write::<u32>(lpDSCaps + 8, 100); // dwMinSecondarySampleRate
+        }
+        if size >= 16 {
+            ctx.memory.write::<u32>(lpDSCaps + 12, 100000); // dwMaxSecondarySampleRate
+        }
         DS_OK
     }
 
