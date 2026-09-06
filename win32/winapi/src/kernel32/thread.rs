@@ -97,7 +97,8 @@ impl kernel32::State {
         name: String,
         proc: impl FnOnce(&mut Context) + Send + 'static,
     ) -> Option<(HANDLE, u32)> {
-        let handle = self.objects.add(Object::Thread);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let handle = self.objects.add(Object::Thread(done.clone()));
         let thread_id = self.next_thread_id;
         let mut new_ctx = Context {
             cpu: runtime::CPU::default(),
@@ -117,10 +118,12 @@ impl kernel32::State {
             self.objects.remove(handle);
             return None;
         }
-        if let Err(err) = std::thread::Builder::new()
-            .name(name)
-            .spawn(move || proc(&mut new_ctx))
-        {
+        if let Err(err) = std::thread::Builder::new().name(name).spawn(move || {
+            proc(&mut new_ctx);
+            // Signal the thread handle so WaitForSingleObject and
+            // WaitForMultipleObjects observe the thread as exited.
+            done.store(true, std::sync::atomic::Ordering::Release);
+        }) {
             log::warn!("create_thread: host spawn failed: {err}");
             self.objects.remove(handle);
             return None;
@@ -327,7 +330,7 @@ pub fn InterlockedDecrement(ctx: &mut Context, Addend: Ptr<i32>) -> i32 {
 #[win32_derive::dllexport]
 pub fn GetThreadPriority(_ctx: &mut Context, hThread: HANDLE) -> i32 {
     let state = kernel32::lock();
-    if !matches!(state.objects.get(hThread), Some(Object::Thread)) {
+    if !matches!(state.objects.get(hThread), Some(Object::Thread(_))) {
         return -1;
     }
     state.thread_priorities.get(&hThread).copied().unwrap_or(0)
@@ -343,7 +346,7 @@ pub fn SetThreadPriority(
         return false;
     }
     let mut state = kernel32::lock();
-    if !matches!(state.objects.get(hThread), Some(Object::Thread)) {
+    if !matches!(state.objects.get(hThread), Some(Object::Thread(_))) {
         return false;
     }
     state.thread_priorities.insert(hThread, nPriority);

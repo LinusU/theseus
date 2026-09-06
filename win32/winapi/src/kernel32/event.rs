@@ -1,16 +1,41 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{
+    Arc, Condvar, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use runtime::Context;
 
 use crate::{HANDLE, Ptr, kernel32::lock};
 
 pub enum Object {
-    Thread,
+    /// The flag reports whether the thread's procedure has returned; a
+    /// thread handle is signaled once the thread is gone.
+    Thread(Arc<AtomicBool>),
     Event(Arc<Event>),
     Mutex,
     Mixer([u32; 2]),
     File(host::fs::File),
     FindHandle(crate::kernel32::FindHandle),
+}
+
+/// Poll a thread-done flag until it is set or the wait times out.
+/// `INFINITE` waits until the thread exits, matching Windows.
+fn wait_for_thread(done: &AtomicBool, milliseconds: u32) -> u32 {
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 0x102;
+    const INFINITE: u32 = u32::MAX;
+
+    let deadline = (milliseconds != INFINITE)
+        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(milliseconds as u64));
+    loop {
+        if done.load(Ordering::Acquire) {
+            return WAIT_OBJECT_0;
+        }
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return WAIT_TIMEOUT;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 pub struct Event {
@@ -32,7 +57,10 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
         match kernel32.objects.get(hHandle) {
             Some(Object::Event(event)) => event.clone(),
             Some(Object::Mutex) => return WAIT_OBJECT_0,
-            Some(Object::Thread) => return WAIT_TIMEOUT,
+            Some(Object::Thread(done)) => {
+                let done = done.clone();
+                return wait_for_thread(&done, dwMilliseconds);
+            }
             _ => return WAIT_FAILED,
         }
     };
@@ -101,9 +129,8 @@ enum Waitable {
     Event(Arc<Event>),
     /// Mutexes are always signaled: there is only one x86 thread.
     Always,
-    /// Thread handles never signal; the emulated process has one thread that
-    /// does not exit.
-    Never,
+    /// A thread handle signals once the thread's procedure has returned.
+    Thread(Arc<AtomicBool>),
 }
 
 impl Waitable {
@@ -111,7 +138,7 @@ impl Waitable {
         match self {
             Waitable::Event(event) => *event.signaled.lock().unwrap(),
             Waitable::Always => true,
-            Waitable::Never => false,
+            Waitable::Thread(done) => done.load(Ordering::Acquire),
         }
     }
 
@@ -149,7 +176,7 @@ pub fn WaitForMultipleObjects(
             match kernel32.objects.get(HANDLE::from_raw(raw)) {
                 Some(Object::Event(event)) => waitables.push(Waitable::Event(event.clone())),
                 Some(Object::Mutex) => waitables.push(Waitable::Always),
-                Some(Object::Thread) => waitables.push(Waitable::Never),
+                Some(Object::Thread(done)) => waitables.push(Waitable::Thread(done.clone())),
                 _ => return WAIT_FAILED,
             }
         }

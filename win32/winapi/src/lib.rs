@@ -212,7 +212,12 @@ pub fn load(exe: &EXEData) -> Context {
 
     let mut ctx = Context {
         cpu: CPU::default(),
-        thread_handle: lock.objects.add(kernel32::Object::Thread).to_raw(),
+        thread_handle: lock
+            .objects
+            .add(kernel32::Object::Thread(std::sync::Arc::new(
+                std::sync::atomic::AtomicBool::new(false),
+            )))
+            .to_raw(),
         thread_id: 1,
         memory,
         blocks,
