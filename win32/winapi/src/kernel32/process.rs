@@ -82,14 +82,25 @@ impl kernel32::State {
         let process_data_addr = self.mappings.alloc("process data".into(), 0x1000);
 
         let origin = ctx.memory.as_ptr() as usize;
-        let buf = &mut ctx.memory[process_data_addr..][..0x1000];
+        let Some(end) = process_data_addr.checked_add(0x1000) else {
+            panic!("process data address overflow");
+        };
+        let Some(buf) = ctx
+            .memory
+            .bytes
+            .get_mut(process_data_addr as usize..end as usize)
+        else {
+            panic!("process data allocation {process_data_addr:#x}..{end:#x} out of bounds");
+        };
 
         let command_line = "Midtown2.exe nolockcheck\0";
 
         let len = align_to_4(command_line.len());
         let (command_line_16, buf) = buf.split_at_mut(len * 2);
         let (command_line_8, buf) = buf.split_at_mut(len);
-        let command_line_16: &mut [u16] = <[u16]>::mut_from_bytes(command_line_16).unwrap();
+        let Ok(command_line_16) = <[u16]>::mut_from_bytes(command_line_16) else {
+            panic!("command line buffer is not a valid u16 slice");
+        };
         for (i, c) in command_line.bytes().enumerate() {
             command_line_8[i] = c;
             command_line_16[i] = c as u16;
@@ -105,11 +116,15 @@ impl kernel32::State {
         env.fill(0);
         self.environ.set((env.as_ptr() as usize - origin) as u32);
 
-        let (params, buf) = RTL_USER_PROCESS_PARAMETERS::mut_from_prefix(buf).unwrap();
+        let Ok((params, buf)) = RTL_USER_PROCESS_PARAMETERS::mut_from_prefix(buf) else {
+            panic!("process data buffer too small for RTL_USER_PROCESS_PARAMETERS");
+        };
         params.hStdOutput = crate::kernel32::file::STDOUT_HFILE;
         params.hStdError = crate::kernel32::file::STDERR_HFILE;
 
-        let (peb, _buf) = PEB::mut_from_prefix(buf).unwrap();
+        let Ok((peb, _buf)) = PEB::mut_from_prefix(buf) else {
+            panic!("process data buffer too small for PEB");
+        };
         peb.ProcessParameters = (params as *const _ as usize - origin) as u32;
 
         // Games of this era load whole asset archives into the process heap,
@@ -144,7 +159,15 @@ pub fn GetExitCodeProcess(ctx: &mut Context, hProcess: HANDLE, lpExitCode: Ptr<u
 #[allow(unused)]
 fn peb_mut(ctx: &mut Context) -> &mut PEB {
     let peb_addr = teb(ctx).Peb;
-    let (peb, _) = PEB::mut_from_prefix(&mut ctx.memory[peb_addr..]).unwrap();
+    let Some(end) = peb_addr.checked_add(std::mem::size_of::<PEB>() as u32) else {
+        panic!("PEB address overflow");
+    };
+    let Some(peb_bytes) = ctx.memory.bytes.get_mut(peb_addr as usize..end as usize) else {
+        panic!("PEB {peb_addr:#x}..{end:#x} out of bounds");
+    };
+    let Ok((peb, _)) = PEB::mut_from_prefix(peb_bytes) else {
+        panic!("PEB at {peb_addr:#x} is too small");
+    };
     peb
 }
 
