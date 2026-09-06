@@ -23,6 +23,12 @@ pub struct Window {
     pub visible: bool,
     /// GWL_USERDATA slot, arbitrary per-window data the app stores.
     pub user_data: u32,
+    /// The HINSTANCE CreateWindowEx was given, reported by
+    /// GetWindowLong(GWL_HINSTANCE).
+    pub hinstance: u32,
+    /// For a child window hMenu is an id; reported by
+    /// GetWindowLong(GWL_ID).
+    pub id: u32,
     /// A wndproc installed by SetWindowLong(GWL_WNDPROC) subclassing; when
     /// set it wins over the class wndproc at dispatch time.
     pub subclass_proc: Option<u32>,
@@ -112,6 +118,8 @@ struct CreateWindowArgs {
     y: i32,
     width: Option<u32>,
     height: Option<u32>,
+    hinstance: u32,
+    id: u32,
 }
 
 const CW_USEDEFAULT: u32 = 0x8000_0000;
@@ -156,6 +164,8 @@ impl State {
             enabled: true,
             visible: false,
             user_data: 0,
+            hinstance: args.hinstance,
+            id: args.id,
             subclass_proc: None,
             x: args.x,
             y: args.y,
@@ -183,8 +193,8 @@ pub fn CreateWindowExA(
     nWidth: CW,
     nHeight: CW,
     _hWndParent: HWND,
-    _hMenu: HMENU,
-    _hInstance: HINSTANCE,
+    hMenu: HMENU,
+    hInstance: HINSTANCE,
     _lpParam: Ptr<()>,
 ) -> HWND {
     let name = ctx.memory.read_str(lpWindowName.addr);
@@ -196,6 +206,9 @@ pub fn CreateWindowExA(
         y: Y,
         width: nWidth.value(),
         height: nHeight.value(),
+        hinstance: hInstance,
+        // For a child window the menu parameter is an id.
+        id: hMenu,
     })
 }
 
@@ -211,8 +224,8 @@ pub fn CreateWindowExW(
     nWidth: CW,
     nHeight: CW,
     _hWndParent: HWND,
-    _hMenu: HMENU,
-    _hInstance: HINSTANCE,
+    hMenu: HMENU,
+    hInstance: HINSTANCE,
     _lpParam: Ptr<()>,
 ) -> HWND {
     let name = ctx.memory.read_wstr(lpWindowName.addr);
@@ -224,6 +237,8 @@ pub fn CreateWindowExW(
         y: Y,
         width: nWidth.value(),
         height: nHeight.value(),
+        hinstance: hInstance,
+        id: hMenu,
     })
 }
 
@@ -236,6 +251,8 @@ pub fn IsWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
 }
 
 const GWL_WNDPROC: i32 = -4;
+const GWL_HINSTANCE: i32 = -6;
+const GWL_ID: i32 = -12;
 const GWL_STYLE: i32 = -16;
 const GWL_EXSTYLE: i32 = -20;
 const GWL_USERDATA: i32 = -21;
@@ -267,6 +284,8 @@ pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> i32 {
 
     match nIndex {
         GWL_WNDPROC => current_wndproc_addr(&window) as i32,
+        GWL_HINSTANCE => window.hinstance as i32,
+        GWL_ID => window.id as i32,
         GWL_STYLE => window.style as i32,
         GWL_EXSTYLE => window.ex_style as i32,
         GWL_USERDATA => window.user_data as i32,
@@ -296,7 +315,10 @@ pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: i3
         }
         GWL_STYLE => std::mem::replace(&mut window.style, dwNewLong as u32) as i32,
         GWL_EXSTYLE => std::mem::replace(&mut window.ex_style, dwNewLong as u32) as i32,
+        GWL_ID => std::mem::replace(&mut window.id, dwNewLong as u32) as i32,
         GWL_USERDATA => std::mem::replace(&mut window.user_data, dwNewLong as u32) as i32,
+        // GWL_HINSTANCE is get-only in practice; a set returns the old value.
+        GWL_HINSTANCE => std::mem::replace(&mut window.hinstance, dwNewLong as u32) as i32,
         _ => {
             log::warn!("SetWindowLongA: unsupported index {nIndex}");
             0
@@ -1288,6 +1310,8 @@ mod tests {
             enabled: true,
             visible: false,
             user_data: 0,
+            hinstance: 0,
+            id: 0,
             subclass_proc: None,
             x: 0,
             y: 0,
