@@ -243,9 +243,29 @@ impl FPU {
             self.push(val);
             return;
         }
-        let exp = val.abs().log2().floor();
-        let sig = val / 2f64.powi(exp as i32);
-        self.set(0, exp);
+        // The exponent comes from the raw IEEE-754 fields: a log2().floor()
+        // computation can round up for inputs just below a power of two
+        // (e.g. the largest subnormal), yielding a significand below 1.0.
+        let bits = val.to_bits();
+        let biased = ((bits >> 52) & 0x7ff) as i64;
+        let exp = if biased == 0 {
+            // Subnormal: value = frac * 2^-1074, so its floor-log2
+            // exponent is ilog2(frac) - 1074. val != 0, so frac != 0.
+            let frac = bits & 0x000f_ffff_ffff_ffff;
+            frac.ilog2() as i64 - 1074
+        } else {
+            biased - 1023
+        };
+        // Exact 2^exp without libm (powi underflows for subnormal
+        // powers): exp is in [-1074, 1023], and a power of two in that
+        // range is always representable.
+        let scale = if exp >= -1022 {
+            f64::from_bits(((exp + 1023) as u64) << 52)
+        } else {
+            f64::from_bits(1u64 << (exp + 1074))
+        };
+        let sig = val / scale;
+        self.set(0, exp as f64);
         self.push(sig);
     }
 
@@ -793,6 +813,33 @@ mod tests {
         fpu.extract();
         assert_eq!(fpu.get(0), 0.0);
         assert_eq!(fpu.get(1), 0.0);
+    }
+
+    #[test]
+    fn fxtract_keeps_the_significand_in_range_near_powers_of_two() {
+        let mut fpu = FPU::default();
+        // Just below 2^-1022 (the largest subnormal): the naive
+        // log2().floor() rounds to -1022 and produces a significand
+        // below 1.0; the field-exact exponent is -1023.
+        fpu.push(2.225073858507201e-308);
+        fpu.extract();
+        assert_eq!(fpu.get(1), -1023.0);
+        let sig = fpu.get(0);
+        assert!((1.0..2.0).contains(&sig), "sig {sig} out of range");
+
+        fpu.init();
+        // The smallest subnormal has exponent -1074 and significand 1.0.
+        fpu.push(f64::from_bits(1));
+        fpu.extract();
+        assert_eq!(fpu.get(1), -1074.0);
+        assert_eq!(fpu.get(0), 1.0);
+
+        fpu.init();
+        // Just below 2.0: exponent 0, significand 1.999... not 0.999...
+        fpu.push(1.9999999999999998);
+        fpu.extract();
+        assert_eq!(fpu.get(1), 0.0);
+        assert!((1.0..2.0).contains(&fpu.get(0)));
     }
 
     #[test]
