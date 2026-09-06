@@ -8,9 +8,9 @@
 //! into the render-target and z-buffer surfaces; other FVF layouts and
 //! primitive types are acknowledged without producing pixels.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use runtime::*;
 
@@ -437,9 +437,12 @@ impl D3DState {
     }
 }
 
-struct StaticState(OnceCell<D3DState>);
+// OnceLock rather than cell::OnceCell: winapi helpers can run on host
+// threads (winmm timer/wave callbacks), and cell::OnceCell::get_or_init
+// panics with "reentrant init" when two threads race the initializer.
+struct StaticState(OnceLock<D3DState>);
 unsafe impl Sync for StaticState {}
-static D3D_STATE: StaticState = StaticState(OnceCell::new());
+static D3D_STATE: StaticState = StaticState(OnceLock::new());
 
 pub fn d3d_state() -> &'static D3DState {
     D3D_STATE.0.get_or_init(D3DState::default)

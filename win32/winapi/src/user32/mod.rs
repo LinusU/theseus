@@ -7,9 +7,10 @@ mod resource;
 mod window;
 
 use std::{
-    cell::{Cell, OnceCell, RefCell},
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
+    sync::OnceLock,
 };
 
 pub use dialog::*;
@@ -56,10 +57,13 @@ pub struct State {
 
 // TODO: reuse locking pattern from kernel32
 // XXX sdl is not thread-safe so we cannot put it in a Mutex anyway, argh
-struct StaticState(OnceCell<State>);
+// OnceLock rather than cell::OnceCell: get_or_init can be reached from host
+// threads (winmm/dsound callbacks), and cell::OnceCell::get_or_init panics
+// with "reentrant init" when two threads race the initializer.
+struct StaticState(OnceLock<State>);
 unsafe impl Sync for StaticState {}
 
-static STATE: StaticState = StaticState(OnceCell::new());
+static STATE: StaticState = StaticState(OnceLock::new());
 
 impl State {
     /// The handle for (instance, name), allocating a fresh opaque handle on

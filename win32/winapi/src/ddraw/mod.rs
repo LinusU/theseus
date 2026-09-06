@@ -1,7 +1,8 @@
 use std::{
-    cell::{OnceCell, RefCell, RefMut},
+    cell::{RefCell, RefMut},
     collections::HashMap,
     rc::Rc,
+    sync::OnceLock,
 };
 
 use runtime::{ContFn, Context};
@@ -266,10 +267,13 @@ impl State {
 }
 
 // TODO: reuse locking pattern from kernel32
-struct StaticState(OnceCell<State>);
+// OnceLock rather than cell::OnceCell: get_or_init runs on host threads too
+// (winmm/dsound callbacks), and cell::OnceCell::get_or_init panics with
+// "reentrant init" when two threads race the initializer.
+struct StaticState(OnceLock<State>);
 unsafe impl Sync for StaticState {}
 
-static STATE: StaticState = StaticState(OnceCell::new());
+static STATE: StaticState = StaticState(OnceLock::new());
 
 pub fn state() -> &'static State {
     STATE.0.get_or_init(State::default)
