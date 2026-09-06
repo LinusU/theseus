@@ -184,13 +184,16 @@ macro_rules! stub_out {
             let esp = ctx.cpu.regs.esp;
             let return_addr = ctx.memory.read::<u32>(esp);
             let out = ctx.memory.read::<u32>(esp.wrapping_add(($k + 1) * 4));
-            if out != 0 {
-                // An out-of-range out-pointer loses the zero rather than
-                // panicking the host.
-                let _ = crate::Ptr::<u64>::new(out).write(&mut ctx.memory, 0);
+            let mut ret = $ret;
+            if out != 0
+                && crate::Ptr::<u64>::new(out)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+            {
+                ret = E_POINTER;
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
-            ctx.cpu.regs.eax = $ret;
+            ctx.cpu.regs.eax = ret;
             ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add((1 + $nargs) * 4);
             ctx.indirect(return_addr)
         }
@@ -201,11 +204,16 @@ macro_rules! stub_out {
             let esp = ctx.cpu.regs.esp;
             let return_addr = ctx.memory.read::<u32>(esp);
             let out = ctx.memory.read::<u32>(esp.wrapping_add(($k + 1) * 4));
-            if out != 0 {
-                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
+            let mut ret = $ret;
+            if out != 0
+                && crate::Ptr::<u32>::new(out)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+            {
+                ret = E_POINTER;
             }
             log::debug!("dmusic {} (ret={return_addr:#x})", stringify!($name));
-            ctx.cpu.regs.eax = $ret;
+            ctx.cpu.regs.eax = ret;
             ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add((1 + $nargs) * 4);
             ctx.indirect(return_addr)
         }
@@ -269,17 +277,23 @@ fn create(
     let iid = match read_guid(ctx, riid) {
         Some(iid) => iid,
         None => {
-            let _ = ppv.write(&mut ctx.memory, 0);
+            if ppv.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
             return E_NOINTERFACE;
         }
     };
     if !iid_matches(&iid, iids) {
-        let _ = ppv.write(&mut ctx.memory, 0);
+        if ppv.write(&mut ctx.memory, 0).is_none() {
+            return E_POINTER;
+        }
         return E_NOINTERFACE;
     }
     let vtable = get_vtable(ctx);
     let Some(obj) = new_object(ctx, vtable) else {
-        let _ = ppv.write(&mut ctx.memory, 0);
+        if ppv.write(&mut ctx.memory, 0).is_none() {
+            return E_POINTER;
+        }
         return E_OUTOFMEMORY;
     };
     if ppv.write(&mut ctx.memory, obj).is_none() {
@@ -309,8 +323,11 @@ macro_rules! query_interface {
                         }
                     }
                     _ => {
-                        let _ = ppv.write(&mut ctx.memory, 0);
-                        ret = E_NOINTERFACE;
+                        if ppv.write(&mut ctx.memory, 0).is_none() {
+                            ret = E_POINTER;
+                        } else {
+                            ret = E_NOINTERFACE;
+                        }
                     }
                 }
             }
@@ -364,10 +381,15 @@ pub mod performance {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
         let pp_segment_state = ctx.memory.read::<u32>(esp.wrapping_add(24));
-        if pp_segment_state != 0 {
-            let _ = crate::Ptr::<u32>::new(pp_segment_state).write(&mut ctx.memory, 0);
+        let mut ret = S_OK;
+        if pp_segment_state != 0
+            && crate::Ptr::<u32>::new(pp_segment_state)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+        {
+            ret = E_POINTER;
         }
-        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(7 * 4);
         ctx.indirect(return_addr)
     }
@@ -391,13 +413,22 @@ pub mod performance {
         let return_addr = ctx.memory.read::<u32>(esp);
         let prt_now = ctx.memory.read::<u32>(esp.wrapping_add(8));
         let pmt_now = ctx.memory.read::<u32>(esp.wrapping_add(12));
-        if prt_now != 0 {
-            let _ = crate::Ptr::<u64>::new(prt_now).write(&mut ctx.memory, 0);
+        let mut ret = S_OK;
+        if prt_now != 0
+            && crate::Ptr::<u64>::new(prt_now)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+        {
+            ret = E_POINTER;
         }
-        if pmt_now != 0 {
-            let _ = crate::Ptr::<u32>::new(pmt_now).write(&mut ctx.memory, 0);
+        if pmt_now != 0
+            && crate::Ptr::<u32>::new(pmt_now)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+        {
+            ret = E_POINTER;
         }
-        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
@@ -420,13 +451,18 @@ pub mod performance {
     pub fn PChannelInfo_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
+        let mut ret = S_OK;
         for k in 2..=4 {
             let out = ctx.memory.read::<u32>(esp.wrapping_add((k + 1) * 4));
-            if out != 0 {
-                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
+            if out != 0
+                && crate::Ptr::<u32>::new(out)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+            {
+                ret = E_POINTER;
             }
         }
-        ctx.cpu.regs.eax = S_OK;
+        ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(6 * 4);
         ctx.indirect(return_addr)
     }
@@ -778,14 +814,19 @@ pub mod composer {
     pub fn AutoTransition_stub(ctx: &mut Context) -> runtime::Cont {
         let esp = ctx.cpu.regs.esp;
         let return_addr = ctx.memory.read::<u32>(esp);
+        let mut ret = E_FAIL;
         for k in 6..=8 {
             let out = ctx.memory.read::<u32>(esp.wrapping_add((k + 1) * 4));
-            if out != 0 {
-                let _ = crate::Ptr::<u32>::new(out).write(&mut ctx.memory, 0);
+            if out != 0
+                && crate::Ptr::<u32>::new(out)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+            {
+                ret = E_POINTER;
             }
         }
         log::debug!("dmusic AutoTransition (ret={return_addr:#x})");
-        ctx.cpu.regs.eax = E_FAIL;
+        ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(10 * 4);
         ctx.indirect(return_addr)
     }
