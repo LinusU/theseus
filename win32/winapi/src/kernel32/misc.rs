@@ -34,6 +34,13 @@ pub struct SYSTEM_INFO {
 
 #[win32_derive::dllexport]
 pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
+    if !crate::ddraw::guest_range(
+        ctx,
+        lpSystemInfo.addr,
+        std::mem::size_of::<SYSTEM_INFO>() as u32,
+    ) {
+        return;
+    }
     let info = SYSTEM_INFO {
         dwPageSize: 0x1000,
         lpMinimumApplicationAddress: 0x10000,
@@ -441,8 +448,9 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GetComputerNameA, GetPrivateProfileStringW, SYSTEM_INFO, SetConsoleCtrlHandler,
-        SetUnhandledExceptionFilter, lstrcpyW, lstrlenW, processor_feature_present,
+        GetComputerNameA, GetPrivateProfileStringW, GetSystemInfo, SYSTEM_INFO,
+        SetConsoleCtrlHandler, SetUnhandledExceptionFilter, lstrcpyW, lstrlenW,
+        processor_feature_present,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -462,6 +470,17 @@ mod tests {
     #[test]
     fn system_info_matches_win32_abi() {
         assert_eq!(std::mem::size_of::<SYSTEM_INFO>(), 36);
+    }
+
+    #[test]
+    fn system_info_rejects_bad_output_pointers() {
+        let mut ctx = context();
+        // Low and far out-of-range output pointers are rejected without panic.
+        GetSystemInfo(&mut ctx, Ptr::new(0x500));
+        GetSystemInfo(&mut ctx, Ptr::new(0xffff_fff0));
+        // A valid pointer writes the page size at offset 4.
+        GetSystemInfo(&mut ctx, Ptr::new(0x1000));
+        assert_eq!(ctx.memory.read::<u32>(0x1000 + 4), 0x1000);
     }
 
     #[test]
