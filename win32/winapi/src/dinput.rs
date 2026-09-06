@@ -215,6 +215,9 @@ pub struct Device {
     pub properties: HashMap<u32, Vec<u8>>,
     /// COM reference count for this device object.
     pub refcount: u32,
+    /// `dwDataSize` from the most recent SetDataFormat; 0 when no format
+    /// has been negotiated yet.
+    pub data_size: u32,
 }
 
 #[derive(Default)]
@@ -338,6 +341,7 @@ pub mod IDirectInput {
                 guid,
                 properties: HashMap::new(),
                 refcount: 1,
+                data_size: 0,
             },
         );
         ctx.memory.write::<u32>(lplpDirectInputDevice, device);
@@ -698,12 +702,20 @@ pub mod IDirectInputDevice {
 
         // cbData comes straight from the app; a garbage value would otherwise
         // ask for a multi-gigabyte allocation.
+        let negotiated = lock()
+            .devices
+            .get(&this)
+            .map(|device| device.data_size as usize)
+            .unwrap_or(0);
         let len = match kind {
             DeviceKind::Keyboard => 256,
             // DIMOUSESTATE: lX, lY, lZ, then four buttons.
             DeviceKind::Mouse => DIMOUSESTATE_SIZE,
-            // Accept DIJOYSTATE (44 bytes) or the larger DIJOYSTATE2 layout.
-            DeviceKind::Joystick if (44..=256).contains(&cbData) => cbData as usize,
+            // Accept DIJOYSTATE (44 bytes) up to the negotiated format size
+            // (or DIJOYSTATE2's 256 when no format was set).
+            DeviceKind::Joystick if (44..=negotiated.max(256)).contains(&(cbData as usize)) => {
+                cbData as usize
+            }
             DeviceKind::Joystick => {
                 log::warn!("GetDeviceState: cbData {cbData} does not match Joystick");
                 return DIERR_INVALIDPARAM;
@@ -842,7 +854,37 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetDataFormat(_ctx: &mut Context, _this: u32, _lpdf: u32) -> u32 {
+    pub fn SetDataFormat(ctx: &mut Context, this: u32, lpdf: u32) -> u32 {
+        // DIDATAFORMAT is six dwords: dwSize, dwObjSize, dwFlags,
+        // dwDataSize, dwNumObjs, rgodf.
+        const DIDATAFORMAT_SIZE: u32 = 24;
+        if !crate::ddraw::guest_range(ctx, lpdf, DIDATAFORMAT_SIZE) {
+            return DIERR_INVALIDPARAM;
+        }
+        let read = |ofs: u32| crate::Ptr::<u32>::new(lpdf + ofs).read(&ctx.memory);
+        let (Some(dw_size), Some(dw_obj_size), Some(dw_data_size), Some(dw_num_objs), Some(rgodf)) =
+            (read(0), read(4), read(12), read(16), read(20))
+        else {
+            return DIERR_INVALIDPARAM;
+        };
+        if dw_size != DIDATAFORMAT_SIZE || dw_obj_size == 0 || dw_data_size == 0 {
+            return DIERR_INVALIDPARAM;
+        }
+        // A non-empty object list has to point at a readable table.
+        if dw_num_objs != 0 {
+            let Some(table) = (dw_obj_size as u64)
+                .checked_mul(dw_num_objs as u64)
+                .and_then(|n| u32::try_from(n).ok())
+            else {
+                return DIERR_INVALIDPARAM;
+            };
+            if rgodf == 0 || !crate::ddraw::guest_range(ctx, rgodf, table) {
+                return DIERR_INVALIDPARAM;
+            }
+        }
+        if let Some(device) = lock().devices.get_mut(&this) {
+            device.data_size = dw_data_size;
+        }
         DI_OK
     }
 
@@ -1107,6 +1149,7 @@ mod tests {
                 guid: GUID_Joystick,
                 properties: HashMap::new(),
                 refcount: 1,
+                data_size: 0,
             },
         );
 
@@ -1150,6 +1193,7 @@ mod tests {
                 guid: GUID_Joystick,
                 properties: HashMap::new(),
                 refcount: 1,
+                data_size: 0,
             },
         );
 
@@ -1272,6 +1316,55 @@ mod tests {
         assert_eq!(
             IDirectInputDevice::GetDeviceInfo(&mut ctx, 0x2000, 0x1000),
             DIERR_INVALIDPARAM
+        );
+    }
+
+    #[test]
+    fn set_data_format_validates_the_didataformat() {
+        let mut ctx = context();
+        lock().devices.insert(
+            0x2300,
+            Device {
+                kind: DeviceKind::Joystick,
+                acquired: true,
+                guid: GUID_Joystick,
+                properties: HashMap::new(),
+                refcount: 1,
+                data_size: 0,
+            },
+        );
+
+        // Null, low, out-of-range, and wrong-size format pointers all fail.
+        for lpdf in [0, 0x500, u32::MAX - 8] {
+            assert_eq!(
+                IDirectInputDevice::SetDataFormat(&mut ctx, 0x2300, lpdf),
+                DIERR_INVALIDPARAM
+            );
+        }
+        ctx.memory.write::<u32>(0x2000, 20); // dwSize too small
+        assert_eq!(
+            IDirectInputDevice::SetDataFormat(&mut ctx, 0x2300, 0x2000),
+            DIERR_INVALIDPARAM
+        );
+
+        // A valid DIDATAFORMAT for a 272-byte DIJOYSTATE2 with no object
+        // table is accepted and recorded.
+        ctx.memory.write::<u32>(0x2000, 24); // dwSize
+        ctx.memory.write::<u32>(0x2004, 24); // dwObjSize
+        ctx.memory.write::<u32>(0x2008, 0); // dwFlags
+        ctx.memory.write::<u32>(0x200c, 272); // dwDataSize
+        ctx.memory.write::<u32>(0x2010, 0); // dwNumObjs
+        ctx.memory.write::<u32>(0x2014, 0); // rgodf
+        assert_eq!(
+            IDirectInputDevice::SetDataFormat(&mut ctx, 0x2300, 0x2000),
+            DI_OK
+        );
+        assert_eq!(lock().devices.get(&0x2300).unwrap().data_size, 272);
+
+        // The negotiated size extends the accepted GetDeviceState range.
+        assert_eq!(
+            IDirectInputDevice::GetDeviceState(&mut ctx, 0x2300, 272, 0x3000),
+            DI_OK
         );
     }
 
