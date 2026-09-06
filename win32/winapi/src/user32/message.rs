@@ -264,10 +264,15 @@ pub fn post_message(hwnd: HWND, message: u32, wParam: WPARAM, lParam: LPARAM) {
 #[win32_derive::dllexport]
 pub fn WaitMessage(_ctx: &mut Context) -> bool {
     let mut queue = state().message_queue.borrow_mut();
-    if queue.peek(host::host().time()).is_none() {
+    // WaitMessage blocks until the queue actually holds a message: a host
+    // event that produces none (dropped input, a not-yet-due timer) must
+    // keep waiting rather than return with an empty queue.
+    loop {
+        if queue.peek(host::host().time()).is_some() {
+            return true;
+        }
         queue.wait_or_poll();
     }
-    true
 }
 
 impl MessageQueue {
@@ -890,6 +895,25 @@ mod tests {
         // KillTimer drops the timer entirely.
         assert!(queue.kill_timer(HWND::from_raw(7), 4));
         assert!(!queue.kill_timer(HWND::from_raw(7), 4));
+    }
+
+    #[test]
+    fn wait_message_returns_once_a_message_is_queued() {
+        use runtime::{BlockCache, CPU, Context, Memory};
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        // A pending posted message satisfies WaitMessage without blocking
+        // on the host.
+        post_message(HWND::from_raw(7), WM::KEYDOWN as u32, 0, 0);
+        assert!(WaitMessage(&mut ctx));
+        state().message_queue.borrow_mut().messages.clear();
     }
 
     #[test]
