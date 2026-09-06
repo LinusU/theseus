@@ -65,7 +65,7 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
         }
     };
 
-    let mut signaled = event.signaled.lock().unwrap();
+    let mut signaled = event.signaled.lock().unwrap_or_else(|e| e.into_inner());
     while !*signaled {
         let (new_signaled, result) = event
             .cond
@@ -136,7 +136,7 @@ enum Waitable {
 impl Waitable {
     fn signaled(&self) -> bool {
         match self {
-            Waitable::Event(event) => *event.signaled.lock().unwrap(),
+            Waitable::Event(event) => *event.signaled.lock().unwrap_or_else(|e| e.into_inner()),
             Waitable::Always => true,
             Waitable::Thread(done) => done.load(Ordering::Acquire),
         }
@@ -147,7 +147,7 @@ impl Waitable {
         if let Waitable::Event(event) = self
             && !event.manual_reset
         {
-            *event.signaled.lock().unwrap() = false;
+            *event.signaled.lock().unwrap_or_else(|e| e.into_inner()) = false;
         }
     }
 }
@@ -228,7 +228,7 @@ pub fn signal_event(hEvent: HANDLE, pulse: bool) -> bool {
     let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
         return false;
     };
-    let mut signaled = event.signaled.lock().unwrap();
+    let mut signaled = event.signaled.lock().unwrap_or_else(|e| e.into_inner());
     *signaled = true;
     event.cond.notify_all();
     if pulse {
@@ -243,7 +243,7 @@ pub fn SetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
         return false;
     };
-    *event.signaled.lock().unwrap() = true;
+    *event.signaled.lock().unwrap_or_else(|e| e.into_inner()) = true;
     // A manual-reset event stays signaled until ResetEvent, so wake every
     // waiter; an auto-reset event is consumed by the first thread that wakes.
     if event.manual_reset {
@@ -260,6 +260,6 @@ pub fn ResetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
         return false;
     };
-    *event.signaled.lock().unwrap() = false;
+    *event.signaled.lock().unwrap_or_else(|e| e.into_inner()) = false;
     true
 }
