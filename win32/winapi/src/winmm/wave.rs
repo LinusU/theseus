@@ -146,6 +146,17 @@ enum MM_WOM {
     DONE = 0x3BD,
 }
 
+/// The function pointer the feeder thread may dispatch: only FUNCTION and
+/// TASK consume `dwCallback`; CALLBACK_NULL ignores the parameter entirely
+/// (real Windows never dereferences it), and WINDOW/EVENT are rejected by
+/// waveOutOpen before a stream is opened.
+fn feeder_callback(callback: CALLBACK, dwCallback: u32) -> u32 {
+    match callback {
+        CALLBACK::FUNCTION | CALLBACK::TASK => dwCallback,
+        _ => 0,
+    }
+}
+
 struct QueuedBlock {
     addr: u32,
     len: u32,
@@ -382,6 +393,7 @@ pub fn waveOutOpen(
 
     // The feeder thread consumes blocks for every callback style: an app
     // with no callback still expects playback and the WHDR_DONE flag.
+    let dwCallback = feeder_callback(callback, dwCallback);
     kernel32::lock().create_thread(ctx, "winmm thread".to_string(), move |ctx| {
         thread_proc(ctx, stream, receiver, dwCallback, dwInstance, pending)
     });
@@ -582,5 +594,18 @@ mod tests {
             ),
             MMSYSERR_INVALPARAM
         );
+    }
+
+    #[test]
+    fn wave_out_null_callback_ignores_the_callback_parameter() {
+        // CALLBACK_NULL must never dispatch dwCallback as a function
+        // pointer; FUNCTION and TASK pass it through to the feeder thread.
+        assert_eq!(feeder_callback(CALLBACK::NULL, 0), 0);
+        assert_eq!(feeder_callback(CALLBACK::NULL, 0x1234), 0);
+        assert_eq!(feeder_callback(CALLBACK::FUNCTION, 0x1234), 0x1234);
+        assert_eq!(feeder_callback(CALLBACK::TASK, 0x1234), 0x1234);
+        // Unreachable through waveOutOpen (rejected earlier), still masked.
+        assert_eq!(feeder_callback(CALLBACK::WINDOW, 0x1234), 0);
+        assert_eq!(feeder_callback(CALLBACK::EVENT, 0x1234), 0);
     }
 }
