@@ -173,7 +173,8 @@ impl Context {
     }
 
     pub fn return_from_x86(&mut self) -> Cont {
-        panic!();
+        log::error!("return_from_x86 invoked unexpectedly");
+        Cont(halt)
     }
 }
 
