@@ -211,14 +211,19 @@ impl Input {
         sequence
     }
 
-    fn set_key(&mut self, vkey: u8, down: bool, toggle: bool) {
+    /// `fresh` is true for a physical press and false for an auto-repeat
+    /// keydown: repeats hold the key down but must not rearm GetAsyncKeyState's
+    /// "pressed since last call" bit or flip a toggle key again.
+    fn set_key(&mut self, vkey: u8, down: bool, fresh: bool) {
         let state = &mut self.keys[vkey as usize];
         if down {
-            if toggle && is_toggle_key(vkey) {
+            if fresh && is_toggle_key(vkey) {
                 *state ^= KEY_TOGGLED;
             }
             *state |= KEY_DOWN;
-            self.async_pressed[vkey as usize] = true;
+            if fresh {
+                self.async_pressed[vkey as usize] = true;
+            }
         } else {
             *state &= !KEY_DOWN;
         }
@@ -233,9 +238,11 @@ impl Input {
     pub fn on_key(&mut self, key: &host::KeyMessage, down: bool) {
         self.set_key(key.vkey, down, !key.repeat);
         if let Some((generic, other)) = key_sides(key.vkey) {
-            // The generic entry stays down while either side is held.
+            // The generic entry stays down while either side is held, and a
+            // fresh press arms its "pressed since last call" bit too; generic
+            // keys are never toggle keys, so `fresh` cannot flip one.
             if down || !self.key_down(other) {
-                self.set_key(generic, down, false);
+                self.set_key(generic, down, !key.repeat && down);
             }
         }
 
@@ -277,13 +284,14 @@ impl Input {
         self.mouse.x = x;
         self.mouse.y = y;
 
-        // DIMOUSESTATE orders buttons left, right, middle.
+        // DIMOUSESTATE orders buttons left, right, middle; their virtual key
+        // codes are VK_LBUTTON, VK_RBUTTON, VK_MBUTTON.
         let buttons = [
-            host::MouseButton::Left,
-            host::MouseButton::Right,
-            host::MouseButton::Middle,
+            (host::MouseButton::Left, 0x01u8),
+            (host::MouseButton::Right, 0x02),
+            (host::MouseButton::Middle, 0x04),
         ];
-        for (index, button) in buttons.into_iter().enumerate() {
+        for (index, (button, vkey)) in buttons.into_iter().enumerate() {
             let down = if mouse.buttons.contains(button) {
                 KEY_DOWN
             } else {
@@ -293,6 +301,9 @@ impl Input {
                 continue;
             }
             self.mouse.buttons[index] = down;
+            // GetAsyncKeyState/GetKeyState report mouse buttons through the
+            // same VK array as keys; a button transition is a fresh press.
+            self.set_key(vkey, down != 0, true);
             let sequence = self.next_sequence();
             self.mouse_buffer.push(DeviceEvent {
                 ofs: MOUSE_BUTTON_0 + index as u32,
@@ -557,7 +568,7 @@ pub fn GetKeyboardState(ctx: &mut Context, lpKeyState: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::key_name;
+    use super::{Input, KEY_DOWN, key_name};
 
     #[test]
     fn key_names_cover_extended_and_unknown_scan_codes() {
@@ -565,5 +576,58 @@ mod tests {
         assert_eq!(key_name(0x1c, true), Some(&b"Num Enter"[..]));
         assert_eq!(key_name(0x48, true), Some(&b"Up"[..]));
         assert_eq!(key_name(0xff, false), None);
+    }
+
+    fn key(vkey: u8, repeat: bool) -> host::KeyMessage {
+        host::KeyMessage {
+            scancode: 0x48,
+            vkey,
+            extended: true,
+            repeat,
+        }
+    }
+
+    #[test]
+    fn autorepeat_does_not_rearm_the_async_press_bit() {
+        let mut input = Input::default();
+        input.on_key(&key(0x26, false), true); // VK_UP fresh press
+        assert!(input.take_async_press(0x26));
+        assert!(!input.take_async_press(0x26));
+
+        input.on_key(&key(0x26, true), true); // auto-repeat down
+        assert!(input.key_down(0x26));
+        // The low bit of GetAsyncKeyState must not report a repeat as a new
+        // press, or a held key would trigger one-shot actions per repeat.
+        assert!(!input.take_async_press(0x26));
+
+        // A side-specific press arms both itself and the generic VK.
+        let mut input = Input::default();
+        input.on_key(&key(0xa0, false), true); // VK_LSHIFT
+        assert!(input.take_async_press(0xa0));
+        assert!(input.take_async_press(0x10)); // VK_SHIFT
+    }
+
+    #[test]
+    fn mouse_buttons_report_through_the_vk_state() {
+        let mut input = Input::default();
+        let down = host::MouseMessage {
+            x: 10,
+            y: 10,
+            button: host::MouseButton::Left,
+            buttons: host::MouseButton::Left,
+        };
+        input.on_mouse(&down);
+        // VK_LBUTTON reads as down for GetKeyState and counts as a fresh
+        // press for GetAsyncKeyState's low bit.
+        assert_eq!(input.key_state(0x01), KEY_DOWN);
+        assert!(input.take_async_press(0x01));
+        assert!(!input.take_async_press(0x01));
+
+        let up = host::MouseMessage {
+            buttons: host::MouseButton::empty(),
+            ..down
+        };
+        input.on_mouse(&up);
+        assert_eq!(input.key_state(0x01), 0);
     }
 }
