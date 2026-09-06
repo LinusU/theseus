@@ -785,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn codegen_uses_unsigned_wrapped_offsets_for_memory_bit_indices() {
+    fn codegen_uses_signed_wrapped_offsets_for_memory_bit_indices() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
             ..Default::default()
@@ -804,7 +804,9 @@ mod tests {
         assert!(
             codegen
                 .buf
-                .contains("ctx.cpu.regs.eax.wrapping_add((bit >> 5).wrapping_mul(4u32))")
+                .contains(
+                    "ctx.cpu.regs.eax.wrapping_add(((ctx.cpu.regs.ecx as i32) >> 5).wrapping_mul(4) as u32)",
+                )
         );
     }
 

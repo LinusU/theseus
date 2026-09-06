@@ -124,7 +124,7 @@ impl<'a> CodeGen<'a> {
                 let bit = if instr.op_kind(1) == iced_x86::OpKind::Register
                     && reg_size(instr.op_register(1)) == 32
                 {
-                    bit_op
+                    bit_op.clone()
                 } else {
                     format!("{bit_op} as u32")
                 };
@@ -132,9 +132,19 @@ impl<'a> CodeGen<'a> {
                 if is_memory_op(instr.op_kind(0)) {
                     let addr = self.gen_addr(instr);
                     let addr = if instr.op_kind(1) == iced_x86::OpKind::Register {
+                        // A register bit index is signed: the bit string can
+                        // extend below the base address, so the element
+                        // offset sign-extends the index and uses an
+                        // arithmetic shift (SAR), not a logical one.
                         let shift = size.trailing_zeros();
                         let bytes = size / 8;
-                        format!("{addr}.wrapping_add((bit >> {shift}).wrapping_mul({bytes}u32))")
+                        let sext = match reg_size(instr.op_register(1)) {
+                            32 => format!("({bit_op} as i32)"),
+                            _ => format!("({bit_op} as i16 as i32)"),
+                        };
+                        format!(
+                            "{addr}.wrapping_add(({sext} >> {shift}).wrapping_mul({bytes}) as u32)"
+                        )
                     } else {
                         addr
                     };
