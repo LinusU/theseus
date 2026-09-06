@@ -154,12 +154,14 @@ pub fn GetModuleFileNameA(
 #[win32_derive::dllexport]
 pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
     let kernel32 = lock();
-    let Some(name) =
-        (lpModuleName.addr != 0).then(|| ctx.memory.read_str(lpModuleName.addr).to_owned())
-    else {
+    if lpModuleName.addr == 0 {
         // A null name asks for the running executable itself.
         return kernel32.image_base;
-    };
+    }
+    if lpModuleName.addr < 0x1000 {
+        return 0;
+    }
+    let name = ctx.memory.read_str(lpModuleName.addr).to_owned();
     match kernel32.dlls.module_handle(&name) {
         Some(handle) => handle,
         None => {
@@ -171,6 +173,9 @@ pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
 
 #[win32_derive::dllexport]
 pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
+    if lpLibFileName.addr < 0x1000 {
+        return 0;
+    }
     let filename = ctx.memory.read_str(lpLibFileName.addr).to_owned();
     if let Some(hmodule) = lock().dlls.module_handle(&filename) {
         return hmodule;
@@ -272,7 +277,21 @@ pub fn GetProcAddress(ctx: &mut Context, hModule: HMODULE, lpProcName: Ptr<u8>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{DLLs, Exports, MODULE_HANDLE_BASE};
+    use super::{DLLs, Exports, GetModuleHandleA, LoadLibraryA, MODULE_HANDLE_BASE};
+    use crate::Ptr;
+    use runtime::{BlockCache, CPU, ContFn, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[(0x3000, Context::return_from_x86 as ContFn)],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86 as ContFn; 4],
+        }
+    }
 
     #[test]
     fn registered_static_modules_are_case_insensitive() {
@@ -286,5 +305,16 @@ mod tests {
             Some(MODULE_HANDLE_BASE + 1)
         );
         assert_eq!(exports.module_handle("missing"), None);
+    }
+
+    #[test]
+    fn get_module_handle_and_load_library_reject_null_and_low_pointers() {
+        crate::kernel32::ensure_test_state();
+        let mut ctx = context();
+        assert_eq!(LoadLibraryA(&mut ctx, Ptr::new(0)), 0);
+        assert_eq!(LoadLibraryA(&mut ctx, Ptr::new(0x500)), 0);
+        assert_eq!(GetModuleHandleA(&mut ctx, Ptr::new(0x500)), 0);
+        let base = crate::kernel32::lock().image_base;
+        assert_eq!(GetModuleHandleA(&mut ctx, Ptr::new(0)), base);
     }
 }
