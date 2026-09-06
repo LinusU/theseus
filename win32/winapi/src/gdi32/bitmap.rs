@@ -59,8 +59,10 @@ pub fn StretchBlt(
             // PATCOPY / PATINVERT: fill the destination with the DC brush.
             return rop_fill_pattern(ctx, hdcDest, xDest, yDest, wDest, hDest, rop);
         }
-        // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT / MERGECOPY
-        0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 | 0x00c0_00ca => {}
+        // SRCCOPY / NOTSRCCOPY / SRCINVERT / SRCAND / SRCPAINT / MERGECOPY /
+        // MERGEPAINT / PATPAINT / NOTSRCERASE
+        0x00cc_0020 | 0x0033_0008 | 0x0066_0046 | 0x0088_00c6 | 0x00ee_0086 | 0x00c0_00ca
+        | 0x00bb_0226 | 0x00fb_0a09 | 0x0011_00a6 => {}
         _ => return false,
     }
 
@@ -141,6 +143,21 @@ pub fn StretchBlt(
                     row_buf.fill(0);
                 }
                 dst.copy_from_slice(&row_buf);
+            } else if rop == 0x00bb_0226 || rop == 0x00fb_0a09 {
+                // MERGEPAINT: dst | ~src.  PATPAINT: dst | ~src | pat.
+                row_buf.fill(0);
+                bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, &mut row_buf);
+                for b in row_buf.iter_mut() {
+                    *b = !*b;
+                }
+                if let (0x00fb_0a09, Some(pat)) = (rop, brush) {
+                    for chunk in row_buf.chunks_exact_mut(4) {
+                        for (b, &p) in chunk.iter_mut().zip(pat.iter()) {
+                            *b |= p;
+                        }
+                    }
+                }
+                apply_rop(dst, &row_buf, 0x00ee_0086); // SRCPAINT
             } else {
                 row_buf.fill(0);
                 bmp_src.read_pixels(pixels_src, row, x_src, x_src + w, &mut row_buf);
@@ -202,6 +219,21 @@ pub fn StretchBlt(
                     px = [0; 4];
                 }
                 dst[i as usize * 4..i as usize * 4 + 4].copy_from_slice(&px);
+            } else if rop == 0x00bb_0226 || rop == 0x00fb_0a09 {
+                // MERGEPAINT: dst | ~src.  PATPAINT: dst | ~src | pat.
+                if !in_source {
+                    px = [0xff; 4];
+                } else {
+                    for b in px.iter_mut() {
+                        *b = !*b;
+                    }
+                }
+                if let (0x00fb_0a09, Some(pat)) = (rop, brush) {
+                    for (b, &p) in px.iter_mut().zip(pat.iter()) {
+                        *b |= p;
+                    }
+                }
+                apply_rop(&mut dst[i as usize * 4..][..4], &px, 0x00ee_0086); // SRCPAINT
             } else {
                 // A combining rop treats an out-of-source sample as black.
                 apply_rop(&mut dst[i as usize * 4..][..4], &px, rop);
@@ -216,10 +248,11 @@ pub fn StretchBlt(
 fn apply_rop(dst: &mut [u8], src: &[u8], rop: u32) {
     for (d, &s) in dst.iter_mut().zip(src.iter()) {
         *d = match rop {
-            0x0033_0008 => !s,     // NOTSRCCOPY
-            0x0066_0046 => *d ^ s, // SRCINVERT
-            0x0088_00c6 => *d & s, // SRCAND
-            _ => *d | s,           // SRCPAINT
+            0x0033_0008 => !s,      // NOTSRCCOPY
+            0x0011_00a6 => *d & !s, // NOTSRCERASE
+            0x0066_0046 => *d ^ s,  // SRCINVERT
+            0x0088_00c6 => *d & s,  // SRCAND
+            _ => *d | s,            // SRCPAINT
         };
     }
 }
@@ -504,6 +537,24 @@ mod tests {
             &mut ctx, dst_dc, 0, 0, 1, 1, src_dc, 0, 0, 1, 1, 0x330008
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_ff00);
+        // NOTSRCERASE masks the destination with the inverted source.
+        // 0x0f0f0f0f & ~0x00ff00ff = 0x0f000f00.
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            src_dc,
+            0,
+            0,
+            1,
+            1,
+            0x0011_00a6,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0x0f00_0f00);
     }
 
     #[test]
@@ -573,6 +624,44 @@ mod tests {
             0x00c0_00ca,
         ));
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff00_00ff);
+
+        // MERGEPAINT: dest | ~source. 0x0f0f0f0f | ~0x00ff00ff = 0xff0fff0f.
+        ctx.memory.write::<u32>(0x2000, 0x00ff_00ff);
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            src_dc,
+            0,
+            0,
+            1,
+            1,
+            0x00bb_0226,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff0f_ff0f);
+
+        // PATPAINT: dest | ~source | brush. With red brush: 0xff0fffff.
+        ctx.memory.write::<u32>(0x2000, 0x00ff_00ff);
+        ctx.memory.write::<u32>(0x3000, 0x0f0f_0f0f);
+        assert!(StretchBlt(
+            &mut ctx,
+            dst_dc,
+            0,
+            0,
+            1,
+            1,
+            src_dc,
+            0,
+            0,
+            1,
+            1,
+            0x00fb_0a09,
+        ));
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0xff0f_ffff);
     }
 
     fn dib_info32(ctx: &mut Context, addr: u32) {
