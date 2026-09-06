@@ -53,7 +53,13 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> Result<WindowsModule> {
     mem.write_bytes(image_base, &buf[..0x1000.min(buf.len())]);
     let mut code_range = None;
     for sec in &f.sections {
-        let addr = image_base + sec.VirtualAddress;
+        // A repacked image can carry section RVAs that overflow the 32-bit
+        // address space; skipping the section beats mapping it at a wrapped
+        // low address.
+        let Some(addr) = image_base.checked_add(sec.VirtualAddress) else {
+            log::warn!("skipping out-of-range section {:?}", sec.name());
+            continue;
+        };
         let size = runtime::round_to_page(sec.SizeOfRawData.max(sec.VirtualSize));
         let Some(addr) = mem.try_reserve(sec.name().unwrap_or("<invalid>").to_string(), addr, size)
         else {
@@ -72,11 +78,14 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> Result<WindowsModule> {
             mem.write_bytes(addr, data);
         }
         if flags.contains(IMAGE_SCN::CODE) || flags.contains(IMAGE_SCN::MEM_EXECUTE) {
+            // A section can legitimately run to the top of the address
+            // space; clamp the end rather than wrapping it.
+            let end = addr.saturating_add(sec.SizeOfRawData);
             match &mut code_range {
-                None => code_range = Some(addr..addr + sec.SizeOfRawData),
+                None => code_range = Some(addr..end),
                 Some(range) => {
                     range.start = range.start.min(addr);
-                    range.end = range.end.max(addr + sec.SizeOfRawData);
+                    range.end = range.end.max(end);
                 }
             }
         }
@@ -84,9 +93,9 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> Result<WindowsModule> {
 
     let resources = f
         .get_data_directory(exe::pe::IMAGE_DIRECTORY_ENTRY::RESOURCE)
-        .map(|dir| {
-            let addr = image_base + dir.VirtualAddress;
-            addr..(addr + dir.Size)
+        .and_then(|dir| {
+            let addr = image_base.checked_add(dir.VirtualAddress)?;
+            Some(addr..addr.saturating_add(dir.Size))
         });
 
     let imports = read_imports(&f, mem);
@@ -94,7 +103,9 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> Result<WindowsModule> {
     Ok(WindowsModule {
         imports,
         image_base,
-        entry_point: image_base + f.opt_header.AddressOfEntryPoint,
+        entry_point: image_base
+            .checked_add(f.opt_header.AddressOfEntryPoint)
+            .ok_or_else(|| anyhow::anyhow!("entry point RVA out of range"))?,
         code_memory: code_range.unwrap_or(0..0),
         resources,
         vtables: Default::default(),
@@ -133,10 +144,14 @@ fn read_imports(pe_file: &exe::PE, mem: &Memory) -> Vec<Import> {
                 exe::ImportSymbol::Ordinal(n) => format!("ordinal{n}"),
             };
             let data = is_data(name, &func);
+            let Some(iat_addr) = image_base.checked_add(addr) else {
+                log::warn!("skipping out-of-range IAT entry {addr:#x} for {name}::{func}");
+                continue;
+            };
             imports.push(Import {
                 dll: name.to_string(),
                 func,
-                iat_addr: image_base + addr,
+                iat_addr,
                 addr: 0,
                 data,
             });
