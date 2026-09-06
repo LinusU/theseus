@@ -91,6 +91,9 @@ mod tests {
 
     #[test]
     fn client_to_screen_offsets_by_the_window_origin() {
+        // The shared window slot is also exercised by `user32::window`'s
+        // tests; serialize against them.
+        let _guard = crate::user32::WINDOW_STATE_LOCK.lock().unwrap();
         let mut ctx = context();
         let host_window: host::Window = unsafe { std::mem::zeroed() };
         let window = Rc::new(RefCell::new(crate::user32::Window {

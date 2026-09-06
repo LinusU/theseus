@@ -122,3 +122,8 @@ pub fn state() -> &'static State {
         focused: Cell::new(HWND::null()),
     })
 }
+
+/// The window/class slots are process-global and `State` is unsafely `Sync`,
+/// so tests that install into them from any module must take this lock.
+#[cfg(test)]
+pub(crate) static WINDOW_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -1275,9 +1275,9 @@ mod tests {
 
     static BLOCKS: &[(u32, ContFn)] = &[(0x3000, Context::return_from_x86)];
 
-    /// The registered-class slot is process-global; tests that register and
-    /// unregister classes must not interleave.
-    static CLASS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// The registered-class and window slots are process-global; tests that
+    /// register, unregister, or install windows must not interleave.
+    use crate::user32::WINDOW_STATE_LOCK as CLASS_LOCK;
 
     fn context() -> Context {
         Context {
