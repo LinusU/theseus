@@ -187,6 +187,13 @@ pub mod IDirectDraw {
     ) -> DD {
         // A filter desc limits enumeration to modes matching its DDSD fields.
         let filter = if lpSurfaceDesc != 0 {
+            if !crate::ddraw::guest_range(
+                ctx,
+                lpSurfaceDesc,
+                std::mem::size_of::<DDSURFACEDESC>() as u32,
+            ) {
+                return DD::ERR_INVALIDPARAMS;
+            }
             let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpSurfaceDesc..])
             else {
                 return DD::ERR_INVALIDPARAMS;
@@ -365,7 +372,13 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn GetDisplayMode(ctx: &mut Context, this: u32, lpDDSurfaceDesc: u32) -> DD {
-        if lpDDSurfaceDesc == 0 {
+        if lpDDSurfaceDesc == 0
+            || !crate::ddraw::guest_range(
+                ctx,
+                lpDDSurfaceDesc,
+                std::mem::size_of::<DDSURFACEDESC>() as u32,
+            )
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         let Ok((desc, _)) = <DDSURFACEDESC>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc..])

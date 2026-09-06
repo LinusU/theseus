@@ -231,6 +231,13 @@ pub mod IDirectDraw7 {
     ) -> DD {
         // A filter desc limits enumeration to modes matching its DDSD fields.
         let filter = if lpSurfaceDesc2 != 0 {
+            if !crate::ddraw::guest_range(
+                ctx,
+                lpSurfaceDesc2,
+                std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            ) {
+                return DD::ERR_INVALIDPARAMS;
+            }
             let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpSurfaceDesc2..])
             else {
                 return DD::ERR_INVALIDPARAMS;
@@ -469,7 +476,13 @@ pub mod IDirectDraw7 {
 
     #[win32_derive::dllexport]
     pub fn GetDisplayMode(ctx: &mut Context, this: u32, lpDDSurfaceDesc2: u32) -> DD {
-        if lpDDSurfaceDesc2 == 0 {
+        if lpDDSurfaceDesc2 == 0
+            || !crate::ddraw::guest_range(
+                ctx,
+                lpDDSurfaceDesc2,
+                std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            )
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         let Ok((desc, _)) = <DDSURFACEDESC2>::read_from_prefix(&ctx.memory[lpDDSurfaceDesc2..])
@@ -1567,7 +1580,12 @@ pub mod IDirectDrawSurface7 {
         cbSize: u32,
         _dwFlags: u32,
     ) -> DD {
-        if guidTag == 0 || lpData == 0 || cbSize == 0 {
+        if guidTag == 0
+            || lpData == 0
+            || cbSize == 0
+            || !crate::ddraw::guest_range(ctx, guidTag, std::mem::size_of::<GUID>() as u32)
+            || !crate::ddraw::guest_range(ctx, lpData, cbSize)
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
@@ -1595,7 +1613,10 @@ pub mod IDirectDrawSurface7 {
         lpBuffer: u32,
         lpcbBufferSize: u32,
     ) -> DD {
-        if guidTag == 0 || lpcbBufferSize == 0 {
+        if guidTag == 0
+            || lpcbBufferSize == 0
+            || !crate::ddraw::guest_range(ctx, guidTag, std::mem::size_of::<GUID>() as u32)
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
@@ -1608,13 +1629,15 @@ pub mod IDirectDrawSurface7 {
         let Some(data) = surface.borrow().private_data.get(&tag).cloned() else {
             return DD::ERR_NOTFOUND;
         };
-        let size = ctx.memory.read::<u32>(lpcbBufferSize);
+        let Some(size) = Ptr::<u32>::new(lpcbBufferSize).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         if size < data.len() as u32 {
             // Report the needed size, as the API contract requires.
-            ctx.memory.write::<u32>(lpcbBufferSize, data.len() as u32);
+            let _ = Ptr::<u32>::new(lpcbBufferSize).write(&mut ctx.memory, data.len() as u32);
             return DD::ERR_MOREDATA;
         }
-        if lpBuffer == 0 {
+        if !crate::ddraw::guest_range(ctx, lpBuffer, data.len() as u32) {
             return DD::ERR_INVALIDPARAMS;
         }
         ctx.memory[lpBuffer..][..data.len()].copy_from_slice(&data);
@@ -1623,7 +1646,9 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn FreePrivateData(ctx: &mut Context, this: u32, guidTag: u32) -> DD {
-        if guidTag == 0 {
+        if guidTag == 0
+            || !crate::ddraw::guest_range(ctx, guidTag, std::mem::size_of::<GUID>() as u32)
+        {
             return DD::ERR_INVALIDPARAMS;
         }
         let Ok((tag, _)) = <GUID>::read_from_prefix(&ctx.memory[guidTag..]) else {
