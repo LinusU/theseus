@@ -825,6 +825,17 @@ mod tests {
     }
 
     #[test]
+    fn fxsave_out_of_bounds_does_not_panic() {
+        let mut memory = crate::Memory::leak_new(0x1000);
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+        // The 512-byte image starts at the top of the allocation and runs past
+        // the end; the previous direct-index implementation would silently fill
+        // an empty dummy slice, and now write_bytes logs and returns.
+        fpu.fxsave(&mut memory, 0x1000);
+    }
+
+    #[test]
     fn ffree_marks_a_register_empty_without_moving_top() {
         let mut memory = crate::Memory::leak_new(0x2000);
         let mut fpu = FPU::default();
