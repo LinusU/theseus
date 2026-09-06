@@ -72,7 +72,13 @@ impl<'a> Memory<'a> {
     #[track_caller]
     pub fn read_str(&self, addr: u32) -> &str {
         self.check_access(addr);
-        let buf = &self.bytes[addr as usize..];
+        let Some(buf) = self.bytes.get(addr as usize..) else {
+            log::error!(
+                "out-of-bounds string read at {addr:#x} (caller {})",
+                std::panic::Location::caller()
+            );
+            return "";
+        };
         let Some(nul) = buf.iter().position(|&c| c == 0) else {
             // A string that runs to the end of memory is malformed guest data;
             // failing the read beats panicking the host.
@@ -102,7 +108,13 @@ impl<'a> Memory<'a> {
     #[track_caller]
     pub fn read_wstr(&self, addr: u32) -> U16String {
         self.check_access(addr);
-        let buf = &self.bytes[addr as usize..];
+        let Some(buf) = self.bytes.get(addr as usize..) else {
+            log::error!(
+                "out-of-bounds wide string read at {addr:#x} (caller {})",
+                std::panic::Location::caller()
+            );
+            return U16String::new();
+        };
         let mut str: Vec<u16> = vec![];
         for chunk in buf.chunks_exact(2) {
             if chunk == [0, 0] {
