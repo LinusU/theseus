@@ -253,7 +253,7 @@ fn create(
     iids: &[GUID],
     get_vtable: fn(&mut Context) -> u32,
 ) -> u32 {
-    if ppv == 0 {
+    if !crate::ddraw::guest_range(ctx, ppv, 4) {
         return E_POINTER;
     }
     let ppv = crate::Ptr::<u32>::new(ppv);
