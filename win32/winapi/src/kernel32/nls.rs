@@ -87,7 +87,7 @@ fn ctype1(c: u32) -> C1 {
 }
 
 fn read_string_type_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
-    if count < -1 {
+    if count < -1 || addr < 0x1000 {
         return None;
     }
     let bytes = ctx.memory.bytes.get(addr as usize..)?;
@@ -100,7 +100,7 @@ fn read_string_type_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
 }
 
 fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
-    if count < -1 {
+    if count < -1 || addr < 0x1000 {
         return None;
     }
     let bytes = ctx.memory.bytes.get(addr as usize..)?;
@@ -126,9 +126,10 @@ fn read_string_type_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> 
 }
 
 fn output_range_fits(ctx: &Context, addr: u32, bytes: usize) -> bool {
-    (addr as usize)
-        .checked_add(bytes)
-        .is_some_and(|end| end <= ctx.memory.bytes.len())
+    addr >= 0x1000
+        && (addr as usize)
+            .checked_add(bytes)
+            .is_some_and(|end| end <= ctx.memory.bytes.len())
 }
 
 fn char_type_output_fits(ctx: &Context, addr: u32, count: usize) -> bool {
@@ -317,6 +318,9 @@ fn ansi_to_wide(byte: u8) -> u16 {
 }
 
 fn read_multibyte(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
+    if addr < 0x1000 {
+        return None;
+    }
     let bytes = ctx.memory.bytes.get(addr as usize..)?;
     let len = match count {
         -1 => bytes
@@ -737,5 +741,45 @@ mod tests {
         );
         assert_eq!(ctx.memory.read::<u8>(0x1100), b'_');
         assert_eq!(ctx.memory.read::<u8>(0x1300), 1);
+
+        // Null and sub-0x1000 source/output pointers are rejected.
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            C1::UPPER.bits(),
+            Ptr::new(0x500),
+            -1,
+            Ptr::new(0x1100)
+        ));
+        assert!(!GetStringTypeA(
+            &mut ctx,
+            0,
+            C1::UPPER.bits(),
+            Ptr::new(0x1000),
+            -1,
+            Ptr::new(0x500)
+        ));
+        assert_eq!(
+            MultiByteToWideChar(&mut ctx, 1252, 0, Ptr::new(0x500), -1, Ptr::new(0x1100), 10),
+            0
+        );
+        assert_eq!(
+            WideCharToMultiByte(
+                &mut ctx,
+                1252,
+                0,
+                Ptr::new(0x500),
+                1,
+                Ptr::new(0x1100),
+                1,
+                Ptr::new(0),
+                Ptr::new(0)
+            ),
+            0
+        );
+        assert_eq!(
+            LCMapStringA(&mut ctx, 0, 0, Ptr::new(0x500), -1, Ptr::new(0x1100), 10),
+            0
+        );
     }
 }
