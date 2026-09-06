@@ -191,22 +191,59 @@ pub fn GetCurrentThreadId(ctx: &mut Context) -> u32 {
     ctx.thread_id
 }
 
+const TLS_OUT_OF_INDEXES: u32 = 0xffff_ffff;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+
 #[win32_derive::dllexport]
 pub fn TlsAlloc(_ctx: &mut Context) -> u32 {
     let mut state = kernel32::lock();
-    let index = state.next_tls_index;
-    state.next_tls_index += 1;
+    // The lowest clear bit is the lowest available TLS index.
+    let index = state.tls_allocated.trailing_ones();
+    if index >= 64 {
+        return TLS_OUT_OF_INDEXES;
+    }
+    state.tls_allocated |= 1 << index;
     index
 }
 
 #[win32_derive::dllexport]
 pub fn TlsGetValue(ctx: &mut Context, dwTlsIndex: u32) -> u32 {
+    if dwTlsIndex >= 64 {
+        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        return 0;
+    }
     teb(ctx).TlsSlots[dwTlsIndex as usize]
 }
 
 #[win32_derive::dllexport]
 pub fn TlsSetValue(ctx: &mut Context, dwTlsIndex: u32, lpTlsValue: u32) -> bool {
+    if dwTlsIndex >= 64 {
+        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        return false;
+    }
     teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = lpTlsValue;
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn TlsFree(ctx: &mut Context, dwTlsIndex: u32) -> bool {
+    if dwTlsIndex >= 64 {
+        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        return false;
+    }
+    let allocated = {
+        let mut state = kernel32::lock();
+        let bit = 1 << dwTlsIndex;
+        let allocated = state.tls_allocated & bit != 0;
+        state.tls_allocated &= !bit;
+        allocated
+    };
+    if !allocated {
+        teb_mut(ctx).LastErrorValue = ERROR_INVALID_PARAMETER;
+        return false;
+    }
+    // Windows zeroes the slot of the calling thread on free.
+    teb_mut(ctx).TlsSlots[dwTlsIndex as usize] = 0;
     true
 }
 
@@ -304,4 +341,56 @@ pub fn SetThreadPriority(
     }
     state.thread_priorities.insert(hThread, nPriority);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TlsAlloc, TlsFree, TlsGetValue, TlsSetValue};
+    use crate::kernel32::ensure_test_state;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        ensure_test_state();
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        ctx.cpu.regs.fs_base = 0x2000;
+        ctx
+    }
+
+    #[test]
+    fn tls_slots_round_trip_and_reject_bad_indices() {
+        let mut ctx = context();
+        let index = TlsAlloc(&mut ctx);
+        assert!(index < 64);
+        assert!(TlsSetValue(&mut ctx, index, 0x1234_5678));
+        assert_eq!(TlsGetValue(&mut ctx, index), 0x1234_5678);
+        // Out-of-range indices fail with ERROR_INVALID_PARAMETER, not a panic.
+        assert!(!TlsSetValue(&mut ctx, 64, 1));
+        assert_eq!(teb_last_error(&mut ctx), 87);
+        assert_eq!(TlsGetValue(&mut ctx, 64), 0);
+        assert_eq!(teb_last_error(&mut ctx), 87);
+        // Freeing releases the slot for reuse and zeroes this thread's value.
+        assert!(TlsFree(&mut ctx, index));
+        assert_eq!(TlsGetValue(&mut ctx, index), 0);
+        let reallocated = TlsAlloc(&mut ctx);
+        assert_eq!(reallocated, index);
+        assert!(TlsFree(&mut ctx, reallocated));
+        // Freeing an out-of-range index fails without a panic.
+        assert!(!TlsFree(&mut ctx, u32::MAX));
+        assert_eq!(teb_last_error(&mut ctx), 87);
+    }
+
+    fn teb_last_error(ctx: &mut Context) -> u32 {
+        crate::Ptr::<crate::kernel32::thread::TEB>::new(ctx.cpu.regs.fs_base)
+            .aligned_ref(&ctx.memory)
+            .unwrap()
+            .LastErrorValue
+    }
 }

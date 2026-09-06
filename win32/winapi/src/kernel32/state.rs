@@ -30,7 +30,8 @@ pub struct State {
     /// SetStdHandle; GetStdHandle reports these values.
     pub std_handles: [u32; 3],
     pub next_thread_id: u32,
-    pub next_tls_index: u32,
+    /// Bitmask of allocated TLS slots; TLS_MINIMUM_AVAILABLE is 64.
+    pub tls_allocated: u64,
     pub unhandled_exception_filter: u32,
     pub console_ctrl_handlers: Vec<u32>,
     pub thread_priorities: HashMap<HANDLE, i32>,
@@ -60,7 +61,7 @@ fn build_state(image_base: u32, resources: std::ops::Range<u32>) -> State {
             crate::kernel32::file::STDERR_HFILE,
         ],
         next_thread_id: 2,
-        next_tls_index: 0,
+        tls_allocated: 0,
         unhandled_exception_filter: 0,
         console_ctrl_handlers: Vec::new(),
         thread_priorities: HashMap::new(),
