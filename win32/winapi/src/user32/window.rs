@@ -900,6 +900,8 @@ pub fn SetWindowPos(
     true
 }
 
+const ERROR_INVALID_PARAMETER: u32 = 87;
+
 #[win32_derive::dllexport]
 pub fn SetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>) -> bool {
     let window = state().window.borrow();
@@ -908,6 +910,12 @@ pub fn SetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>) -> bool 
     };
     let mut window = window.borrow_mut();
     if window.hwnd != hWnd {
+        return false;
+    }
+    if lpString.addr < 0x1000 {
+        if let Some(teb) = kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = ERROR_INVALID_PARAMETER;
+        }
         return false;
     }
     window.title = ctx.memory.read_str(lpString.addr).to_owned();
@@ -1118,9 +1126,13 @@ pub fn ValidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::{RegisterClassA, UnregisterClassA, UnregisterClassW};
+    use super::{
+        GetWindowTextA, HWND, RegisterClassA, SetWindowTextA, UnregisterClassA, UnregisterClassW,
+        Window,
+    };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, ContFn, Context, Memory};
+    use std::{cell::RefCell, rc::Rc};
 
     static BLOCKS: &[(u32, ContFn)] = &[(0x3000, Context::return_from_x86)];
 
@@ -1185,5 +1197,49 @@ mod tests {
         // Case-insensitive match, like Windows.
         ctx.memory[OTHER_NAME_ADDR..][..10].copy_from_slice(b"testclass\0");
         assert!(UnregisterClassA(&mut ctx, Ptr::new(OTHER_NAME_ADDR), 0));
+    }
+
+    #[test]
+    fn set_and_get_window_text_reject_null_pointers() {
+        // This test manually inserts a Window to avoid the SDL single-thread
+        // restriction that CreateWindowExA would otherwise trigger.
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+
+        let host_window: host::Window = unsafe { std::mem::zeroed() };
+        let window = Rc::new(RefCell::new(Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: "Initial".into(),
+            enabled: true,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            pixels: None,
+            host: host_window,
+            surface: None,
+        }));
+        super::state().window.borrow_mut().replace(window);
+        let hwnd = HWND::from_raw(1);
+
+        ctx.memory[0x2000..][..10].copy_from_slice(b"NewTitle\0\0");
+        assert!(SetWindowTextA(&mut ctx, hwnd, Ptr::new(0x2000)));
+
+        assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0x3000), 16), 8);
+        assert_eq!(&ctx.memory.bytes[0x3000..0x3009], b"NewTitle\0");
+
+        assert!(!SetWindowTextA(&mut ctx, hwnd, Ptr::new(0)));
+        assert!(!SetWindowTextA(&mut ctx, hwnd, Ptr::new(0x500)));
+        assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0x3000), 16), 8);
+        assert_eq!(&ctx.memory.bytes[0x3000..0x3009], b"NewTitle\0");
+
+        ctx.memory[0x4000..][..8].fill(0xAB);
+        assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0x500), 16), 0);
+        assert_eq!(&ctx.memory.bytes[0x4000..0x4008], &[0xAB; 8]);
+
+        super::state().window.borrow_mut().take();
     }
 }
