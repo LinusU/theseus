@@ -3977,6 +3977,11 @@ mod tests {
                 &[0xf2, 0x0f, 0x11, 0x08],
                 "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, low_qword(ctx.cpu.xmm.xmm1));",
             ),
+            // movntsd [eax], xmm1 (SSE4a store)
+            (
+                &[0xf2, 0x0f, 0x2b, 0x08],
+                "ctx.memory.write::<[u32; 2]>(ctx.cpu.regs.eax, low_qword(ctx.cpu.xmm.xmm1));",
+            ),
         ] {
             codegen.buf.clear();
             let mut decoder =

@@ -281,7 +281,9 @@ impl<'a> CodeGen<'a> {
                     unreachable!()
                 }
             }
-            Movsd => {
+            // MOVNTSD (SSE4a) only encodes the 64-bit store form, so the
+            // register-destination path is unreachable for it.
+            Movsd | Movntsd => {
                 let src = self.xmm_get_64(instr, 1);
                 let kind = instr.op_kind(0);
                 if kind == iced_x86::OpKind::Register {
