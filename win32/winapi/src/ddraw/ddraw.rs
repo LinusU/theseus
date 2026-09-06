@@ -843,7 +843,14 @@ pub fn blit_copy(
         let mut rows = Vec::with_capacity(row_bytes * row_count);
         for y in rect.top..rect.bottom {
             let start = addr + y as u32 * stride + rect.left as u32 * bpp;
-            rows.extend_from_slice(&ctx.memory[start..][..row_bytes]);
+            let Some(row) = ctx
+                .memory
+                .bytes
+                .get(start as usize..start as usize + row_bytes)
+            else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            rows.extend_from_slice(row);
         }
         (rows, row_bytes, row_count, bpp)
     };
