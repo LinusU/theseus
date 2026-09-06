@@ -42,27 +42,42 @@ pub fn LoadImageA(
     cy: u32,
     fuLoad: LR,
 ) -> HANDLE {
-    assert!(is_intresource(name.addr));
+    if !is_intresource(name.addr) {
+        log::warn!("LoadImage: string resource names are not supported");
+        return HANDLE::null();
+    }
     let name = exe::ResourceName::Id(name.addr);
 
-    assert!(typ == IMAGE::BITMAP);
+    if typ != IMAGE::BITMAP {
+        log::warn!("LoadImage: only bitmap resources are supported, got {typ:?}");
+        return HANDLE::null();
+    }
     let typ = exe::ResourceName::Id(match typ {
         IMAGE::CURSOR => exe::RT::CURSOR,
         IMAGE::BITMAP => exe::RT::BITMAP,
         IMAGE::ICON => exe::RT::ICON,
     } as u32);
 
-    // assert!(cx == 0);
-    // assert!(cy == 0);
-    assert!(fuLoad.is_empty());
+    if !fuLoad.is_empty() {
+        log::warn!("LoadImage: unsupported fuLoad flags {fuLoad:?}");
+        return HANDLE::null();
+    }
 
     let Some(buf) = kernel32::lock().find_resource(ctx, hInst, typ, name) else {
         log::warn!("LoadImage: resource not found");
         return HANDLE::null();
     };
     let (mut bitmap, pixels) = gdi32::Bitmap::parse(buf);
-    assert_eq!(bitmap.width, cx);
-    assert_eq!(bitmap.height, cy);
+    // A zero cx/cy requests the image's natural size; nonzero requests that
+    // differ mean scaling, which is not implemented.
+    if (cx != 0 && bitmap.width != cx) || (cy != 0 && bitmap.height != cy) {
+        log::warn!(
+            "LoadImage: cannot scale {}x{} bitmap to {cx}x{cy}",
+            bitmap.width,
+            bitmap.height,
+        );
+        return HANDLE::null();
+    }
 
     let pixels = unsafe { pixels.as_ptr().offset_from_unsigned(ctx.memory.as_ptr()) };
     bitmap.pixels = pixels as u32;

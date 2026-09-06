@@ -100,7 +100,9 @@ macro_rules! win32flags {
 
         impl crate::FromABIParam for $name {
             fn from_abi(val: u32) -> Self {
-                $name::from_bits(val).unwrap()
+                // Flags come straight from the guest; retain unknown bits
+                // rather than panicking so callers can warn-and-ignore.
+                $name::from_bits_retain(val)
             }
         }
 

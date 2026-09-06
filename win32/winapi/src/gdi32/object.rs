@@ -30,8 +30,11 @@ pub fn CreatePen(
     cWidth: i32,
     color: COLORREF,
 ) -> HPEN {
-    assert_eq!(iStyle, 0); // PS_SOLID
-    assert_eq!(cWidth, 1);
+    if iStyle != 0 || cWidth != 1 {
+        // Only PS_SOLID pens at one-pixel width are modeled; anything else
+        // degrades to a solid pen of the requested color.
+        log::warn!("CreatePen: approximating style={iStyle:#x} width={cWidth} as solid");
+    }
     let pen = Pen(Some(color));
     gdi32::lock().objects.add(Object::Pen(pen))
 }
