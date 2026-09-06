@@ -131,11 +131,13 @@ pub fn HeapReAlloc(
         heap.free(&mut ctx.memory, lpMem.addr);
         return 0;
     }
-    let old_size = heap.size(&mut ctx.memory, lpMem.addr);
-    if old_size == u32::MAX {
+    // Validate lpMem against the live-block table rather than the in-band
+    // header so a stale or interior pointer cannot feed a garbage size to
+    // copy_within.
+    let Some(old_size) = heap.block_size(lpMem.addr) else {
         // lpMem is not a live block on this heap.
         return 0;
-    }
+    };
     if dwBytes <= old_size {
         // Shrinking always succeeds in place.
         return lpMem.addr;
