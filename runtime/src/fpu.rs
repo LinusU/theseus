@@ -149,13 +149,10 @@ impl FPU {
     }
 
     /// FINCSTP moves TOP up one slot; register contents and tags are
-    /// unchanged, unlike a data pop.
+    /// unchanged, unlike a data pop. TOP is a 3-bit field that wraps
+    /// mod 8 (8 is the empty sentinel, aliasing TOP = 0).
     pub fn inc_top(&mut self) {
-        if self.st_top == 8 {
-            Self::exception("fpu stack underflow");
-            return;
-        }
-        self.st_top += 1;
+        self.st_top = (self.st_top + 1) % 8;
     }
 
     /// FFREE marks the referenced register's tag empty without moving TOP.
@@ -172,12 +169,9 @@ impl FPU {
 
     /// FDECSTP moves the TOP pointer down without writing a value;
     /// the new ST(0) reads whatever the physical register last held.
+    /// TOP wraps mod 8 (8 aliases TOP = 0, so FDECSTP goes to 7).
     pub fn dec_top(&mut self) {
-        if self.st_top == 0 {
-            Self::exception("fpu stack overflow");
-            return;
-        }
-        self.st_top -= 1;
+        self.st_top = (self.st_top + 7) % 8;
     }
 
     /// Index in self.st for a given ST0, ST1 etc reg.
@@ -860,8 +854,28 @@ mod tests {
 
         fpu.inc_top();
 
-        assert_eq!(fpu.st_top, 8);
+        // TOP is a mod-8 ring: 7 wraps to 0 rather than sticking at the
+        // empty sentinel. Register contents and tags stay put.
+        assert_eq!(fpu.st_top, 0);
         assert!(fpu.tags[7]);
+    }
+
+    #[test]
+    fn fincstp_fdecstp_wrap_top_mod_eight() {
+        let mut fpu = FPU::default();
+
+        // Empty (TOP aliasing 0): FINCSTP -> 1, FDECSTP -> 7.
+        fpu.inc_top();
+        assert_eq!(fpu.st_top, 1);
+        fpu.dec_top();
+        assert_eq!(fpu.st_top, 0);
+        fpu.dec_top();
+        assert_eq!(fpu.st_top, 7);
+
+        // The moved TOP points at real registers again, not the sentinel.
+        fpu.push(2.0);
+        assert_eq!(fpu.st_top, 6);
+        assert_eq!(fpu.get(0), 2.0);
     }
 
     #[test]
