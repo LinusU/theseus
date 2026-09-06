@@ -620,7 +620,14 @@ pub mod IDirect3D7 {
         let data = kernel32
             .process_heap
             .alloc(&mut ctx.memory, data_len.max(4));
-        ctx.memory[data..][..data_len as usize].fill(0);
+        let Some(buf) = ctx
+            .memory
+            .bytes
+            .get_mut(data as usize..(data + data_len) as usize)
+        else {
+            return DD::ERR_GENERIC;
+        };
+        buf.fill(0);
         let addr = IDirect3DVertexBuffer7::new(ctx, &mut kernel32.process_heap);
         drop(kernel32);
         d3d_state().vertex_buffers.borrow_mut().insert(
