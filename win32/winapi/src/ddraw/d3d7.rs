@@ -700,6 +700,9 @@ pub mod IDirect3D7 {
     pub static mut VTABLE: u32 = 0;
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        if unsafe { VTABLE } == 0 {
+            return None;
+        }
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
         Some(addr)
@@ -1888,6 +1891,9 @@ pub mod IDirect3DDevice7 {
     pub static mut VTABLE: u32 = 0;
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        if unsafe { VTABLE } == 0 {
+            return None;
+        }
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
         Some(addr)
@@ -2043,6 +2049,9 @@ pub mod IDirect3DVertexBuffer7 {
     pub static mut VTABLE: u32 = 0;
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        if unsafe { VTABLE } == 0 {
+            return None;
+        }
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
         Some(addr)

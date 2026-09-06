@@ -54,16 +54,16 @@ pub(crate) fn init_vtable(
     heap: &mut Heap,
     base: u32,
     funcs: &[ContFn],
-) -> (u32, Vec<(u32, ContFn)>) {
+) -> Option<(u32, Vec<(u32, ContFn)>)> {
     let size = (funcs.len() * 4) as u32;
-    let addr = heap.alloc(&mut ctx.memory, size);
+    let addr = heap.try_alloc(&mut ctx.memory, size)?;
     let mut blocks = Vec::with_capacity(funcs.len());
     for (i, &func) in funcs.iter().enumerate() {
         let fn_addr = base + i as u32;
         ctx.memory.write::<u32>(addr + i as u32 * 4, fn_addr);
         blocks.push((fn_addr, func));
     }
-    (addr, blocks)
+    Some((addr, blocks))
 }
 
 pub(crate) fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
@@ -129,8 +129,11 @@ pub mod IDirectPlayLobby3A {
     pub unsafe fn init_vtables(ctx: &mut Context) {
         if unsafe { VTABLE } == 0 {
             let mut kernel32 = kernel32::lock();
-            let (addr, blocks) =
-                init_vtable(ctx, &mut kernel32.process_heap, 0xfafd_1000, &VTABLE_FUNCS);
+            let Some((addr, blocks)) =
+                init_vtable(ctx, &mut kernel32.process_heap, 0xfafd_1000, &VTABLE_FUNCS)
+            else {
+                return;
+            };
             unsafe { VTABLE = addr };
             drop(kernel32);
             add_blocks(ctx, blocks);
@@ -139,6 +142,9 @@ pub mod IDirectPlayLobby3A {
     }
 
     pub fn new(ctx: &mut Context, heap: &mut Heap) -> Option<u32> {
+        if unsafe { VTABLE } == 0 {
+            return None;
+        }
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
         Some(addr)

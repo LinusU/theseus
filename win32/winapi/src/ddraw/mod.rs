@@ -24,12 +24,14 @@ use crate::{heap::Heap, kernel32};
 pub unsafe fn init_vtables(ctx: &mut Context) {
     if unsafe { IDirectDraw::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0000,
             &IDirectDraw::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { IDirectDraw::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -37,12 +39,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { IDirectDrawSurface::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0100,
             &IDirectDrawSurface::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { IDirectDrawSurface::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -50,12 +54,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { IDirectDrawPalette::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0200,
             &IDirectDrawPalette::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { IDirectDrawPalette::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -63,12 +69,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { IDirectDraw7::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0300,
             &IDirectDraw7::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { IDirectDraw7::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -76,12 +84,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { IDirectDrawSurface7::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0400,
             &IDirectDrawSurface7::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { IDirectDrawSurface7::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -89,12 +99,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { d3d7::IDirect3D7::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0500,
             &d3d7::IDirect3D7::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { d3d7::IDirect3D7::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -102,12 +114,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { d3d7::IDirect3DDevice7::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0600,
             &d3d7::IDirect3DDevice7::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { d3d7::IDirect3DDevice7::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -115,12 +129,14 @@ pub unsafe fn init_vtables(ctx: &mut Context) {
     }
     if unsafe { d3d7::IDirect3DVertexBuffer7::VTABLE } == 0 {
         let mut kernel32 = kernel32::lock();
-        let (addr, blocks) = init_vtable(
+        let Some((addr, blocks)) = init_vtable(
             ctx,
             &mut kernel32.process_heap,
             0xfafe0700,
             &d3d7::IDirect3DVertexBuffer7::VTABLE_FUNCS,
-        );
+        ) else {
+            return;
+        };
         unsafe { d3d7::IDirect3DVertexBuffer7::VTABLE = addr };
         drop(kernel32);
         add_blocks(ctx, blocks);
@@ -133,16 +149,16 @@ fn init_vtable(
     heap: &mut Heap,
     base: u32,
     funcs: &[ContFn],
-) -> (u32, Vec<(u32, ContFn)>) {
+) -> Option<(u32, Vec<(u32, ContFn)>)> {
     let size = (funcs.len() * 4) as u32;
-    let addr = heap.alloc(&mut ctx.memory, size);
+    let addr = heap.try_alloc(&mut ctx.memory, size)?;
     let mut blocks = Vec::with_capacity(funcs.len());
     for (i, &func) in funcs.iter().enumerate() {
         let fn_addr = base + i as u32;
         ctx.memory.write::<u32>(addr + i as u32 * 4, fn_addr);
         blocks.push((fn_addr, func));
     }
-    (addr, blocks)
+    Some((addr, blocks))
 }
 
 fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {

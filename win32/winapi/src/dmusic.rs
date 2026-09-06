@@ -201,6 +201,9 @@ macro_rules! stub_out {
 
 /// Allocate a bare COM object: one u32 pointing at the given vtable.
 fn new_object(ctx: &mut Context, vtable: u32) -> Option<u32> {
+    if vtable == 0 {
+        return None;
+    }
     let kernel32 = kernel32::lock();
     let addr = kernel32.process_heap.try_alloc(&mut ctx.memory, 4)?;
     drop(kernel32);
@@ -218,11 +221,13 @@ macro_rules! vtable {
                 if $static_name == 0 {
                     let funcs: &[ContFn] = &[$( $func ),*];
                     let mut kernel32 = kernel32::lock();
-                    let (addr, blocks) =
-                        init_vtable(ctx, &mut kernel32.process_heap, $base, funcs);
-                    $static_name = addr;
-                    drop(kernel32);
-                    add_blocks(ctx, blocks);
+                    if let Some((addr, blocks)) =
+                        init_vtable(ctx, &mut kernel32.process_heap, $base, funcs)
+                    {
+                        $static_name = addr;
+                        drop(kernel32);
+                        add_blocks(ctx, blocks);
+                    }
                 }
                 $static_name
             }
