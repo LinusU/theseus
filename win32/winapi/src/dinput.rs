@@ -543,7 +543,14 @@ pub mod IDirectInputDevice {
             ctx.memory.write::<u32>(lpCaps + i as u32 * 4, field);
         }
         // Any DX5 force-feedback tail fields report zero.
-        ctx.memory[lpCaps + 24..][..size - 24].fill(0);
+        if let Some(rest) = ctx
+            .memory
+            .bytes
+            .get_mut(lpCaps as usize + 24..)
+            .and_then(|b| b.get_mut(..size - 24))
+        {
+            rest.fill(0);
+        }
         DI_OK
     }
 
@@ -590,7 +597,14 @@ pub mod IDirectInputDevice {
         if len == 0 || pdiph as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
-        ctx.memory[pdiph..][..len].copy_from_slice(&stored[..len]);
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(pdiph as usize..)
+            .and_then(|b| b.get_mut(..len))
+        {
+            dst.copy_from_slice(&stored[..len]);
+        }
         DI_OK
     }
 
@@ -637,7 +651,15 @@ pub mod IDirectInputDevice {
         let Some(device) = state.devices.get_mut(&this) else {
             return DIERR_INVALIDPARAM;
         };
-        let bytes = ctx.memory[pdiph..][..size].to_vec();
+        let Some(bytes) = ctx
+            .memory
+            .bytes
+            .get(pdiph as usize..)
+            .and_then(|b| b.get(..size))
+            .map(|b| b.to_vec())
+        else {
+            return DIERR_INVALIDPARAM;
+        };
         device.properties.insert(rguidProp, bytes);
         DI_OK
     }
@@ -712,7 +734,14 @@ pub mod IDirectInputDevice {
             }
         }
         drop(input);
-        ctx.memory[lpvData..][..len].copy_from_slice(&buf);
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(lpvData as usize..)
+            .and_then(|b| b.get_mut(..len))
+        {
+            dst.copy_from_slice(&buf);
+        }
         DI_OK
     }
 
@@ -847,7 +876,14 @@ pub mod IDirectInputDevice {
                 b"Theseus Joystick",
             ),
         };
-        ctx.memory[pdidi..][..size].fill(0);
+        if let Some(dst) = ctx
+            .memory
+            .bytes
+            .get_mut(pdidi as usize..)
+            .and_then(|b| b.get_mut(..size))
+        {
+            dst.fill(0);
+        }
         ctx.memory.write::<u32>(pdidi, size as u32);
         // The first GUID is the device instance, the second is the product.
         write_guid(ctx, pdidi + 4, &guid);
