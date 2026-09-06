@@ -557,6 +557,18 @@ pub fn pavgusb(x: u64, y: u64) -> u64 {
     pavgb(x, y)
 }
 
+/// PDISTIB (Cyrix/EMMX) computes the packed distance between unsigned bytes:
+/// for each lane, result = saturate_u8(dest + abs(dest - src)).
+pub fn pdistib(x: u64, y: u64) -> u64 {
+    let x: [u8; 8] = x.unpack();
+    let y: [u8; 8] = y.unpack();
+    let mut out = [0u8; 8];
+    for i in 0..8 {
+        out[i] = x[i].saturating_add(x[i].abs_diff(y[i]));
+    }
+    out.pack()
+}
+
 /// PSWAPD (3DNow!) swaps the low and high dwords of an MMX qword.
 pub fn pswapd(x: u64) -> u64 {
     let x: [u32; 2] = x.unpack();
@@ -1089,13 +1101,13 @@ pub fn psraw(x: u64, y: u64) -> u64 {
 mod tests {
     use super::{
         pabsb, pabsd, pabsw, packssdw, packsswb, paddb, paddd, paddw, palignr, pavgb, pavgusb,
-        pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq, pfcmpge,
-        pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2, pfrsqit1,
-        pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubsw, phsubw, pi2fd, pi2fw,
-        pinsrw, pmaddubsw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw, pmulhrw,
-        pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, psignb, psignd, psignw, pslld, psllw,
-        psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw, punpckhwd,
-        punpckldq, punpcklwd,
+        pavgw, pcmpeqb, pcmpeqd, pcmpgtb, pdistib, pextrw, pf2id, pf2iw, pfacc, pfadd, pfcmpeq,
+        pfcmpge, pfcmpgt, pfmax, pfmin, pfmul, pfnacc, pfpnacc, pfrcp, pfrcpit1, pfrcpit2,
+        pfrsqit1, pfrsqrt, pfsub, pfsubr, phaddd, phaddsw, phaddw, phsubd, phsubsw, phsubw, pi2fd,
+        pi2fw, pinsrw, pmaddubsw, pmaddwd, pmaxsw, pmaxub, pminsw, pminub, pmovmskb, pmulhrsw,
+        pmulhrw, pmulhuw, pmulhw, pmuludq, psadbw, pshufb, pshufw, psignb, psignd, psignw, pslld,
+        psllw, psrad, psraw, psrld, psrlq, psubb, psubd, psubsb, psubsw, pswapd, punpckhbw,
+        punpckhwd, punpckldq, punpcklwd,
     };
 
     #[test]
@@ -1234,6 +1246,21 @@ mod tests {
     fn pavgusb_pmulhrw_pswapd_3dnow_helpers() {
         assert_eq!(pavgusb(0xff, 0), 0x80);
         assert_eq!(pavgusb(u64::MAX, u64::MAX), u64::MAX);
+        // PDISTIB: for each byte, dest + abs(dest - src) clamped to 0xff.
+        // Simple case: same bytes -> unchanged.
+        assert_eq!(
+            pdistib(0x0102_0304_0506_0708, 0x0102_0304_0506_0708),
+            0x0102_0304_0506_0708
+        );
+        // dest=0, src=0xff -> 0 + 0xff = 0xff.
+        assert_eq!(pdistib(0x0000_0000_0000_0000, u64::MAX), u64::MAX);
+        // dest=0xff, src=0 -> 0xff + 0xff saturates to 0xff.
+        assert_eq!(pdistib(u64::MAX, 0x0000_0000_0000_0000), u64::MAX);
+        // 0x10 vs 0x20 -> 0x10 + 0x10 = 0x20 in every lane.
+        assert_eq!(
+            pdistib(0x1010_1010_1010_1010, 0x2020_2020_2020_2020),
+            0x2020_2020_2020_2020
+        );
         assert_eq!(pswapd(0x1234_5678_9abc_def0), 0x9abc_def0_1234_5678);
         // PMULHRW: bits [30:15] of (product + 0x4000).
         // 0x4000 * 2 = 0x8000; + 0x4000 = 0xc000; bits [30:15] = 1.

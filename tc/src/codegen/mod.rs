@@ -5607,6 +5607,40 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_pdistib_distance_accumulation() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // PDISTIB is a Cyrix/EMMX instruction; the default decoder treats 0F 54
+        // as ANDPS, so build the instruction directly to exercise the MMX path.
+        let mem = iced_x86::MemoryOperand::with_base(iced_x86::Register::EAX);
+        let iced = iced_x86::Instruction::with2(
+            iced_x86::Code::Pdistib_mm_m64,
+            iced_x86::Register::MM0,
+            mem,
+        )
+        .unwrap();
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced,
+            hint: None,
+        };
+
+        let want =
+            "ctx.cpu.mmx.mm0 = pdistib(ctx.cpu.mmx.mm0, ctx.memory.read::<u64>(ctx.cpu.regs.eax));";
+        codegen.buf.clear();
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen.buf.contains(want),
+            "wanted {want:?} in {:?}",
+            codegen.buf
+        );
+    }
+
+    #[test]
     fn codegen_handles_3dnow_reciprocal_and_mul() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),

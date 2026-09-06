@@ -314,6 +314,20 @@ impl<'a> CodeGen<'a> {
                     ),
                 ));
             }
+            // PDISTIB (Cyrix/EMMX) uses the destination register as an
+            // accumulator and the second operand as the source.
+            Pdistib => {
+                let func = instr_name(instr);
+                self.line(self.mmx_set(
+                    instr,
+                    0,
+                    format!(
+                        "{func}({}, {})",
+                        self.mmx_get(instr, 0),
+                        self.mmx_get(instr, 1)
+                    ),
+                ));
+            }
             // PABSB/W/D (SSSE3) are unary absolute-value operations.
             Pabsb | Pabsw | Pabsd => {
                 let func = instr_name(instr);
