@@ -7,6 +7,15 @@ use crate::{
     kernel32::{self, HANDLE, lock},
 };
 
+fn fill_zero(memory: &mut runtime::Memory, addr: u32, len: u32) {
+    let Some(end) = (addr as usize).checked_add(len as usize) else {
+        return;
+    };
+    if let Some(dst) = memory.bytes.get_mut(addr as usize..end) {
+        dst.fill(0);
+    }
+}
+
 win32flags! {
     pub struct HEAP_FLAGS {
         const NO_SERIALIZE        = 0x01;
@@ -28,7 +37,7 @@ pub fn HeapAlloc(ctx: &mut Context, hHeap: HANDLE, dwFlags: HEAP_FLAGS, dwBytes:
     };
     drop(state);
     if addr != 0 && dwFlags.contains(HEAP_FLAGS::ZERO_MEMORY) {
-        ctx.memory[addr..][..dwBytes as usize].fill(0);
+        fill_zero(&mut ctx.memory, addr, dwBytes);
     }
     addr
 }
@@ -156,7 +165,7 @@ pub fn HeapReAlloc(
     );
     if dwFlags & HEAP_FLAGS::ZERO_MEMORY.bits() != 0 {
         let grown = new_addr + old_size;
-        ctx.memory[grown..][..(dwBytes - old_size) as usize].fill(0);
+        fill_zero(&mut ctx.memory, grown, dwBytes - old_size);
     }
     heap.free(&mut ctx.memory, lpMem.addr);
     new_addr
@@ -187,7 +196,7 @@ pub fn GlobalAlloc(ctx: &mut Context, uFlags: GMEM, dwBytes: u32) -> u32 {
         return 0;
     };
     if uFlags.contains(GMEM::ZEROINIT) {
-        ctx.memory[ptr..][..dwBytes as usize].fill(0);
+        fill_zero(&mut ctx.memory, ptr, dwBytes);
     }
     ptr
 }
