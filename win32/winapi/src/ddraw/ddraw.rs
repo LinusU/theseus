@@ -868,9 +868,16 @@ pub fn blit_copy(
 /// One pixel's value for color-key comparison.
 fn pixel_value(pixel: &[u8], bpp: u32) -> Option<u32> {
     match bpp {
-        1 => Some(pixel[0] as u32),
-        2 => Some(u16::from_le_bytes(pixel.try_into().unwrap()) as u32),
-        4 => Some(u32::from_le_bytes(pixel.try_into().unwrap())),
+        1 => pixel.first().copied().map(u32::from),
+        2 => pixel
+            .get(..2)
+            .and_then(|b| b.try_into().ok())
+            .map(u16::from_le_bytes)
+            .map(u32::from),
+        4 => pixel
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .map(u32::from_le_bytes),
         _ => None,
     }
 }
