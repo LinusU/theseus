@@ -21,8 +21,10 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("let x = ctx.{func}();"));
                 self.line(self.set_op(instr, 0, "x".into()))
             }
-            Pushad => self.line("ctx.pushad();"),
-            Popad => self.line("ctx.popad();"),
+            // The 16-bit PUSHA/POPA forms share the same helpers; pushad/
+            // popad pick 16- or 32-bit registers from cpu.real_mode.
+            Pusha | Pushad => self.line("ctx.pushad();"),
+            Popa | Popad => self.line("ctx.popad();"),
             Mov => {
                 // Moves to or from control, debug, or test registers are
                 // privileged in Windows usermode, and on DOS would imply a
@@ -183,6 +185,16 @@ impl<'a> CodeGen<'a> {
                 }
             }
             Rdtsc => self.line("ctx.cpu.regs.set_edx_eax(rdtsc());"),
+            // RDTSCP is RDTSC plus the TSC_AUX value in ECX; this machine
+            // has a single synthetic core, so ECX reads 0.
+            Rdtscp => {
+                self.line("ctx.cpu.regs.set_edx_eax(rdtsc());");
+                self.line("ctx.cpu.regs.ecx = 0;");
+            }
+            // SALC (undocumented D6): AL = CF ? 0xFF : 0x00.
+            Salc => self.line(
+                "ctx.cpu.regs.set_al(if ctx.cpu.flags.contains(Flags::CF) { 0xff } else { 0 });",
+            ),
             Int1 => self.line(format!("unhandled_interrupt(0x1, {:#x});", instr.ip32())),
             Int3 => self.line(format!("unhandled_interrupt(0x3, {:#x});", instr.ip32())),
             Pushf => self.line("ctx.push16(ctx.cpu.flags.bits() as u16 | 2);"),

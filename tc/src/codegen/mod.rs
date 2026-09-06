@@ -2748,6 +2748,52 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_salc_rdtscp_icebp_and_16bit_pusha() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bits, bytes, want) in [
+            // salc
+            (
+                32u32,
+                &[0xd6u8][..],
+                "set_al(if ctx.cpu.flags.contains(Flags::CF) { 0xff } else { 0 });",
+            ),
+            // rdtscp
+            (
+                32,
+                &[0x0f, 0x01, 0xf9],
+                "ctx.cpu.regs.set_edx_eax(rdtsc());",
+            ),
+            (32, &[0x0f, 0x01, 0xf9], "ctx.cpu.regs.ecx = 0;"),
+            // int1
+            (32, &[0xf1], "unhandled_interrupt(0x1, 0x0);"),
+            // 16-bit pusha/popa share the pushad/popad helpers
+            (16, &[0x60], "ctx.pushad();"),
+            (16, &[0x61], "ctx.popad();"),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(bits, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_ftst() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
