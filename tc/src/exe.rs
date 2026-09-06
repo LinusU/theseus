@@ -7,12 +7,12 @@ use crate::{DOSModule, Import, Module, WindowsModule, memory::Memory};
 
 pub fn load_exe(mem: &mut Memory, buf: Vec<u8>) -> Result<Module> {
     match exe::parse(&buf).context("parsing executable")? {
-        exe::Parse::PE(pe) => Ok(Module::Windows(load_pe(mem, &buf, pe))),
-        exe::Parse::DOS(dos) => Ok(Module::DOS(load_dos(mem, &buf, dos))),
+        exe::Parse::PE(pe) => Ok(Module::Windows(load_pe(mem, &buf, pe)?)),
+        exe::Parse::DOS(dos) => Ok(Module::DOS(load_dos(mem, &buf, dos)?)),
     }
 }
 
-fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
+fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> Result<DOSModule> {
     let psp_segment = dos::DOSBOX_SEG;
 
     mem.reserve("psp".into(), segofs(psp_segment, 0), 0x100);
@@ -31,7 +31,7 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
         &mut mem.bytes[load_addr as usize..][..data.len()],
     );
 
-    DOSModule {
+    Ok(DOSModule {
         is_com: false,
         psp_segment,
         load_segment: psp_segment + 0x10 + dos.header.e_cs,
@@ -39,22 +39,27 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
         stack_pointer: dos.header.e_sp,
         entry_point: dos.header.e_ip,
         code_memory: (load_addr..load_addr + data.len() as u32),
-    }
+    })
 }
 
-fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
+fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> Result<WindowsModule> {
     mem.mappings
         .try_alloc("null page".into(), 0x1000, Memory::LIMIT)
         .expect("null page mapping could not be allocated");
 
     let image_base = f.opt_header.ImageBase;
-    mem.reserve("exe header".into(), image_base, 0x1000);
+    mem.try_reserve("exe header".into(), image_base, 0x1000)
+        .ok_or_else(|| anyhow::anyhow!("could not reserve exe header at {image_base:#x}"))?;
     mem.write_bytes(image_base, &buf[..0x1000.min(buf.len())]);
     let mut code_range = None;
     for sec in &f.sections {
         let addr = image_base + sec.VirtualAddress;
         let size = runtime::round_to_page(sec.SizeOfRawData.max(sec.VirtualSize));
-        mem.reserve(sec.name().unwrap_or("<invalid>").to_string(), addr, size);
+        let Some(addr) = mem.try_reserve(sec.name().unwrap_or("<invalid>").to_string(), addr, size)
+        else {
+            log::warn!("skipping overlapping section {:?}", sec.name());
+            continue;
+        };
 
         use exe::pe::IMAGE_SCN;
         let flags = IMAGE_SCN::from_bits_truncate(sec.Characteristics);
@@ -86,7 +91,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
 
     let imports = read_imports(&f, mem);
 
-    WindowsModule {
+    Ok(WindowsModule {
         imports,
         image_base,
         entry_point: image_base + f.opt_header.AddressOfEntryPoint,
@@ -94,7 +99,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
         resources,
         vtables: Default::default(),
         dynamic_exports: Default::default(),
-    }
+    })
 }
 
 fn is_data(dll: &str, func: &str) -> bool {
@@ -211,7 +216,7 @@ mod tests {
             sections: vec![section].into_boxed_slice(),
         };
 
-        let module = load_pe(&mut mem, &buf, pe);
+        let module = load_pe(&mut mem, &buf, pe).unwrap();
         assert_eq!(module.image_base, image_base);
     }
 }

@@ -36,11 +36,16 @@ pub fn round_to_page(size: u32) -> u32 {
 }
 
 impl Mappings {
-    pub fn reserve(&mut self, mut mapping: Mapping) -> u32 {
-        let index = self.insert_index(&mut mapping);
+    pub fn try_reserve(&mut self, mut mapping: Mapping) -> Result<u32, &'static str> {
+        let index = self.insert_index(&mut mapping)?;
         let addr = mapping.addr;
         self.mappings.insert(index, mapping);
-        addr
+        Ok(addr)
+    }
+
+    pub fn reserve(&mut self, mapping: Mapping) -> u32 {
+        self.try_reserve(mapping)
+            .expect("mapping reservation failed")
     }
 
     /// Allocate a guest-visible mapping, bounded by `limit` (typically the size
@@ -82,15 +87,13 @@ impl Mappings {
     }
 
     /// Choose the index into self.mappings to add this mapping, potentially assigning it an address.
-    fn insert_index(&self, new_mapping: &mut Mapping) -> usize {
+    fn insert_index(&self, new_mapping: &mut Mapping) -> Result<usize, &'static str> {
         // A fixed-address reservation must end inside the address space.
         let new_end = if new_mapping.addr != 0 {
-            Some(
-                new_mapping
-                    .addr
-                    .checked_add(new_mapping.size)
-                    .unwrap_or_else(|| panic!("no space for {new_mapping:#x?}")),
-            )
+            match new_mapping.addr.checked_add(new_mapping.size) {
+                Some(end) => Some(end),
+                None => return Err("no space for mapping"),
+            }
         } else {
             None
         };
@@ -99,25 +102,27 @@ impl Mappings {
             if let Some(new_end) = new_end {
                 if new_end <= mapping.addr {
                     if new_mapping.addr < prev_end {
-                        panic!("{new_mapping:#x?} overlaps a previous mapping");
+                        return Err("overlaps a previous mapping");
                     }
-                    return i;
+                    return Ok(i);
                 }
             } else {
                 let space = mapping.addr - prev_end;
                 if space >= new_mapping.size {
                     new_mapping.addr = prev_end;
-                    return i;
+                    return Ok(i);
                 }
             }
             prev_end = mapping.addr + mapping.size;
         }
         if new_mapping.addr != 0 {
-            assert!(new_mapping.addr >= prev_end);
+            if new_mapping.addr < prev_end {
+                return Err("overlaps a previous mapping");
+            }
         } else {
             new_mapping.addr = prev_end;
         }
-        self.mappings.len()
+        Ok(self.mappings.len())
     }
 
     /// Release a dynamically created mapping by its base address, as

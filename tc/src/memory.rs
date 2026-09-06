@@ -17,17 +17,25 @@ impl Memory {
 }
 
 impl Memory {
-    pub fn reserve(&mut self, name: String, addr: u32, size: u32) {
-        let addr = self.mappings.reserve(Mapping {
+    pub fn try_reserve(&mut self, name: String, addr: u32, size: u32) -> Option<u32> {
+        let Ok(addr) = self.mappings.try_reserve(Mapping {
             desc: name,
             addr,
             section: true,
             size,
-        });
+        }) else {
+            return None;
+        };
         let len = (addr + size) as usize;
         if len > self.bytes.len() {
             self.bytes.resize(len, 0);
         }
+        Some(addr)
+    }
+
+    pub fn reserve(&mut self, name: String, addr: u32, size: u32) -> u32 {
+        self.try_reserve(name, addr, size)
+            .expect("tc Memory mapping reservation failed")
     }
 
     pub fn read<T: zerocopy::FromBytes>(&self, addr: u32) -> T {
