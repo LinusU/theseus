@@ -88,13 +88,6 @@ pub enum Object {
     Palette(Palette),
 }
 
-impl Object {
-    pub fn unwrap_brush(&self) -> Brush {
-        let Object::Brush(brush) = self else { panic!() };
-        brush.clone()
-    }
-}
-
 #[repr(C)]
 #[derive(zerocopy::Immutable, zerocopy::IntoBytes)]
 pub struct BITMAP {
