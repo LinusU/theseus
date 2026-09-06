@@ -267,7 +267,7 @@ impl MainThread {
 }
 
 impl MainThread {
-    fn new(headless: bool) -> Self {
+    fn new(mut headless: bool) -> Self {
         unsafe {
             check(sdl::hints::SDL_SetHint(
                 sdl::hints::SDL_HINT_NO_SIGNAL_HANDLERS,
@@ -277,11 +277,18 @@ impl MainThread {
                 sdl::hints::SDL_HINT_RENDER_VSYNC,
                 c"1".as_ptr(),
             ));
-            check(sdl::init::SDL_Init(if headless {
-                sdl::init::SDL_INIT_EVENTS
-            } else {
-                sdl::init::SDL_INIT_VIDEO | sdl::init::SDL_INIT_AUDIO
-            }));
+            // The event subsystem is always needed, even in headless mode, for
+            // injected input and for tests that drive the message queue.
+            check(sdl::init::SDL_Init(sdl::init::SDL_INIT_EVENTS));
+            if !headless
+                && !sdl::init::SDL_Init(sdl::init::SDL_INIT_VIDEO | sdl::init::SDL_INIT_AUDIO)
+            {
+                log::warn!(
+                    "SDL video+audio init failed ({}); falling back to headless",
+                    sdl_error()
+                );
+                headless = true;
+            }
         }
         Self {
             headless,
