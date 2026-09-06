@@ -95,6 +95,12 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
     result
 }
 
+/// Read a null-terminated path string from guest memory, rejecting null and
+/// sub-0x1000 pointers before `read_str` touches the emulated null page.
+fn read_path(ctx: &Context, addr: u32) -> Option<String> {
+    (addr >= 0x1000).then(|| ctx.memory.read_str(addr).to_owned())
+}
+
 fn file_attributes(path: &std::path::Path) -> u32 {
     // The MM2 startup lock file may be left behind by a previous run; treat it
     // as absent so the translated target can start repeatedly.
@@ -116,7 +122,9 @@ fn file_attributes(path: &std::path::Path) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let Some(name) = read_path(ctx, lpFileName.addr) else {
+        return INVALID_FILE_ATTRIBUTES;
+    };
     file_attributes(&resolve_path(&name))
 }
 
@@ -126,7 +134,9 @@ pub fn CreateDirectoryA(
     lpPathName: Ptr<u8>,
     _lpSecurityAttributes: Ptr<()>,
 ) -> bool {
-    let name = ctx.memory.read_str(lpPathName.addr).to_owned();
+    let Some(name) = read_path(ctx, lpPathName.addr) else {
+        return false;
+    };
     let path = resolve_path(&name);
     match host::fs::create_dir_all(&path) {
         Ok(()) => true,
@@ -160,8 +170,9 @@ fn drive_type(path: Option<&str>) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn GetDriveTypeA(ctx: &mut Context, lpRootPathName: Ptr<u8>) -> u32 {
-    let path =
-        (lpRootPathName.addr != 0).then(|| ctx.memory.read_str(lpRootPathName.addr).to_owned());
+    let path = (lpRootPathName.addr != 0)
+        .then(|| read_path(ctx, lpRootPathName.addr))
+        .flatten();
     drive_type(path.as_deref())
 }
 
@@ -213,7 +224,12 @@ pub fn CreateFileA(
         }
         return crate::HANDLE::invalid();
     };
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let Some(name) = read_path(ctx, lpFileName.addr) else {
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        }
+        return crate::HANDLE::invalid();
+    };
     let path = resolve_path(&name);
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
     let read = dwDesiredAccess & GENERIC_READ != 0;
@@ -473,7 +489,9 @@ pub fn CloseHandle(_ctx: &mut Context, hObject: crate::HANDLE) -> bool {
 
 #[win32_derive::dllexport]
 pub fn DeleteFileA(ctx: &mut Context, lpFileName: Ptr<u8>) -> bool {
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let Some(name) = read_path(ctx, lpFileName.addr) else {
+        return false;
+    };
     host::fs::remove_file(&resolve_path(&name)).is_ok()
 }
 
@@ -535,7 +553,9 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
 
 #[win32_derive::dllexport]
 pub fn SetCurrentDirectoryA(ctx: &mut Context, lpPathName: Ptr<u8>) -> bool {
-    let name = ctx.memory.read_str(lpPathName.addr).to_owned();
+    let Some(name) = read_path(ctx, lpPathName.addr) else {
+        return false;
+    };
     let path = resolve_path(&name);
     match host::fs::set_current_dir(&path) {
         Ok(()) => true,
@@ -640,7 +660,12 @@ pub fn FindFirstFileA(
     lpFileName: Ptr<u8>,
     lpFindFileData: Ptr<WIN32_FIND_DATAA>,
 ) -> crate::HANDLE {
-    let pattern = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let Some(pattern) = read_path(ctx, lpFileName.addr) else {
+        if let Some(teb) = crate::kernel32::teb_mut(ctx) {
+            teb.LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        }
+        return crate::HANDLE::invalid();
+    };
     let pattern = pattern.replace('\\', "/");
     let (dir, file_pattern) = match pattern.rfind('/') {
         Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),
@@ -714,9 +739,11 @@ pub fn FindClose(_ctx: &mut Context, hFindFile: crate::HANDLE) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DRIVE_FIXED, DRIVE_NO_ROOT_DIR, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-        FindNextFileA, INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER, MoveMethod,
-        SetFilePointer, drive_type, file_attributes, initial_cwd, resolve_path, wildcard_match,
+        CreateDirectoryA, CreateFileA, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DeleteFileA,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FindFirstFileA, FindNextFileA,
+        GetDriveTypeA, GetFileAttributesA, INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER,
+        MoveMethod, SetCurrentDirectoryA, SetFilePointer, drive_type, file_attributes, initial_cwd,
+        resolve_path, wildcard_match,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -829,5 +856,35 @@ mod tests {
             file_attributes(&executable.with_file_name("theseus-missing-file")),
             INVALID_FILE_ATTRIBUTES
         );
+    }
+
+    #[test]
+    fn file_path_apis_reject_null_page_pointers() {
+        let mut ctx = context();
+        assert_eq!(
+            GetFileAttributesA(&mut ctx, Ptr::new(0x500)),
+            INVALID_FILE_ATTRIBUTES
+        );
+        assert!(!CreateDirectoryA(&mut ctx, Ptr::new(0x500), Ptr::new(0)));
+        assert!(!DeleteFileA(&mut ctx, Ptr::new(0x500)));
+        assert!(!SetCurrentDirectoryA(&mut ctx, Ptr::new(0x500)));
+        assert_eq!(GetDriveTypeA(&mut ctx, Ptr::new(0x500)), DRIVE_FIXED);
+        assert_eq!(
+            FindFirstFileA(&mut ctx, Ptr::new(0x500), Ptr::new(0x3000)),
+            crate::HANDLE::invalid()
+        );
+        let created = CreateFileA(
+            &mut ctx,
+            Ptr::new(0x500),
+            0,
+            0,
+            Ptr::new(0),
+            3, // OPEN_EXISTING
+            0,
+            0,
+        );
+        let teb = crate::kernel32::teb(&mut ctx).unwrap();
+        assert_eq!(teb.LastErrorValue, 87); // ERROR_INVALID_PARAMETER
+        assert!(created.is_invalid());
     }
 }
