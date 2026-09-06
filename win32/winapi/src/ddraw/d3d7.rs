@@ -1,10 +1,12 @@
 //! Direct3D 7 interfaces hung off `IDirectDraw7::QueryInterface`.
 //!
-//! There is no rasterizer in the emulated host: the device tracks all the
-//! state the API can express (transforms, viewports, materials, lights,
-//! render states, texture bindings, clip state) so Get/Set pairs round-trip
-//! correctly, while the drawing entry points are acknowledged without
-//! producing pixels.
+//! The device tracks all the state the API can express (transforms,
+//! viewports, materials, lights, render states, texture bindings, clip
+//! state) so Get/Set pairs round-trip correctly. On top of that a software
+//! rasterizer draws the pre-transformed, pre-lit `D3DFVF_XYZRHW` triangle
+//! primitives the game submits, writing 16-bit color and depth straight
+//! into the render-target and z-buffer surfaces; other FVF layouts and
+//! primitive types are acknowledged without producing pixels.
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -637,11 +639,10 @@ pub mod IDirect3D7 {
         else {
             return DD::ERR_OUTOFMEMORY;
         };
-        let Some(buf) = ctx
-            .memory
-            .bytes
-            .get_mut(data as usize..(data + data_len) as usize)
-        else {
+        let Some(end) = data.checked_add(data_len) else {
+            return DD::ERR_GENERIC;
+        };
+        let Some(buf) = ctx.memory.bytes.get_mut(data as usize..end as usize) else {
             return DD::ERR_GENERIC;
         };
         buf.fill(0);
@@ -1534,7 +1535,7 @@ pub mod IDirect3DDevice7 {
         );
         log_vertex_start(
             ctx,
-            addr + dwStartVertex * vertex_size(fvf),
+            addr.saturating_add(dwStartVertex.saturating_mul(vertex_size(fvf))),
             dwNumVertices,
             fvf,
         );
@@ -1571,7 +1572,7 @@ pub mod IDirect3DDevice7 {
         );
         log_vertex_start(
             ctx,
-            addr + dwStartVertex * vertex_size(fvf),
+            addr.saturating_add(dwStartVertex.saturating_mul(vertex_size(fvf))),
             dwNumVertices,
             fvf,
         );
@@ -2460,6 +2461,8 @@ fn rasterize(
         // (pixels, width, height) for each filled sub-level past the base.
         tex_mips: Vec<(u32, u32, u32)>,
         zbuf_addr: u32,
+        zbuf_width: u32,
+        zbuf_height: u32,
         cull: u32,
         zenable: u32,
         zwrite: u32,
@@ -2613,9 +2616,15 @@ fn rasterize(
         // Lock the render target now so its pixel address is known.
         drop(rt);
         let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory).unwrap_or(0);
-        let zbuf_addr = zbuf_surf
-            .and_then(|z| z.borrow_mut().lock(&mut ctx.memory))
-            .unwrap_or(0);
+        // The z-buffer keeps its own dimensions: its row pitch is the
+        // attached surface's width, not the render target's.
+        let (zbuf_addr, zbuf_width, zbuf_height) = zbuf_surf
+            .and_then(|z| {
+                let mut zb = z.borrow_mut();
+                let dims = (zb.width, zb.height);
+                zb.lock(&mut ctx.memory).map(|addr| (addr, dims.0, dims.1))
+            })
+            .unwrap_or((0, 0, 0));
 
         break 'targets Targets {
             rt_surface: rt_surface_key,
@@ -2632,6 +2641,8 @@ fn rasterize(
             min_filter,
             tex_mips,
             zbuf_addr,
+            zbuf_width,
+            zbuf_height,
             cull,
             zenable,
             zwrite,
@@ -2684,7 +2695,7 @@ fn rasterize(
     } else {
         0
     };
-    let zstride = t.rt_width * 2;
+    let zstride = t.zbuf_width * 2;
 
     // Expand the draw into an index stream (or implicit vertex ordinals),
     // then decompose it into independent triangles per D3DPRIMITIVETYPE.
@@ -2704,6 +2715,18 @@ fn rasterize(
             .map(|i| ctx.memory.read::<u16>(lpwIndices + i * 2) as u32)
             .collect()
     } else {
+        // The implicit index stream runs to dwVertexCount, so validate the
+        // vertex range before materializing it; an unchecked count would
+        // otherwise force a proportional host-side Vec allocation.
+        let Ok(vert_bytes) = u32::try_from(dwVertexCount as u64 * u64::from(vsize)) else {
+            return;
+        };
+        if vert_bytes != 0 && !crate::ddraw::ddraw::guest_range(ctx, lpvVertices, vert_bytes) {
+            log::debug!(
+                "rasterize: skip prim={dptPrimitiveType} - vertex buffer {lpvVertices:#x}+{vert_bytes:#x} out of range"
+            );
+            return;
+        }
         (0..dwVertexCount).collect()
     };
     // Vertex fetches are driven by the index stream, so bound the checked
@@ -2977,7 +3000,9 @@ fn rasterize(
                 }
 
                 // Depth is linear in screen space for pre-transformed verts.
-                if zbuf_addr != 0 {
+                // Pixels outside the attached z-buffer's own extent leave
+                // depth alone rather than striding into adjacent memory.
+                if zbuf_addr != 0 && (px as u32) < t.zbuf_width && (py as u32) < t.zbuf_height {
                     let z = z_to_u16(alpha * a.z + beta * b.z + gamma * c.z);
                     let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
                     if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
