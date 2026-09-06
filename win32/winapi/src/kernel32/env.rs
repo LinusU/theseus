@@ -26,9 +26,13 @@ pub fn GetEnvironmentStrings(ctx: &mut Context) -> u32 {
         block.push(0);
     }
     block.push(0);
-    let addr = kernel32
+    let Some(addr) = kernel32
         .process_heap
-        .alloc(&mut ctx.memory, block.len() as u32);
+        .try_alloc(&mut ctx.memory, block.len() as u32)
+    else {
+        // GetEnvironmentStrings returns NULL on failure.
+        return 0;
+    };
     ctx.memory[addr..][..block.len()].copy_from_slice(&block);
     addr
 }
@@ -44,9 +48,13 @@ pub fn GetEnvironmentStringsW(ctx: &mut Context) -> u32 {
         block.push(0);
     }
     block.push(0);
-    let addr = kernel32
+    let Some(addr) = kernel32
         .process_heap
-        .alloc(&mut ctx.memory, (block.len() * 2) as u32);
+        .try_alloc(&mut ctx.memory, (block.len() * 2) as u32)
+    else {
+        // GetEnvironmentStringsW returns NULL on failure.
+        return 0;
+    };
     for (i, c) in block.iter().enumerate() {
         ctx.memory.write::<u16>(addr + (i * 2) as u32, *c);
     }

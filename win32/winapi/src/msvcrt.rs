@@ -205,7 +205,11 @@ pub fn _initterm(ctx: &mut Context, begin: Ptr<u32>, end: Ptr<u32>) {
             let cont = ctx.indirect(f);
             ctx.call32_x86(cont, vec![]);
         }
-        entry += 4;
+        // A wrapped cursor would walk the whole address space again.
+        let Some(next) = entry.checked_add(4) else {
+            break;
+        };
+        entry = next;
     }
 }
 
