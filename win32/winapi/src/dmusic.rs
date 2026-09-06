@@ -25,6 +25,8 @@ const E_POINTER: u32 = 0x8000_4003;
 const E_NOINTERFACE: u32 = 0x8000_4002;
 const E_FAIL: u32 = 0x8000_4005;
 const E_INVALIDARG: u32 = 0x8007_0057;
+const DMUS_OBJ_CLASS: u32 = 0x1;
+const DMUS_OBJECTDESC_SIZE: u32 = 0x180;
 const E_OUTOFMEMORY: u32 = 0x8007_000E;
 
 pub const CLSID_DirectMusicPerformance: GUID = GUID::new(
@@ -52,6 +54,12 @@ pub const CLSID_DirectMusicSegment: GUID = GUID::new(
     [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
 );
 
+const IID_IDirectMusicObject: GUID = GUID::new(
+    0xd2ac_2880,
+    0xb39b,
+    0x11d1,
+    [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd],
+);
 const IID_IDirectMusicPerformance: GUID = GUID::new(
     0x07d4_3d03,
     0x6523,
@@ -765,17 +773,226 @@ pub mod port {
     );
 }
 
+pub mod music_object {
+    use super::*;
+
+    const DMUS_OBJECTDESC_CLASS_OFFSET: u32 = 32;
+
+    /// Fill a `DMUS_OBJECTDESC` with the segment class when the caller has
+    /// supplied a valid descriptor pointer. The descriptor `dwSize` field at
+    /// offset 0 is left unchanged; `dwValidData` gets the `DMUS_OBJ_CLASS` flag
+    /// and `guidClass` is set to `CLSID_DirectMusicSegment`.
+    fn fill_object_desc(ctx: &mut Context, p_desc: u32) -> u32 {
+        if p_desc == 0 {
+            return E_POINTER;
+        }
+        if !crate::ddraw::guest_range(ctx, p_desc, DMUS_OBJECTDESC_SIZE) {
+            return E_POINTER;
+        }
+        let Some(size) = crate::Ptr::<u32>::new(p_desc).read(&ctx.memory) else {
+            return E_POINTER;
+        };
+        if size < DMUS_OBJECTDESC_CLASS_OFFSET + 16 {
+            return E_INVALIDARG;
+        }
+        let Some(valid) = crate::Ptr::<u32>::new(p_desc.saturating_add(4)).read(&ctx.memory) else {
+            return E_POINTER;
+        };
+        if crate::Ptr::<u32>::new(p_desc.saturating_add(4))
+            .write(&mut ctx.memory, valid | DMUS_OBJ_CLASS)
+            .is_none()
+        {
+            return E_POINTER;
+        }
+        if crate::Ptr::<GUID>::new(p_desc.saturating_add(DMUS_OBJECTDESC_CLASS_OFFSET))
+            .write(&mut ctx.memory, CLSID_DirectMusicSegment)
+            .is_none()
+        {
+            return E_POINTER;
+        }
+        S_OK
+    }
+
+    #[allow(non_snake_case)]
+    pub fn QueryInterface_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        let riid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let ppv = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let mut ret = S_OK;
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            ret = E_POINTER;
+        } else if let Some(iid) = read_guid(ctx, riid) {
+            if iid_matches(&iid, &[IID_IDirectMusicObject]) {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, this)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                }
+            } else if iid_matches(
+                &iid,
+                &[
+                    IID_IDirectMusicSegment,
+                    IID_IDirectMusicSegment2,
+                    IID_IDirectMusicSegment8,
+                ],
+            ) {
+                ret = super::segment::create(ctx, riid, ppv);
+            } else {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                } else {
+                    ret = E_NOINTERFACE;
+                }
+            }
+        } else {
+            if crate::Ptr::<u32>::new(ppv)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+            {
+                ret = E_POINTER;
+            } else {
+                ret = E_NOINTERFACE;
+            }
+        }
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    stub!(AddRef_stub, 1, 1);
+    stub!(Release_stub, 1, 0);
+
+    /// GetDescriptor(this, pDesc): report that this object is a segment.
+    #[allow(non_snake_case)]
+    pub fn GetDescriptor_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let p_desc = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let ret = fill_object_desc(ctx, p_desc);
+        log::debug!("dmusic music_object GetDescriptor (ret={return_addr:#x}) = {ret:#x}");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(3 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    stub!(SetDescriptor_stub, 2);
+
+    /// ParseDescriptor(this, pStream, pDesc): mark the descriptor as a segment.
+    #[allow(non_snake_case)]
+    pub fn ParseDescriptor_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let p_desc = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let ret = fill_object_desc(ctx, p_desc);
+        log::debug!("dmusic music_object ParseDescriptor (ret={return_addr:#x}) = {ret:#x}");
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    vtable!(
+        MUSIC_OBJECT_VTABLE,
+        get_vtable,
+        0xfafc_7000,
+        [
+            QueryInterface_stub,
+            AddRef_stub,
+            Release_stub,
+            GetDescriptor_stub,
+            SetDescriptor_stub,
+            ParseDescriptor_stub,
+        ]
+    );
+
+    pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            return E_POINTER;
+        }
+        let Some(iid) = read_guid(ctx, riid) else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            return E_NOINTERFACE;
+        };
+        if iid_matches(&iid, &[IID_IDirectMusicObject]) {
+            super::create(ctx, riid, ppv, &[IID_IDirectMusicObject], get_vtable)
+        } else if iid_matches(
+            &iid,
+            &[
+                IID_IDirectMusicSegment,
+                IID_IDirectMusicSegment2,
+                IID_IDirectMusicSegment8,
+            ],
+        ) {
+            super::segment::create(ctx, riid, ppv)
+        } else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            E_NOINTERFACE
+        }
+    }
+}
+
 pub mod segment {
     use super::*;
 
-    query_interface!(
-        QueryInterface_stub,
-        &[
-            IID_IDirectMusicSegment,
-            IID_IDirectMusicSegment2,
-            IID_IDirectMusicSegment8,
-        ]
-    );
+    /// QueryInterface(this, riid, ppv): segment interfaces return `this`;
+    /// `IID_IDirectMusicObject` is delegated to a fresh music-object stub so
+    /// callers can use the object for parsing/loading metadata.
+    #[allow(non_snake_case)]
+    pub fn QueryInterface_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        let riid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let ppv = ctx.memory.read::<u32>(esp.wrapping_add(12));
+        let mut ret = S_OK;
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            ret = E_POINTER;
+        } else if let Some(iid) = read_guid(ctx, riid) {
+            if iid_matches(
+                &iid,
+                &[
+                    IID_IDirectMusicSegment,
+                    IID_IDirectMusicSegment2,
+                    IID_IDirectMusicSegment8,
+                ],
+            ) {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, this)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                }
+            } else if iid == IID_IDirectMusicObject {
+                ret = super::music_object::create(ctx, riid, ppv);
+            } else {
+                if crate::Ptr::<u32>::new(ppv)
+                    .write(&mut ctx.memory, 0)
+                    .is_none()
+                {
+                    ret = E_POINTER;
+                } else {
+                    ret = E_NOINTERFACE;
+                }
+            }
+        } else {
+            if crate::Ptr::<u32>::new(ppv)
+                .write(&mut ctx.memory, 0)
+                .is_none()
+            {
+                ret = E_POINTER;
+            } else {
+                ret = E_NOINTERFACE;
+            }
+        }
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
     stub!(AddRef_stub, 1, 1);
     stub!(Release_stub, 1, 0);
 
@@ -893,17 +1110,38 @@ pub mod segment {
     );
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
-        super::create(
-            ctx,
-            riid,
-            ppv,
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            return E_POINTER;
+        }
+        let Some(iid) = read_guid(ctx, riid) else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            return E_NOINTERFACE;
+        };
+        if iid_matches(
+            &iid,
             &[
                 IID_IDirectMusicSegment,
                 IID_IDirectMusicSegment2,
                 IID_IDirectMusicSegment8,
             ],
-            get_vtable,
-        )
+        ) {
+            super::create(
+                ctx,
+                riid,
+                ppv,
+                &[
+                    IID_IDirectMusicSegment,
+                    IID_IDirectMusicSegment2,
+                    IID_IDirectMusicSegment8,
+                ],
+                get_vtable,
+            )
+        } else if iid == IID_IDirectMusicObject {
+            super::music_object::create(ctx, riid, ppv)
+        } else {
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            E_NOINTERFACE
+        }
     }
 }
 
@@ -957,12 +1195,37 @@ pub mod loader {
 
     stub!(SetObject_stub, 2);
     stub!(SetSearchDirectory_stub, 4);
-    stub!(ScanDirectory_stub, 4);
+    /// ScanDirectory(this, rguidClass, pwzSearchPath, pwzFileExtension) walks
+    /// a directory and adds matching objects to the loader cache. The emulated
+    /// loader has no real filesystem search, so return `S_FALSE` (success but
+    /// nothing found) instead of a misleading `S_OK`.
+    #[allow(non_snake_case)]
+    pub fn ScanDirectory_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        log::debug!("dmusic loader ScanDirectory (ret={return_addr:#x}) = S_FALSE");
+        ctx.cpu.regs.eax = S_FALSE;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(5 * 4);
+        ctx.indirect(return_addr)
+    }
     stub!(CacheObject_stub, 2);
     stub!(ReleaseObject_stub, 2);
     stub!(ClearCache_stub, 2);
     stub!(EnableCache_stub, 3);
-    stub_out!(EnumObject_stub, 4, 3, E_FAIL);
+
+    /// EnumObject(this, pClassFilter, pCallback, pData) enumerates objects
+    /// matching a class filter by calling the supplied callback. The emulated
+    /// loader has no real content database, so return `S_FALSE` (success, zero
+    /// objects) without calling the callback or touching the callback context.
+    #[allow(non_snake_case)]
+    pub fn EnumObject_stub(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        log::debug!("dmusic loader EnumObject (ret={return_addr:#x}) = S_FALSE");
+        ctx.cpu.regs.eax = S_FALSE;
+        ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(5 * 4);
+        ctx.indirect(return_addr)
+    }
 
     // IDirectMusicLoader8 additions.
     stub!(CollectGarbage_stub, 1);
