@@ -4,12 +4,9 @@ use wasm_bindgen::prelude::*;
 mod externs;
 // The ignored generated snapshot may predate the current `tc` lint-clean
 // output; keep clippy green on snapshots that cannot be regenerated.
-#[allow(
-    clippy::double_parens,
-    clippy::large_const_arrays,
-    clippy::manual_swap,
-    clippy::unnecessary_cast
-)]
+// `clippy::large_const_arrays` is emitted into the generated preamble itself,
+// so allowing it here would trip `clippy::duplicated_attributes`.
+#[allow(clippy::double_parens, clippy::manual_swap, clippy::unnecessary_cast)]
 mod generated;
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen)]
