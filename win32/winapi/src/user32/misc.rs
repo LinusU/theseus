@@ -54,7 +54,12 @@ pub fn DrawTextA(
         if count != 0 && (lpchText.addr < 0x1000 || end as usize > ctx.memory.bytes.len()) {
             return 0;
         }
-        ctx.memory[lpchText.addr..][..count].to_vec()
+        ctx.memory
+            .bytes
+            .get(lpchText.addr as usize..)
+            .and_then(|b| b.get(..count))
+            .map(|b| b.to_vec())
+            .unwrap_or_default()
     };
     let Some(rect) = lprc.read(&ctx.memory) else {
         return 0;
