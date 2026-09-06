@@ -685,7 +685,13 @@ pub(crate) fn alloc_string(ctx: &mut Context, s: &str) -> Option<u32> {
         .process_heap
         .try_alloc(&mut ctx.memory, s.len() as u32)?;
     drop(kernel32);
-    ctx.memory[addr..addr + s.len() as u32].copy_from_slice(s.as_bytes());
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(addr as usize..addr as usize + s.len())
+    {
+        dst.copy_from_slice(s.as_bytes());
+    }
     Some(addr)
 }
 
@@ -726,7 +732,14 @@ pub fn DirectDrawEnumerateExA(
     }) else {
         return DD::ERR_OUTOFMEMORY;
     };
-    ctx.memory[guid_addr..guid_addr + std::mem::size_of::<GUID>() as u32].fill(0);
+    let guid_size = std::mem::size_of::<GUID>();
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(guid_addr as usize..guid_addr as usize + guid_size)
+    {
+        dst.fill(0);
+    }
     let Some(desc) = alloc_string(ctx, "Primary Display Driver\0") else {
         kernel32::lock()
             .process_heap
