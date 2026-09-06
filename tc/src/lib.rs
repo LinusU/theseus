@@ -228,7 +228,7 @@ impl State {
                 addr = self
                     .mem
                     .mappings
-                    .try_alloc("vtables".into(), 0x1000, self.mem.bytes.len() as u32)
+                    .try_alloc("vtables".into(), 0x1000, Memory::LIMIT)
                     .expect("vtables mapping could not be allocated");
             }
             for (interface, entries) in vtables {
@@ -267,7 +267,7 @@ impl State {
                     addr = self
                         .mem
                         .mappings
-                        .try_alloc("vtables".into(), 0x1000, self.mem.bytes.len() as u32)
+                        .try_alloc("vtables".into(), 0x1000, Memory::LIMIT)
                         .expect("vtables mapping could not be allocated");
                 }
                 module.imports.push(Import {

@@ -11,6 +11,12 @@ pub struct Memory {
 }
 
 impl Memory {
+    /// Largest address the translator can hand out; matches the runtime's
+    /// flat 256 MiB address space.
+    pub const LIMIT: u32 = 256 << 20;
+}
+
+impl Memory {
     pub fn reserve(&mut self, name: String, addr: u32, size: u32) {
         let addr = self.mappings.reserve(Mapping {
             desc: name,

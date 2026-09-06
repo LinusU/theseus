@@ -38,7 +38,7 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
 
 fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
     mem.mappings
-        .try_alloc("null page".into(), 0x1000, mem.bytes.len() as u32)
+        .try_alloc("null page".into(), 0x1000, Memory::LIMIT)
         .expect("null page mapping could not be allocated");
 
     let image_base = f.opt_header.ImageBase;
