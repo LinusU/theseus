@@ -77,9 +77,8 @@ pub fn GetDlgItemInt(
     lpTranslated: Ptr<u32>,
     _bSigned: bool,
 ) -> u32 {
-    if lpTranslated.addr != 0 {
-        ctx.memory.write::<u32>(lpTranslated.addr, 0);
-    }
+    // lpTranslated receives FALSE on failure; an unusable pointer is ignored.
+    let _ = lpTranslated.write(&mut ctx.memory, 0);
     0
 }
 
@@ -91,8 +90,10 @@ pub fn GetDlgItemTextW(
     lpString: Ptr<u16>, /* WSTR */
     cchMax: i32,
 ) -> u32 {
-    if lpString.addr != 0 && cchMax > 0 {
-        ctx.memory.write::<u16>(lpString.addr, 0);
+    // On failure the buffer receives an empty string; an unusable pointer is
+    // ignored rather than panicking the host.
+    if cchMax > 0 {
+        let _ = lpString.write(&mut ctx.memory, 0);
     }
     0
 }
@@ -116,4 +117,50 @@ pub fn SetDlgItemTextW(
     _lpString: Ptr<u16>, /* WSTR */
 ) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GetDlgItemInt, GetDlgItemTextW};
+    use crate::{Ptr, user32::HWND};
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn dialog_out_pointers_tolerate_bad_addresses() {
+        let mut ctx = context();
+        // An out-of-range optional out-pointer is ignored, not a panic.
+        assert_eq!(
+            GetDlgItemInt(&mut ctx, HWND::null(), 0, Ptr::new(0xffff_ff00), false),
+            0
+        );
+        // A valid out-pointer still receives FALSE.
+        assert_eq!(
+            GetDlgItemInt(&mut ctx, HWND::null(), 0, Ptr::new(0x2000), false),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x2000), 0);
+
+        // Same for the text out-buffer: bad addresses are ignored.
+        assert_eq!(
+            GetDlgItemTextW(&mut ctx, HWND::null(), 0, Ptr::new(0xffff_ff00), 16),
+            0
+        );
+        assert_eq!(
+            GetDlgItemTextW(&mut ctx, HWND::null(), 0, Ptr::new(0x2000), 16),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u16>(0x2000), 0);
+    }
 }
