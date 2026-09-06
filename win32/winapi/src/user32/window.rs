@@ -202,6 +202,10 @@ pub fn CreateWindowExA(
     hInstance: HINSTANCE,
     _lpParam: Ptr<()>,
 ) -> HWND {
+    // A null title is legal, but a low non-null pointer is invalid.
+    if lpWindowName.addr != 0 && lpWindowName.addr < 0x1000 {
+        return HWND::null();
+    }
     let name = ctx.memory.read_str(lpWindowName.addr);
     state().create_window(CreateWindowArgs {
         name: name.into(),
@@ -233,6 +237,10 @@ pub fn CreateWindowExW(
     hInstance: HINSTANCE,
     _lpParam: Ptr<()>,
 ) -> HWND {
+    // A null title is legal, but a low non-null pointer is invalid.
+    if lpWindowName.addr != 0 && lpWindowName.addr < 0x1000 {
+        return HWND::null();
+    }
     let name = ctx.memory.read_wstr(lpWindowName.addr);
     state().create_window(CreateWindowArgs {
         name: name.to_string_lossy(),
@@ -1255,8 +1263,8 @@ pub fn ValidateRect(_ctx: &mut Context, hWnd: HWND, _lpRect: Ptr<RECT>) -> bool 
 #[cfg(test)]
 mod tests {
     use super::{
-        DefWindowProcW, GetWindowTextA, HWND, RegisterClassA, SetWindowTextA, UnregisterClassA,
-        UnregisterClassW, UpdateWindow, Window,
+        CW, CreateWindowExA, CreateWindowExW, DefWindowProcW, GetWindowTextA, HWND, RegisterClassA,
+        SetWindowTextA, UnregisterClassA, UnregisterClassW, UpdateWindow, Window,
     };
     use crate::Ptr;
     use crate::user32::WM;
@@ -1471,5 +1479,46 @@ mod tests {
         assert!(window_dirty());
 
         super::state().window.borrow_mut().take();
+    }
+
+    #[test]
+    fn create_window_rejects_low_window_name() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+
+        // A low non-null lpWindowName fails before any host window is made.
+        let hwnd = CreateWindowExA(
+            &mut ctx,
+            0,
+            Ptr::new(0),
+            Ptr::new(0x500),
+            0,
+            0,
+            0,
+            CW(0),
+            CW(0),
+            HWND::null(),
+            0,
+            0,
+            Ptr::new(0),
+        );
+        assert!(hwnd.is_null());
+        let hwnd = CreateWindowExW(
+            &mut ctx,
+            0,
+            Ptr::new(0),
+            Ptr::new(0x500),
+            0,
+            0,
+            0,
+            CW(0),
+            CW(0),
+            HWND::null(),
+            0,
+            0,
+            Ptr::new(0),
+        );
+        assert!(hwnd.is_null());
+        assert!(super::state().window.borrow().is_none());
     }
 }
