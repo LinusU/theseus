@@ -532,7 +532,14 @@ impl AudioStream {
             // else strands callers that wait for the queue to drain.
             return 0;
         }
-        unsafe { sdl::audio::SDL_GetAudioStreamQueued(self.0) as u32 }
+        let queued = unsafe { sdl::audio::SDL_GetAudioStreamQueued(self.0) };
+        if queued < 0 {
+            // Report an empty queue on failure so callers waiting for the
+            // stream to drain are not stuck on an unrecoverable SDL error.
+            log::warn!("SDL_GetAudioStreamQueued failed: {}", sdl_error());
+            return 0;
+        }
+        queued as u32
     }
 
     pub fn put_data(&self, data: &[u8]) {
