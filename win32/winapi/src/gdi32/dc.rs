@@ -451,9 +451,17 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
     loop {
         if x0 >= 0 && y0 >= 0 && (x0 as u32) < width && (y0 as u32) < height {
             let i = (y0 as u32 * stride + x0 as u32 * 4) as usize;
-            let d = u32::from_le_bytes(pixels[i..][..4].try_into().unwrap());
-            if let Some(v) = rop(d) {
-                pixels[i..][..4].copy_from_slice(&((v & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
+            let Some(d) = pixels
+                .get(i..i + 4)
+                .and_then(|b| b.try_into().ok())
+                .map(u32::from_le_bytes)
+            else {
+                continue;
+            };
+            if let Some(v) = rop(d)
+                && let Some(dst) = pixels.get_mut(i..i + 4)
+            {
+                dst.copy_from_slice(&((v & 0x00ff_ffff) | 0xff00_0000).to_le_bytes());
             }
         }
         if x0 == x && y0 == y {
