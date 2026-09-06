@@ -2,7 +2,7 @@ use runtime::Context;
 
 use crate::{
     kernel32,
-    winmm::{state, winmm_main},
+    winmm::{TIMER_COND, state, winmm_main},
 };
 
 /// How a timer expiry is delivered: TIME_CALLBACK_FUNCTION calls a guest
@@ -14,7 +14,9 @@ pub enum Notify {
     Event { handle: u32, pulse: bool },
 }
 
+#[derive(Clone)]
 pub struct Timer {
+    pub id: u32,
     pub period: u32,
     pub next: u32,
     pub periodic: bool,
@@ -76,24 +78,47 @@ pub fn timeSetEvent(
         },
     };
 
-    let mut state = state();
-    if state.timer.is_some() {
-        // The emulated model supports a single timer; a second request
-        // reports creation failure rather than panicking the host.
+    let (id, need_spawn) = {
+        let mut lock = state();
+        let id = lock.next_id;
+        lock.next_id = lock.next_id.wrapping_add(1);
+        if lock.next_id == 0 {
+            lock.next_id = 1;
+        }
+        lock.timers.insert(
+            id,
+            Timer {
+                id,
+                period: uDelay,
+                next: host::host().time() + uDelay,
+                periodic: fuEvent.periodic,
+                notify,
+                user_data: dwUser,
+            },
+        );
+        let need_spawn = !lock.thread_running;
+        if need_spawn {
+            lock.thread_running = true;
+        }
+        // Wake any sleeping worker so it recomputes the next due time.
+        TIMER_COND.notify_one();
+        (id, need_spawn)
+    };
+
+    if need_spawn
+        && !kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
+            winmm_main(ctx);
+        })
+    {
+        let mut lock = state();
+        lock.timers.remove(&id);
+        if lock.timers.is_empty() {
+            lock.thread_running = false;
+        }
         return 0;
     }
-    state.timer = Some(Timer {
-        period: uDelay,
-        next: host::host().time() + uDelay,
-        periodic: fuEvent.periodic,
-        notify,
-        user_data: dwUser,
-    });
-    kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
-        winmm_main(ctx);
-    });
 
-    1
+    id
 }
 
 #[win32_derive::dllexport]
@@ -101,10 +126,9 @@ pub fn timeKillEvent(_ctx: &mut Context, uTimerID: u32) -> u32 {
     const TIMERR_NOERROR: u32 = 0;
     const MMSYSERR_INVALHANDLE: u32 = 5;
 
-    // The emulated timer model supports a single periodic event with id 1.
-    // Clearing it makes the winmm thread exit its loop at the next wake.
-    let mut state = state();
-    if uTimerID == 1 && state.timer.take().is_some() {
+    let removed = state().timers.remove(&uTimerID).is_some();
+    if removed {
+        TIMER_COND.notify_one();
         TIMERR_NOERROR
     } else {
         MMSYSERR_INVALHANDLE
@@ -138,37 +162,41 @@ mod tests {
         let mut ctx = context();
         assert_eq!(timeKillEvent(&mut ctx, 1), 5); // none registered
 
-        state().timer = Some(Timer {
-            period: 10,
-            next: 0,
-            periodic: true,
-            notify: Notify::Function(0),
-            user_data: 0,
-        });
+        state().timers.insert(
+            1,
+            Timer {
+                id: 1,
+                period: 10,
+                next: 0,
+                periodic: true,
+                notify: Notify::Function(0),
+                user_data: 0,
+            },
+        );
         assert_eq!(timeKillEvent(&mut ctx, 2), 5); // wrong id
         assert_eq!(timeKillEvent(&mut ctx, 1), 0);
-        assert!(state().timer.is_none());
+        assert!(state().timers.is_empty());
     }
 
     #[test]
-    fn time_set_event_fails_while_a_timer_is_registered() {
+    fn time_set_event_allows_multiple_timers_with_distinct_ids() {
         let _guard = TIMER_LOCK.lock().unwrap();
         let mut ctx = context();
-        state().timer = Some(Timer {
-            period: 10,
-            next: 0,
-            periodic: true,
-            notify: Notify::Function(0),
-            user_data: 0,
-        });
-        // A second timer request reports failure instead of panicking, and
-        // the live registration is left alone.
-        assert_eq!(
-            timeSetEvent(&mut ctx, 10, 0, 0x1234, 0, TIME::from_abi(0)),
-            0
-        );
-        assert!(state().timer.is_some());
-        state().timer = None;
+        // Fake a running worker so the test does not actually spawn a thread.
+        state().thread_running = true;
+
+        let id1 = timeSetEvent(&mut ctx, 10, 0, 0x1234, 0, TIME::from_abi(0));
+        assert_eq!(id1, 1);
+
+        let id2 = timeSetEvent(&mut ctx, 20, 0, 0x5678, 0, TIME::from_abi(0));
+        assert_eq!(id2, 2);
+        assert_eq!(state().timers.len(), 2);
+
+        assert_eq!(timeKillEvent(&mut ctx, id1), 0);
+        assert_eq!(timeKillEvent(&mut ctx, id2), 0);
+        assert!(state().timers.is_empty());
+
+        state().thread_running = false;
     }
 
     #[test]

@@ -1,4 +1,5 @@
-use std::sync::{Mutex, MutexGuard};
+use std::collections::BTreeMap;
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 use runtime::Context;
 
@@ -17,12 +18,29 @@ pub use mmio::*;
 mod midi;
 pub use midi::*;
 
-#[derive(Default)]
 pub struct State {
-    timer: Option<Timer>,
-    wave: Option<wave::State>,
-    mmio: Option<mmio::State>,
-    midi: Option<midi::State>,
+    /// Active timers keyed by their WinMM id.
+    pub timers: BTreeMap<u32, Timer>,
+    /// Ids start at 1 and 0 is reserved as the failure value.
+    pub next_id: u32,
+    /// Whether the single `winmm_main` worker thread is running.
+    pub thread_running: bool,
+    pub wave: Option<wave::State>,
+    pub mmio: Option<mmio::State>,
+    pub midi: Option<midi::State>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            timers: BTreeMap::new(),
+            next_id: 1,
+            thread_running: false,
+            wave: None,
+            mmio: None,
+            midi: None,
+        }
+    }
 }
 
 impl State {
@@ -34,11 +52,14 @@ impl State {
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
-    timer: None,
+    timers: BTreeMap::new(),
+    next_id: 1,
+    thread_running: false,
     wave: None,
     mmio: None,
     midi: None,
 });
+pub(crate) static TIMER_COND: Condvar = Condvar::new();
 
 pub fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap()
@@ -47,40 +68,52 @@ pub fn state() -> MutexGuard<'static, State> {
 fn winmm_main(ctx: &mut Context) {
     loop {
         let mut lock = state();
-        let Some(timer) = lock.timer.as_mut() else {
-            return;
-        };
+        if lock.timers.is_empty() {
+            lock.thread_running = false;
+            break;
+        }
 
         let now = host::host().time();
-        if now < timer.next {
-            let delta = timer.next - now;
-            std::thread::sleep(std::time::Duration::from_millis(delta as u64));
+        let next = lock.timers.values().map(|t| t.next).min().unwrap();
+
+        if now < next {
+            let delta = std::time::Duration::from_millis((next - now) as u64);
+            let (l, _) = TIMER_COND.wait_timeout(lock, delta).unwrap();
+            lock = l;
+            continue;
         }
 
-        let notify = timer.notify;
-        let periodic = timer.periodic;
-        let user_data = timer.user_data;
-        if periodic {
-            timer.next = now + timer.period;
-        } else {
-            lock.timer = None;
+        let due_ids: Vec<u32> = lock
+            .timers
+            .values()
+            .filter(|t| t.next <= now)
+            .map(|t| t.id)
+            .collect();
+
+        let mut timers = Vec::with_capacity(due_ids.len());
+        for id in due_ids {
+            let timer = lock.timers.get(&id).unwrap().clone();
+            if !timer.periodic {
+                lock.timers.remove(&id);
+            } else if let Some(t) = lock.timers.get_mut(&id) {
+                t.next = now + t.period;
+            }
+            timers.push(timer);
         }
+
         drop(lock);
 
-        match notify {
-            Notify::Function(callback) => {
-                let func = ctx.indirect(callback);
-                let timer_id = 1;
-                // LPTIMECALLBACK
-                ctx.call32_x86(func, vec![timer_id, 0, user_data, 0, 0]);
+        for timer in timers {
+            match timer.notify {
+                Notify::Function(callback) => {
+                    let func = ctx.indirect(callback);
+                    // LPTIMECALLBACK
+                    ctx.call32_x86(func, vec![timer.id, 0, timer.user_data, 0, 0]);
+                }
+                Notify::Event { handle, pulse } => {
+                    kernel32::signal_event(HANDLE::from_abi(handle), pulse);
+                }
             }
-            Notify::Event { handle, pulse } => {
-                kernel32::signal_event(HANDLE::from_abi(handle), pulse);
-            }
-        }
-
-        if !periodic {
-            return;
         }
     }
 }

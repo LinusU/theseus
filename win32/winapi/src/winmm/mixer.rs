@@ -224,9 +224,9 @@ pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDe
     {
         return MMSYSERR_INVALPARAM;
     }
-    for channel in 0..cChannels {
+    for (channel, &value) in volume.iter().enumerate().take(cChannels as usize) {
         ctx.memory
-            .write(paDetails + channel * cbDetails, volume[channel as usize]);
+            .write(paDetails + channel as u32 * cbDetails, value);
     }
     MMSYSERR_NOERROR
 }
@@ -267,8 +267,8 @@ pub fn mixerSetControlDetails(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDet
     };
     // A caller may write a subset of channels; clamp to the advertised
     // bounds and leave the rest alone.
-    for channel in 0..cChannels as usize {
-        current[channel] = ctx
+    for (channel, value) in current.iter_mut().enumerate().take(cChannels as usize) {
+        *value = ctx
             .memory
             .read::<u32>(paDetails + channel as u32 * cbDetails)
             .min(0xffff);
