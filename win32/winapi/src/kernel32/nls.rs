@@ -47,8 +47,9 @@ pub fn GetCPInfo(ctx: &mut Context, CodePage: u32, lpCPInfo: Ptr<CPINFO>) -> boo
         LeadByte: [0; 12],
         _pad: [0; 2],
     };
-    ctx.memory.write(lpCPInfo.addr, info);
-    true
+    crate::Ptr::<CPINFO>::new(lpCPInfo.addr)
+        .write(&mut ctx.memory, info)
+        .is_some()
 }
 
 // CT_CTYPE1 character classification bits.
@@ -238,7 +239,7 @@ pub fn LCMapStringA(
     if cchDest == 0 {
         return len as i32;
     }
-    if (cchDest as u32) < len {
+    if (cchDest as u32) < len || !output_range_fits(ctx, lpDestStr.addr, len as usize) {
         return 0;
     }
     for (i, c) in src.into_iter().enumerate() {
@@ -270,7 +271,7 @@ pub fn LCMapStringW(
     if cchDest == 0 {
         return len as i32;
     }
-    if (cchDest as u32) < len {
+    if (cchDest as u32) < len || !output_range_fits(ctx, lpDestStr.addr, len as usize * 2) {
         return 0;
     }
     for (i, c) in src.into_iter().enumerate() {
@@ -401,7 +402,10 @@ pub fn WideCharToMultiByte(
     let default = if lpDefaultChar.addr == 0 {
         b'?'
     } else {
-        ctx.memory.read::<u8>(lpDefaultChar.addr)
+        let Some(c) = lpDefaultChar.read(&ctx.memory) else {
+            return 0;
+        };
+        c
     };
     let converted: Vec<(u8, bool)> = src
         .into_iter()
@@ -409,8 +413,7 @@ pub fn WideCharToMultiByte(
         .collect();
     let used_default = converted.iter().any(|&(_, used)| used);
     if lpUsedDefaultChar.addr != 0 {
-        ctx.memory
-            .write::<u8>(lpUsedDefaultChar.addr, used_default as u8);
+        let _ = lpUsedDefaultChar.write(&mut ctx.memory, used_default);
     }
     if cbMultiByte == 0 {
         return converted.len() as i32;

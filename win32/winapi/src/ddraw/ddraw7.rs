@@ -466,6 +466,12 @@ pub mod IDirectDraw7 {
             dwNLVBRops: [0xFFFFFFFF; 8],
             ddsCaps: dds,
         };
+        let caps_size = std::mem::size_of::<DDCAPS_DX7>() as u32;
+        if !crate::ddraw::guest_range(ctx, lpDDDriverCaps, caps_size)
+            || (lpDDEmulCaps != 0 && !crate::ddraw::guest_range(ctx, lpDDEmulCaps, caps_size))
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ctx.memory.write(lpDDDriverCaps, caps);
         if lpDDEmulCaps != 0 {
             caps.dwCaps &= !0x00004000; // claim 3D is hardware only
@@ -1194,7 +1200,7 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetCaps(ctx: &mut Context, this: u32, lpDDSCaps: u32) -> DD {
-        if lpDDSCaps == 0 {
+        if !crate::ddraw::guest_range(ctx, lpDDSCaps, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow();
@@ -1207,7 +1213,7 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetClipper(ctx: &mut Context, this: u32, lplpDDClipper: u32) -> DD {
-        if lplpDDClipper == 0 {
+        if !crate::ddraw::guest_range(ctx, lplpDDClipper, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow();
@@ -1276,7 +1282,7 @@ pub mod IDirectDrawSurface7 {
                 .borrow_mut()
                 .insert(dc.to_raw(), scratch);
         }
-        ctx.memory.write(lphDC, dc.to_raw());
+        let _ = crate::Ptr::<u32>::new(lphDC).write(&mut ctx.memory, dc.to_raw());
         DD::OK
     }
 
@@ -1297,7 +1303,7 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
-        if lplpDDPalette == 0 {
+        if !crate::ddraw::guest_range(ctx, lplpDDPalette, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow();
@@ -1322,7 +1328,11 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn GetPixelFormat(ctx: &mut Context, this: u32, lpDDPixelFormat: u32) -> DD {
-        if lpDDPixelFormat == 0 {
+        if !crate::ddraw::guest_range(
+            ctx,
+            lpDDPixelFormat,
+            std::mem::size_of::<DDPIXELFORMAT>() as u32,
+        ) {
             return DD::ERR_INVALIDPARAMS;
         }
         let surfaces = state().surf.borrow();

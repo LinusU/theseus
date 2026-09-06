@@ -29,7 +29,9 @@ pub fn mixerGetDevCapsA(ctx: &mut Context, uMxId: u32, pmxcaps: u32, cbmxcaps: u
     if uMxId != MIXER_DEVICE_ID {
         return MMSYSERR_BADDEVICEID;
     }
-    if cbmxcaps < std::mem::size_of::<MIXERCAPSA>() as u32 {
+    if cbmxcaps < std::mem::size_of::<MIXERCAPSA>() as u32
+        || !crate::ddraw::guest_range(ctx, pmxcaps, std::mem::size_of::<MIXERCAPSA>() as u32)
+    {
         return MMSYSERR_INVALPARAM;
     }
     let mut szPname = [0; 32];
@@ -85,7 +87,9 @@ pub fn mixerGetLineInfoA(ctx: &mut Context, hmxobj: u32, pmxl: u32, fdwInfo: u32
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
-    if pmxl < 0x1000 || ctx.memory.read::<u32>(pmxl) < std::mem::size_of::<MIXERLINEA>() as u32 {
+    if !crate::ddraw::guest_range(ctx, pmxl, std::mem::size_of::<MIXERLINEA>() as u32)
+        || ctx.memory.read::<u32>(pmxl) < std::mem::size_of::<MIXERLINEA>() as u32
+    {
         return MMSYSERR_INVALPARAM;
     }
     let component_type = ctx.memory.read::<u32>(pmxl + 0x18);
@@ -149,7 +153,7 @@ pub fn mixerGetLineControlsA(ctx: &mut Context, hmxobj: u32, pmxlc: u32, fdwCont
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
-    if pmxlc < 0x1000 || ctx.memory.read::<u32>(pmxlc) < 24 {
+    if !crate::ddraw::guest_range(ctx, pmxlc, 24) || ctx.memory.read::<u32>(pmxlc) < 24 {
         return MMSYSERR_INVALPARAM;
     }
     let cControls = ctx.memory.read::<u32>(pmxlc + 12);
@@ -157,7 +161,7 @@ pub fn mixerGetLineControlsA(ctx: &mut Context, hmxobj: u32, pmxlc: u32, fdwCont
     let pamxctrl = ctx.memory.read::<u32>(pmxlc + 20);
     if cControls != 1
         || cbmxctrl < std::mem::size_of::<MIXERCONTROL>() as u32
-        || pamxctrl < 0x1000
+        || !crate::ddraw::guest_range(ctx, pamxctrl, cbmxctrl)
         || !matches!(fdwControls, 0..=2)
     {
         return MMSYSERR_INVALPARAM;
@@ -198,7 +202,7 @@ pub fn mixerGetControlDetailsA(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDe
         _ => return MMSYSERR_INVALHANDLE,
     };
     drop(state);
-    if pmxcd < 0x1000 || ctx.memory.read::<u32>(pmxcd) < 24 {
+    if !crate::ddraw::guest_range(ctx, pmxcd, 24) || ctx.memory.read::<u32>(pmxcd) < 24 {
         return MMSYSERR_INVALPARAM;
     }
     let dwControlID = ctx.memory.read::<u32>(pmxcd + 4);
@@ -235,7 +239,7 @@ pub fn mixerSetControlDetails(ctx: &mut Context, hmxobj: u32, pmxcd: u32, fdwDet
         return MMSYSERR_INVALHANDLE;
     }
     drop(state);
-    if pmxcd < 0x1000 || ctx.memory.read::<u32>(pmxcd) < 24 {
+    if !crate::ddraw::guest_range(ctx, pmxcd, 24) || ctx.memory.read::<u32>(pmxcd) < 24 {
         return MMSYSERR_INVALPARAM;
     }
     let dwControlID = ctx.memory.read::<u32>(pmxcd + 4);
@@ -281,7 +285,7 @@ pub fn mixerOpen(
     if uMxId != MIXER_DEVICE_ID {
         return MMSYSERR_BADDEVICEID;
     }
-    if phmx < 0x1000 {
+    if !crate::ddraw::guest_range(ctx, phmx, 4) {
         return MMSYSERR_INVALPARAM;
     }
     let hmx = kernel32::lock()

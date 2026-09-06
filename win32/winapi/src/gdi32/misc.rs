@@ -21,9 +21,12 @@ pub fn GetSystemPaletteEntries(
     pPalEntries: crate::Ptr<u8>,
 ) -> u32 {
     // PALETTEENTRY { peRed, peGreen, peBlue, peFlags }: report a gray ramp.
+    if !crate::ddraw::guest_range(ctx, pPalEntries.addr, cEntries.saturating_mul(4)) {
+        return 0;
+    }
     let mut addr = pPalEntries.addr;
-    for i in iStart..iStart + cEntries {
-        let level = (i & 0xff) as u8;
+    for i in 0..cEntries {
+        let level = (iStart.wrapping_add(i) & 0xff) as u8;
         for value in [level, level, level, 0] {
             ctx.memory.write::<u8>(addr, value);
             addr += 1;

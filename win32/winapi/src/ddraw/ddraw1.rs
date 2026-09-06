@@ -917,6 +917,13 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn GetPixelFormat(ctx: &mut Context, _this: u32, lpDDPixelFormat: u32) -> DD {
+        if !crate::ddraw::guest_range(
+            ctx,
+            lpDDPixelFormat,
+            std::mem::size_of::<DDPIXELFORMAT>() as u32,
+        ) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         ctx.memory.write(lpDDPixelFormat, get_pixel_format());
         DD::OK
     }
@@ -1157,6 +1164,9 @@ pub mod IDirectDrawPalette {
 
     #[win32_derive::dllexport]
     pub fn GetCaps(ctx: &mut Context, _this: u32, lpdwCaps: u32) -> DD {
+        if !crate::ddraw::guest_range(ctx, lpdwCaps, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         // We only ever create 8-bit palettes with all 256 entries settable.
         let caps = DDPCAPS::_8BIT | DDPCAPS::ALLOW256;
         ctx.memory.write::<u32>(lpdwCaps, caps.bits());
@@ -1177,11 +1187,21 @@ pub mod IDirectDrawPalette {
             return DD::ERR_GENERIC;
         };
         let palette = palette.borrow();
-        for i in 0..dwNumEntries {
-            let Some(entry) = palette.entries.get((dwBase + i) as usize) else {
-                break;
-            };
-            ctx.memory.write(lpEntries + i * 4, entry.clone());
+        // Only entries the palette actually holds can be returned; the
+        // destination range is validated once for those.
+        let count =
+            (dwNumEntries as usize).min(palette.entries.len().saturating_sub(dwBase as usize));
+        if count == 0 {
+            return DD::OK;
+        }
+        if !crate::ddraw::guest_range(ctx, lpEntries, count as u32 * 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        for (i, entry) in palette.entries[dwBase as usize..dwBase as usize + count]
+            .iter()
+            .enumerate()
+        {
+            ctx.memory.write(lpEntries + i as u32 * 4, entry.clone());
         }
         DD::OK
     }

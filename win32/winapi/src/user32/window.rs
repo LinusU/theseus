@@ -60,9 +60,12 @@ impl Window {
     /// use. `None` when the process heap cannot satisfy the request.
     pub fn ensure_pixels(&mut self, ctx: &mut Context) -> Option<u32> {
         if self.pixels.is_none() {
+            // Two clamped-to-0x4000 dims overflow a u32 product; a
+            // window that large simply cannot get a backing buffer.
+            let size = u32::try_from(self.width as u64 * self.height as u64 * 4).ok()?;
             self.pixels = kernel32::lock()
                 .process_heap
-                .try_alloc(&mut ctx.memory, self.width * self.height * 4);
+                .try_alloc(&mut ctx.memory, size);
         }
         self.pixels
     }
@@ -76,7 +79,15 @@ impl Window {
             // Nothing was ever drawn into this window's buffer.
             return;
         };
-        let pixels = &mut ctx.memory[pixels..][..(self.height * stride) as usize];
+        let pixel_bytes = self.height as usize * stride as usize;
+        let Some(pixels) = ctx
+            .memory
+            .bytes
+            .get_mut(pixels as usize..pixels as usize + pixel_bytes)
+        else {
+            log::warn!("window pixel buffer out of range; skipping flush");
+            return;
+        };
         let surface = self
             .surface
             .get_or_insert_with(|| self.host.create_surface(self.width, self.height));
