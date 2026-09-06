@@ -63,12 +63,18 @@ pub fn resolve_path(path: &str) -> std::path::PathBuf {
         // Absolute base so that ".." components resolve properly.
         host::fs::current_dir().unwrap_or_else(|_| ".".into())
     };
+    // `..` may not climb above the emulated drive root (the launch cwd):
+    // at a drive root Windows treats it as a no-op, and letting it escape
+    // would hand the guest arbitrary host paths.
+    let root = initial_cwd().to_path_buf();
     'component: for comp in path.split('/') {
         if comp.is_empty() || comp == "." {
             continue;
         }
         if comp == ".." {
-            result.pop();
+            if result != root && result.starts_with(&root) {
+                result.pop();
+            }
             continue;
         }
         let direct = result.join(comp);
@@ -699,7 +705,7 @@ mod tests {
     use super::{
         DRIVE_FIXED, DRIVE_NO_ROOT_DIR, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
         INVALID_FILE_ATTRIBUTES, INVALID_SET_FILE_POINTER, MoveMethod, SetFilePointer, drive_type,
-        file_attributes, wildcard_match,
+        file_attributes, initial_cwd, resolve_path, wildcard_match,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -775,6 +781,17 @@ mod tests {
         );
         let teb = crate::kernel32::teb(&mut ctx).unwrap();
         assert_eq!(teb.LastErrorValue, 131); // ERROR_NEGATIVE_SEEK
+    }
+
+    #[test]
+    fn dotdot_cannot_escape_the_drive_root() {
+        let root = initial_cwd().to_path_buf();
+        assert!(resolve_path("..\\..\\..").starts_with(&root));
+        assert!(resolve_path("C:\\..\\..\\..\\evil").starts_with(&root));
+        assert!(resolve_path("a\\..\\..\\..\\b").starts_with(&root));
+        assert!(resolve_path("\\..\\..\\x").starts_with(&root));
+        // A `..` inside the tree still resolves normally.
+        assert!(resolve_path("Cargo.toml\\..\\").starts_with(&root));
     }
 
     #[test]
