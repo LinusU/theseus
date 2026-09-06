@@ -39,9 +39,7 @@ impl Memory {
     }
 
     pub fn read<T: zerocopy::FromBytes>(&self, addr: u32) -> T {
-        <T>::read_from_prefix(&self.bytes[addr as usize..])
-            .unwrap()
-            .0
+        self.try_read(addr).expect("tc Memory read out of range")
     }
 
     pub fn try_read<T: zerocopy::FromBytes>(&self, addr: u32) -> Option<T> {
@@ -51,8 +49,7 @@ impl Memory {
     }
 
     pub fn write<T: zerocopy::IntoBytes + zerocopy::Immutable>(&mut self, addr: u32, val: T) {
-        val.write_to_prefix(&mut self.bytes[addr as usize..])
-            .unwrap();
+        assert!(self.try_write(addr, val), "tc Memory write out of range");
     }
 
     pub fn try_write<T: zerocopy::IntoBytes + zerocopy::Immutable>(

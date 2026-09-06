@@ -962,7 +962,11 @@ fn write_blit(
             let sy = ((dy as i64 - want.top as i64) * src_h as i64 / dst_h) as usize;
             for dx in rect.left..rect.right {
                 let sx = ((dx as i64 - want.left as i64) * src_w as i64 / dst_w) as usize;
-                let pixel = &rows[sy * row_bytes + sx * bpp as usize..][..bpp as usize];
+                let start = sy * row_bytes + sx * bpp as usize;
+                let pixel = rows.get(start..).and_then(|b| b.get(..bpp as usize));
+                let Some(pixel) = pixel else {
+                    continue;
+                };
                 if let Some(key) = &color_key {
                     let Some(value) = pixel_value(pixel, bpp) else {
                         log::warn!("colorkey blit at {bpp} bytes per pixel");
@@ -976,7 +980,7 @@ fn write_blit(
                 if !dst_key_allows(memory, at, bpp, &dst_color_key) {
                     continue;
                 }
-                memory[at..][..bpp as usize].copy_from_slice(pixel);
+                memory.write_bytes(at, pixel);
             }
         }
         return DD::OK;
@@ -1000,9 +1004,13 @@ fn write_blit(
     }
     for i in 0..copy_rows {
         let dst_start = addr + (rect.top + i as i32) as u32 * pitch + rect.left as u32 * bpp;
-        let row = &rows[(i + skip_y) * row_bytes + skip_x..][..copy_bytes];
+        let row_start = (i + skip_y) * row_bytes + skip_x;
+        let row = rows.get(row_start..).and_then(|b| b.get(..copy_bytes));
+        let Some(row) = row else {
+            continue;
+        };
         match (color_key, dst_color_key) {
-            (None, None) => memory[dst_start..][..copy_bytes].copy_from_slice(row),
+            (None, None) => memory.write_bytes(dst_start, row),
             (src_key, dst_key) => {
                 for (x, pixel) in row.chunks_exact(bpp as usize).enumerate() {
                     if let Some(key) = &src_key {
@@ -1018,7 +1026,7 @@ fn write_blit(
                     if !dst_key_allows(memory, at, bpp, &dst_key) {
                         continue;
                     }
-                    memory[at..][..bpp as usize].copy_from_slice(pixel);
+                    memory.write_bytes(at, pixel);
                 }
             }
         }
