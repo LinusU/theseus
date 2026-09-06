@@ -457,6 +457,10 @@ impl Window {
         if self.window.is_null() {
             return;
         }
+        if surface.texture.is_null() {
+            log::warn!("render: surface has no texture; skipping");
+            return;
+        }
         unsafe {
             // For debugging, can verify that the flip covers the entire canvas by starting with red:
             // check(sdl::render::SDL_SetRenderDrawColor(
@@ -469,17 +473,31 @@ impl Window {
             // check(sdl::render::SDL_RenderClear(self.renderer));
 
             // Ignore any alpha in the input when doing the final render copy.
-            check(sdl::render::SDL_SetTextureBlendMode(
+            if !sdl::render::SDL_SetTextureBlendMode(
                 surface.texture,
                 sdl::blendmode::SDL_BlendMode::NONE,
-            ));
-            check(sdl::render::SDL_RenderTexture(
+            ) {
+                log::warn!(
+                    "SDL_SetTextureBlendMode failed ({}); skipping render",
+                    sdl_error()
+                );
+                return;
+            }
+            if !sdl::render::SDL_RenderTexture(
                 self.renderer,
                 surface.texture,
                 std::ptr::null(),
                 std::ptr::null(),
-            ));
-            check(sdl::render::SDL_RenderPresent(self.renderer));
+            ) {
+                log::warn!(
+                    "SDL_RenderTexture failed ({}); skipping present",
+                    sdl_error()
+                );
+                return;
+            }
+            if !sdl::render::SDL_RenderPresent(self.renderer) {
+                log::warn!("SDL_RenderPresent failed ({}); ignoring", sdl_error());
+            }
         }
     }
 }
