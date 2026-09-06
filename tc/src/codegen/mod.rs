@@ -2973,6 +2973,24 @@ mod tests {
 
         codegen.gen_instr(&instr).unwrap();
         assert!(codegen.buf.contains("ctx.aam(0xau8);"));
+
+        // aam 0 raises #DE: the guard dispatches the divide-error trap
+        // instead of letting the helper divide by zero.
+        let bytes = [0xd4, 0x00];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        codegen.gen_instr(&instr).unwrap();
+        assert!(
+            codegen
+                .buf
+                .contains("if 0x0u8 == 0 { unhandled_interrupt(0x0, 0x0); }"),
+            "got {:?}",
+            codegen.buf
+        );
     }
 
     #[test]

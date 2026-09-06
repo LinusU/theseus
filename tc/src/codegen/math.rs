@@ -4,7 +4,7 @@ impl<'a> CodeGen<'a> {
     /// Emit the tail of a divide-error (#DE, vector 0) trap. Real-mode code
     /// dispatches through the DOS interrupt vector; flat code has no IDT, so
     /// the trap is an explicit failure like other unhandled interrupts.
-    fn divide_error(&self, instr: &iced_x86::Instruction) -> String {
+    pub(crate) fn divide_error(&self, instr: &iced_x86::Instruction) -> String {
         if self.module.is_dos() {
             // #DE is a fault: the pushed return address is the faulting
             // instruction itself.

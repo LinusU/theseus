@@ -316,7 +316,12 @@ impl<'a> CodeGen<'a> {
             }
             Aam => {
                 assert_eq!(instr.op_count(), 1);
-                self.line(format!("ctx.aam({});", self.get_op(instr, 0)));
+                let base = self.get_op(instr, 0);
+                // AAM with a zero base raises #DE rather than dividing by
+                // zero in the helper.
+                let trap = self.divide_error(instr);
+                self.line(format!("if {base} == 0 {{ {trap}; }}"));
+                self.line(format!("ctx.aam({base});"));
             }
             Daa => self.line("ctx.daa();"),
             Das => self.line("ctx.das();"),
