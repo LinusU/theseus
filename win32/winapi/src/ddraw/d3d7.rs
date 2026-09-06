@@ -917,7 +917,12 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory.write::<u32>(lplpD3D, device.d3d);
+        if crate::Ptr::<u32>::new(lplpD3D)
+            .write(&mut ctx.memory, device.d3d)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1325,10 +1330,13 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory.write::<u32>(
-            lpdwRenderState,
-            *device.render_states.get(&dwState).unwrap_or(&0),
-        );
+        let value = *device.render_states.get(&dwState).unwrap_or(&0);
+        if crate::Ptr::<u32>::new(lpdwRenderState)
+            .write(&mut ctx.memory, value)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1345,8 +1353,12 @@ pub mod IDirect3DDevice7 {
         if lpdwBlockHandle == 0 || !d3d_state().devices.borrow().contains_key(&this) {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory
-            .write::<u32>(lpdwBlockHandle, d3d_state().alloc_state_block());
+        if crate::Ptr::<u32>::new(lpdwBlockHandle)
+            .write(&mut ctx.memory, d3d_state().alloc_state_block())
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1635,13 +1647,16 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory.write::<u32>(
-            lpdwValue,
-            *device
-                .texture_stage_states
-                .get(&(dwStage, dwState))
-                .unwrap_or(&0),
-        );
+        let value = *device
+            .texture_stage_states
+            .get(&(dwStage, dwState))
+            .unwrap_or(&0);
+        if crate::Ptr::<u32>::new(lpdwValue)
+            .write(&mut ctx.memory, value)
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
@@ -1721,8 +1736,12 @@ pub mod IDirect3DDevice7 {
         if lpdwBlockHandle == 0 || !d3d_state().devices.borrow().contains_key(&this) {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory
-            .write::<u32>(lpdwBlockHandle, d3d_state().alloc_state_block());
+        if crate::Ptr::<u32>::new(lpdwBlockHandle)
+            .write(&mut ctx.memory, d3d_state().alloc_state_block())
+            .is_none()
+        {
+            return DD::ERR_INVALIDPARAMS;
+        }
         DD::OK
     }
 
