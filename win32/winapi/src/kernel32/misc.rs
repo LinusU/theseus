@@ -401,7 +401,9 @@ pub fn RtlUnwind(
 
 #[win32_derive::dllexport]
 pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> u32 /* WSTR */ {
-    let buf = &ctx.memory[lpString2.addr..];
+    let Some(buf) = ctx.memory.bytes.get(lpString2.addr as usize..) else {
+        return 0;
+    };
     let Some(len) = buf.chunks_exact(2).position(|c| c == [0, 0]) else {
         log::error!("lstrcpyW: unterminated source string");
         return 0;
@@ -426,7 +428,9 @@ pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> 
 
 #[win32_derive::dllexport]
 pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
-    let buf = &ctx.memory[lpString.addr..];
+    let Some(buf) = ctx.memory.bytes.get(lpString.addr as usize..) else {
+        return 0;
+    };
     let Some(len) = buf.chunks_exact(2).position(|c| c == [0, 0]) else {
         log::error!("lstrlenW: unterminated string");
         return 0;

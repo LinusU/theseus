@@ -15,7 +15,7 @@ pub enum CSTR {
 const NORM_IGNORECASE: u32 = 1;
 
 fn read_c_string(ctx: &Context, addr: u32) -> Option<Vec<u8>> {
-    let buf = &ctx.memory[addr..];
+    let buf = ctx.memory.bytes.get(addr as usize..)?;
     let len = buf.iter().position(|&byte| byte == 0)?;
     Some(buf[..len].to_vec())
 }
@@ -104,7 +104,8 @@ fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u8>> {
     if count < 0 {
         read_c_string(ctx, addr)
     } else {
-        Some(ctx.memory[addr..].get(..count as usize)?.to_vec())
+        let bytes = ctx.memory.bytes.get(addr as usize..)?;
+        Some(bytes.get(..count as usize)?.to_vec())
     }
 }
 
@@ -112,7 +113,7 @@ fn read_counted_w(ctx: &Context, addr: u32, count: i32) -> Option<Vec<u16>> {
     if count < -1 {
         return None;
     }
-    let bytes = &ctx.memory[addr..];
+    let bytes = ctx.memory.bytes.get(addr as usize..)?;
     if count < 0 {
         let mut out = Vec::new();
         for chunk in bytes.chunks_exact(2) {

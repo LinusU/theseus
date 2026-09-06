@@ -88,6 +88,7 @@ pub fn GetEnvironmentVariableA(
     // returned and nothing is written.
     let needs = len + 1;
     let fits = nSize >= needs
+        && lpBuffer.addr >= 0x1000
         && (lpBuffer.addr as usize)
             .checked_add(needs as usize)
             .is_some_and(|end| end <= ctx.memory.bytes.len());

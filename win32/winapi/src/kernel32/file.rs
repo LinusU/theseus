@@ -465,6 +465,9 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
     if (nBufferLength as usize) < bytes.len() + 1 {
         return bytes.len() as u32 + 1;
     }
+    if !crate::ddraw::guest_range(ctx, lpBuffer.addr, bytes.len() as u32 + 1) {
+        return 0;
+    }
     ctx.memory[lpBuffer.addr..][..bytes.len()].copy_from_slice(bytes);
     ctx.memory
         .write::<u8>(lpBuffer.addr + bytes.len() as u32, 0);

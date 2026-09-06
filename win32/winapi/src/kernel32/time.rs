@@ -80,7 +80,15 @@ pub fn Sleep(_ctx: &mut Context, dwMilliseconds: u32) {
 pub fn GetTimeZoneInformation(ctx: &mut Context, lpTimeZoneInformation: crate::Ptr<u8>) -> u32 /* TIME_ZONE_ID */
 {
     // TIME_ZONE_INFORMATION is 172 bytes; report UTC by zeroing it.
-    ctx.memory[lpTimeZoneInformation.addr..][..172].fill(0);
+    let Some(buf) = ctx
+        .memory
+        .bytes
+        .get_mut(lpTimeZoneInformation.addr as usize..)
+        .and_then(|buf| buf.get_mut(..172))
+    else {
+        return u32::MAX; // TIME_ZONE_ID_INVALID
+    };
+    buf.fill(0);
     0 // TIME_ZONE_ID_UNKNOWN
 }
 
@@ -101,7 +109,15 @@ pub fn FileTimeToSystemTime(
     lpSystemTime: crate::Ptr<u8>,
 ) -> bool {
     // SYSTEMTIME is 16 bytes; the game only shows these values incidentally.
-    ctx.memory[lpSystemTime.addr..][..16].fill(0);
+    let Some(buf) = ctx
+        .memory
+        .bytes
+        .get_mut(lpSystemTime.addr as usize..)
+        .and_then(|buf| buf.get_mut(..16))
+    else {
+        return false;
+    };
+    buf.fill(0);
     true
 }
 
