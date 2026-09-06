@@ -147,14 +147,13 @@ impl<'a> CodeGen<'a> {
             r => expr.push(get_reg(r)),
         }
         if instr.memory_index() != None {
+            let index = get_reg(instr.memory_index());
             if instr.memory_index_scale() != 1 {
-                expr.push(format!(
-                    "{}*{}",
-                    get_reg(instr.memory_index()),
-                    instr.memory_index_scale()
-                ));
+                let scale = instr.memory_index_scale();
+                let bitness = self.module.bitness();
+                expr.push(format!("{index}.wrapping_mul({scale}u{bitness})"));
             } else {
-                expr.push(get_reg(instr.memory_index()));
+                expr.push(index);
             }
         }
         let offset = instr.memory_displacement32();
@@ -164,11 +163,6 @@ impl<'a> CodeGen<'a> {
 
         let mut it = expr.into_iter();
         let first = it.next().unwrap();
-        let first = if first.contains('*') {
-            format!("({first})")
-        } else {
-            first
-        };
         it.fold(first, |s, e| format!("{s}.wrapping_add({e})"))
     }
 
@@ -1129,6 +1123,29 @@ mod tests {
             codegen.gen_instr(&instr).unwrap();
             assert!(codegen.buf.contains(want));
         }
+    }
+
+    #[test]
+    fn codegen_uses_wrapping_mul_for_scaled_index_addresses() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // 8b 84 8b 78 56 34 12 = mov eax, [ebx+ecx*4+0x12345678]
+        let bytes = [0x8b, 0x84, 0x8b, 0x78, 0x56, 0x34, 0x12];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = crate::Instr {
+            ip: crate::IP::Flat(0),
+            iced: decoder.decode(),
+            hint: None,
+        };
+        codegen.gen_instr(&instr).unwrap();
+        assert!(codegen.buf.contains("ctx.cpu.regs.ecx.wrapping_mul(4u32)"));
+        assert!(codegen.buf.contains(
+            "ctx.memory.read::<u32>(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.ecx.wrapping_mul(4u32)).wrapping_add(0x12345678u32))"
+        ));
     }
 
     #[test]
