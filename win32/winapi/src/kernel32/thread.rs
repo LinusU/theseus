@@ -196,7 +196,7 @@ pub fn CreateThread(
     }) else {
         return HANDLE::null();
     };
-    if lpThreadId.addr != 0 {
+    if lpThreadId.addr >= 0x1000 {
         let _ = lpThreadId.write(&mut ctx.memory, thread_id);
     }
     // The caller gets the object handle; returning the thread id here would
