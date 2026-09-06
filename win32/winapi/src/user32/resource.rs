@@ -37,7 +37,7 @@ pub fn LoadImageA(
     ctx: &mut Context,
     hInst: HINSTANCE,
     name: Ptr<u8>,
-    typ: IMAGE,
+    typ: u32,
     cx: u32,
     cy: u32,
     fuLoad: LR,
@@ -47,6 +47,11 @@ pub fn LoadImageA(
         return HANDLE::null();
     }
     let name = exe::ResourceName::Id(name.addr);
+
+    let Ok(typ) = IMAGE::try_from(typ) else {
+        log::warn!("LoadImage: unknown image type {typ}");
+        return HANDLE::null();
+    };
 
     if typ != IMAGE::BITMAP {
         log::warn!("LoadImage: only bitmap resources are supported, got {typ:?}");
