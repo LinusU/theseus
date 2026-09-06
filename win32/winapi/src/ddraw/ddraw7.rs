@@ -1432,7 +1432,7 @@ pub mod IDirectDrawSurface7 {
     pub fn Lock(
         ctx: &mut Context,
         this: u32,
-        _lpDestRect: u32,
+        lpDestRect: u32,
         lpDDSurfaceDesc2: u32,
         _dwFlags: u32,
         _hEvent: u32,
@@ -1451,6 +1451,18 @@ pub mod IDirectDrawSurface7 {
         let mut surface = surface.borrow_mut();
         let Some(pixels) = surface.lock(&mut ctx.memory) else {
             return DD::ERR_OUTOFMEMORY;
+        };
+        // A non-null rect locks a subregion: lpSurface is that region's
+        // first pixel, while lPitch still spans whole surface rows.
+        let Some(pixels) = crate::ddraw::ddraw::lock_offset(
+            ctx,
+            lpDestRect,
+            surface.width,
+            surface.height,
+            surface.bytes_per_pixel,
+            pixels,
+        ) else {
+            return DD::ERR_INVALIDPARAMS;
         };
         log::debug!(
             "Lock {this:#x} {}x{} {}bpp caps={:#x} -> {pixels:#x}",

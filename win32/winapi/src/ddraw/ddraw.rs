@@ -741,6 +741,31 @@ pub fn read_rect(ctx: &Context, addr: u32) -> Option<RECT> {
     }
 }
 
+/// The `lpSurface` value for a Lock restricted to the rect at `rect_addr`:
+/// DirectDraw hands back the address of the region's first pixel while the
+/// reported pitch still spans whole surface rows. `None` when a non-null
+/// rect pointer is unreadable.
+pub(crate) fn lock_offset(
+    ctx: &Context,
+    rect_addr: u32,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    pixels: u32,
+) -> Option<u32> {
+    if rect_addr == 0 {
+        return Some(pixels);
+    }
+    let rect = read_rect(ctx, rect_addr)?.clip_to_size(width, height);
+    // A rect entirely outside the surface clips to an empty region whose
+    // origin can sit past the edge; clamp so the returned address stays
+    // inside the allocation.
+    let top = (rect.top.max(0) as u32).min(height);
+    let left = (rect.left.max(0) as u32).min(width);
+    let pitch = width * bytes_per_pixel;
+    Some(pixels + top * pitch + left * bytes_per_pixel)
+}
+
 /// Copy a rect between two surfaces (which may be the same one; the copy
 /// stages through a temporary buffer).
 ///
@@ -1101,7 +1126,20 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PALETTEENTRY, expand_palettized};
+    use super::{PALETTEENTRY, RECT, expand_palettized, lock_offset};
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x20_000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
 
     fn entry(r: u8, g: u8, b: u8) -> PALETTEENTRY {
         PALETTEENTRY {
@@ -1110,6 +1148,45 @@ mod tests {
             peBlue: b,
             peFlags: 0,
         }
+    }
+
+    #[test]
+    fn lock_offset_points_at_the_regions_first_pixel() {
+        let mut ctx = context();
+        // A 4x4 surface at 0x4000 with 4 bytes per pixel has a 16-byte pitch.
+        ctx.memory.write(
+            0x1000,
+            RECT {
+                left: 1,
+                top: 2,
+                right: 3,
+                bottom: 4,
+            },
+        );
+        // No rect locks the whole surface.
+        assert_eq!(lock_offset(&ctx, 0, 4, 4, 4, 0x4000), Some(0x4000));
+        // The region's first pixel is top*pitch + left*bpp into the surface.
+        assert_eq!(
+            lock_offset(&ctx, 0x1000, 4, 4, 4, 0x4000),
+            Some(0x4000 + 2 * 16 + 4)
+        );
+        // A rect entirely outside the surface clamps to an in-bounds address.
+        ctx.memory.write(
+            0x1000,
+            RECT {
+                left: -5,
+                top: 90,
+                right: -1,
+                bottom: 99,
+            },
+        );
+        assert_eq!(
+            lock_offset(&ctx, 0x1000, 4, 4, 4, 0x4000),
+            Some(0x4000 + 4 * 16)
+        );
+        // An unreadable rect is an error, not the base pointer.
+        let oob = ctx.memory.bytes.len() as u32;
+        assert_eq!(lock_offset(&ctx, oob, 4, 4, 4, 0x4000), None);
     }
 
     #[test]

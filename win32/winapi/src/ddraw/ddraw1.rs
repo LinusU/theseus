@@ -990,7 +990,7 @@ pub mod IDirectDrawSurface {
     pub fn Lock(
         ctx: &mut Context,
         this: u32,
-        _rect: u32,
+        rect: u32,
         lpDesc: u32,
         _flags: u32,
         _unused: u32,
@@ -1000,11 +1000,21 @@ pub mod IDirectDrawSurface {
             return DD::ERR_INVALIDPARAMS;
         };
         let mut surface = surface.borrow_mut();
-        // A non-null rect locks a subregion; we always hand out the whole
-        // surface, matching the ddraw7 Lock below.
 
         let Some(pixels) = surface.lock(&mut ctx.memory) else {
             return DD::ERR_OUTOFMEMORY;
+        };
+        // A non-null rect locks a subregion: lpSurface is that region's
+        // first pixel, matching the ddraw7 Lock below.
+        let Some(pixels) = crate::ddraw::ddraw::lock_offset(
+            ctx,
+            rect,
+            surface.width,
+            surface.height,
+            surface.bytes_per_pixel,
+            pixels,
+        ) else {
+            return DD::ERR_INVALIDPARAMS;
         };
         let desc = DDSURFACEDESC {
             dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
