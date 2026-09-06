@@ -578,6 +578,11 @@ pub fn wsprintfW(ctx: &mut Context) -> i32 {
     let Some(fmt_addr) = read_stack_u32(ctx, esp.wrapping_add(8)) else {
         return 0;
     };
+    // A format string in the null page produces no output, and avoids the
+    // null-page read error `read_wstr` would log.
+    if fmt_addr < 0x1000 {
+        return 0;
+    }
     let fmt = ctx.memory.read_wstr(fmt_addr).as_slice().to_vec();
     let out = wsprintf_impl(ctx, &fmt, esp.wrapping_add(12), true);
     // wsprintf takes no size; a destination in the null page fails, and one
@@ -613,6 +618,10 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     let Some(fmt_addr) = read_stack_u32(ctx, esp.wrapping_add(8)) else {
         return 0;
     };
+    // A format string in the null page produces no output.
+    if fmt_addr < 0x1000 {
+        return 0;
+    }
     let fmt = read_bytes0(ctx, fmt_addr)
         .iter()
         .map(|&b| b as u16)
@@ -781,5 +790,13 @@ mod tests {
         ctx.memory.write::<u32>(0x200c, 0x500);
         assert_eq!(wsprintfA(&mut ctx), 2);
         assert_eq!(read_cstr(&ctx, 0x3000), "s=");
+
+        // A format pointer in the null page fails for both widths.
+        ctx.memory.write::<u32>(0x2008, 0x500);
+        assert_eq!(wsprintfA(&mut ctx), 0);
+        assert_eq!(wsprintfW(&mut ctx), 0);
+        ctx.memory.write::<u32>(0x2008, 0);
+        assert_eq!(wsprintfA(&mut ctx), 0);
+        assert_eq!(wsprintfW(&mut ctx), 0);
     }
 }
