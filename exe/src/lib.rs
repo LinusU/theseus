@@ -165,4 +165,31 @@ mod tests {
         };
         assert_eq!(dir.as_slice(&[0; 64]).unwrap().len(), 32);
     }
+
+    #[test]
+    fn export_directory_rejects_truncated_and_bad_pointers() {
+        use crate::exports::read_exports;
+
+        // A section too short for the export directory header returns None.
+        assert!(read_exports(&[0u8; 20]).is_none());
+
+        // A 64-byte image with an out-of-range name pointer and one name table
+        // entry whose string pointer is also out of range.
+        let mut image = vec![0u8; 64];
+        image[0..4].copy_from_slice(&100u32.to_le_bytes()); // AddressOfNames[0]
+        image[8..10].copy_from_slice(&0u16.to_le_bytes()); // AddressOfNameOrdinals[0]
+
+        let mut section = vec![0u8; 40];
+        section[12..16].copy_from_slice(&100u32.to_le_bytes()); // Name RVA
+        section[24..28].copy_from_slice(&1u32.to_le_bytes()); // NumberOfNames
+        section[28..32].copy_from_slice(&0u32.to_le_bytes()); // AddressOfNames
+        section[36..40].copy_from_slice(&8u32.to_le_bytes()); // AddressOfNameOrdinals
+
+        let Some(dir) = read_exports(&section) else {
+            panic!("read_exports should parse a 40-byte section");
+        };
+        assert!(dir.name(&image).is_empty());
+        assert_eq!(dir.fns(&image).count(), 0);
+        assert_eq!(dir.names(&image).count(), 1);
+    }
 }

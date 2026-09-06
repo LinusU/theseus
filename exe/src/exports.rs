@@ -25,7 +25,7 @@ pub struct IMAGE_EXPORT_DIRECTORY {
 impl IMAGE_EXPORT_DIRECTORY {
     #[allow(dead_code)]
     pub fn name<'a>(&self, image: &'a [u8]) -> &'a [u8] {
-        c_str(&image[self.Name as usize..])
+        c_str(image.get(self.Name as usize..).unwrap_or(&[]))
     }
 
     /// Returns an iterator of function addresses in ordinal order.
@@ -38,13 +38,13 @@ impl IMAGE_EXPORT_DIRECTORY {
         let names = iter_pod_n::<u32>(image, self.AddressOfNames, self.NumberOfNames);
         let ords = iter_pod_n::<u16>(image, self.AddressOfNameOrdinals, self.NumberOfNames);
 
-        let ni = names.map(move |addr| c_str(&image[addr as usize..]));
+        let ni = names.map(move |addr| c_str(image.get(addr as usize..).unwrap_or(&[])));
         ni.zip(ords)
     }
 }
 
-pub fn read_exports(section: &[u8]) -> IMAGE_EXPORT_DIRECTORY {
+pub fn read_exports(section: &[u8]) -> Option<IMAGE_EXPORT_DIRECTORY> {
     <IMAGE_EXPORT_DIRECTORY>::read_from_prefix(section)
-        .unwrap()
-        .0
+        .ok()
+        .map(|(d, _)| d)
 }
