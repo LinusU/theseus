@@ -74,7 +74,10 @@ fn winmm_main(ctx: &mut Context) {
         }
 
         let now = host::host().time();
-        let next = lock.timers.values().map(|t| t.next).min().unwrap();
+        let Some(next) = lock.timers.values().map(|t| t.next).min() else {
+            lock.thread_running = false;
+            break;
+        };
 
         if now < next {
             let delta = std::time::Duration::from_millis((next - now) as u64);
@@ -92,7 +95,10 @@ fn winmm_main(ctx: &mut Context) {
 
         let mut timers = Vec::with_capacity(due_ids.len());
         for id in due_ids {
-            let timer = lock.timers.get(&id).unwrap().clone();
+            let Some(timer) = lock.timers.get(&id) else {
+                continue;
+            };
+            let timer = timer.clone();
             if !timer.periodic {
                 lock.timers.remove(&id);
             } else if let Some(t) = lock.timers.get_mut(&id) {
