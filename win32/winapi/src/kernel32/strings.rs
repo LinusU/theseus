@@ -48,7 +48,14 @@ pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
     if !range_fits(ctx, lpString1.addr, output_len) {
         return 0;
     }
-    ctx.memory[lpString1.addr..][..src.len()].copy_from_slice(&src);
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(lpString1.addr as usize..)
+        .and_then(|b| b.get_mut(..src.len()))
+    {
+        dst.copy_from_slice(&src);
+    }
     ctx.memory.write::<u8>(lpString1.addr + src.len() as u32, 0);
     lpString1.addr
 }
@@ -76,7 +83,14 @@ pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
     if !range_fits(ctx, lpString1.addr, output_len) {
         return 0;
     }
-    ctx.memory[dst_addr..][..src.len()].copy_from_slice(&src);
+    if let Some(out) = ctx
+        .memory
+        .bytes
+        .get_mut(dst_addr as usize..)
+        .and_then(|b| b.get_mut(..src.len()))
+    {
+        out.copy_from_slice(&src);
+    }
     ctx.memory.write::<u8>(dst_addr + src.len() as u32, 0);
     lpString1.addr
 }
