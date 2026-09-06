@@ -351,8 +351,13 @@ pub fn SetFilePointer(
     hFile: crate::HANDLE,
     lDistanceToMove: i32,
     lpDistanceToMoveHigh: Ptr<i32>,
-    dwMoveMethod: MoveMethod,
+    dwMoveMethod: u32,
 ) -> u32 {
+    let Ok(dwMoveMethod) = MoveMethod::try_from(dwMoveMethod) else {
+        log::warn!("SetFilePointer({hFile:?}, {dwMoveMethod}): unknown move method");
+        crate::kernel32::teb_mut(ctx).LastErrorValue = 87; // ERROR_INVALID_PARAMETER
+        return INVALID_SET_FILE_POINTER;
+    };
     let distance = if lpDistanceToMoveHigh.addr != 0 {
         let Some(high) = lpDistanceToMoveHigh.read(&ctx.memory) else {
             return INVALID_SET_FILE_POINTER;
@@ -725,7 +730,7 @@ mod tests {
                 crate::HANDLE::from_raw(0xdead_beef),
                 -5,
                 Ptr::new(0),
-                MoveMethod::FILE_BEGIN,
+                MoveMethod::FILE_BEGIN as u32,
             ),
             INVALID_SET_FILE_POINTER
         );
