@@ -64,6 +64,9 @@ pub fn CreateFontA(
 ) -> HFONT {
     let face = if lpszFace.addr == 0 {
         String::new()
+    } else if lpszFace.addr < 0x1000 {
+        // A low non-null face-name pointer is invalid.
+        return HFONT::null();
     } else {
         ctx.memory.read_str(lpszFace.addr).to_owned()
     };
@@ -241,8 +244,8 @@ pub fn SelectObject(ctx: &mut Context, hdc: HDC, h: HGDIOBJ) -> HGDIOBJ {
 
 #[cfg(test)]
 mod tests {
-    use super::{GetStockObject, GetStockObjectArg, Object};
-    use crate::gdi32;
+    use super::{CreateFontA, GetStockObject, GetStockObjectArg, Object};
+    use crate::{Ptr, gdi32};
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -301,5 +304,52 @@ mod tests {
             panic!()
         };
         assert!(pen.0.is_none());
+    }
+
+    #[test]
+    fn create_font_rejects_low_face_pointer() {
+        let mut ctx = context();
+        // A low non-null lpszFace fails; a valid one creates a font.
+        assert!(
+            CreateFontA(
+                &mut ctx,
+                12,
+                0,
+                0,
+                0,
+                400,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Ptr::new(0x500)
+            )
+            .is_null()
+        );
+        ctx.memory.write_bytes(0x2000, b"Arial\0");
+        assert!(
+            !CreateFontA(
+                &mut ctx,
+                12,
+                0,
+                0,
+                0,
+                400,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Ptr::new(0x2000)
+            )
+            .is_null()
+        );
     }
 }
