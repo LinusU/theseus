@@ -271,10 +271,9 @@ impl FPU {
 
     /// FBLD: load an 80-bit packed BCD integer from memory and push it.
     pub fn bld(&mut self, memory: &crate::Memory<'_>, addr: u32) {
-        let Some(bytes) = memory.try_read::<[u8; 10]>(addr) else {
-            self.push(0.0);
-            return;
-        };
+        // `Memory::read` reports bad addresses and returns zeroed bytes,
+        // which decode to a BCD zero, matching the existing fallback.
+        let bytes = memory.read::<[u8; 10]>(addr);
         let sign = (bytes[9] & 0x80) != 0;
         let mut value: u64 = 0;
         for i in (0..9).rev() {
