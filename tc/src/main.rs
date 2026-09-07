@@ -143,7 +143,12 @@ fn run() -> anyhow::Result<()> {
                 let IP::Seg(addr) = src else {
                     anyhow::bail!("--jump-table {src} must be seg:ofs");
                 };
-                next = IP::Seg((addr.seg, addr.ofs + 2).into());
+                // A slot at the segment top has no next entry; stop there
+                // rather than wrapping the offset back to the start.
+                let Some(next_ofs) = addr.ofs.checked_add(2) else {
+                    break;
+                };
+                next = IP::Seg((addr.seg, next_ofs).into());
                 let Some(val) = state.mem.try_read::<u16>(src.to_addr()) else {
                     anyhow::bail!("--jump-table {src} points outside mapped memory");
                 };
@@ -152,10 +157,13 @@ fn run() -> anyhow::Result<()> {
                 let IP::Flat(addr) = src else {
                     anyhow::bail!("--jump-table {src} must be flat address");
                 };
+                next = IP::Flat(addr + 4);
                 if addr == 0 {
+                    // A null table slot still occupies four bytes; advance
+                    // past it instead of spinning on the same address.
+                    src = next;
                     continue;
                 }
-                next = IP::Flat(addr + 4);
                 let Some(val) = state.mem.try_read::<u32>(src.to_addr()) else {
                     anyhow::bail!("--jump-table {src} points outside mapped memory");
                 };
