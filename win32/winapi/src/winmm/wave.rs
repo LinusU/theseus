@@ -22,6 +22,14 @@ const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
 /// The one HWAVEOUT the emulated device vends.
 const WAVE_HANDLE: u32 = 1;
 
+/// Fixed device name reported by `waveOutGetDevCapsA`.
+fn waveout_name() -> [u8; 32] {
+    const NAME: &[u8] = b"Theseus Wave Output\0";
+    let mut out = [0u8; 32];
+    out[..NAME.len()].copy_from_slice(NAME);
+    out
+}
+
 /// Whether `addr..addr + bytes` is a guest range the waveOut API may touch:
 /// outside the null page and fully inside emulated memory.
 fn usable_range(ctx: &Context, addr: u32, bytes: u32) -> bool {
@@ -81,7 +89,7 @@ pub struct WAVEOUTCAPS {
     pub wMid: u16,
     pub wPid: u16,
     pub vDriverVersion: u32,
-    // TODO: TCHAR, could this be unicode based on cbwoc param?
+    // The A suffix means this is the ANSI structure; a W variant would use [u16; 32].
     pub szPname: [u8; 32],
     pub dwFormats: u32,
     pub wChannels: u16,
@@ -110,7 +118,7 @@ pub fn waveOutGetDevCapsA(ctx: &mut Context, uDeviceID: u32, pwoc: u32, cbwoc: u
             wMid: 0,
             wPid: 0,
             vDriverVersion: 1,
-            szPname: [0; 32],
+            szPname: waveout_name(),
             dwFormats: WAVE_FORMAT::_4M16 as u32,
             wChannels: 1, // mono
             wReserved1: 0,
@@ -559,6 +567,12 @@ mod tests {
         assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0x3ff0, caps), 11);
         assert_eq!(waveOutGetDevCapsA(&mut ctx, 0, 0x2000, caps), 0);
         assert_eq!(ctx.memory.read::<u16>(0x2000 + 44), 1); // wChannels: mono
+
+        // The device name is written as a NUL-terminated ANSI string.
+        let name = waveout_name();
+        for (i, b) in name.iter().enumerate() {
+            assert_eq!(ctx.memory.read::<u8>(0x2000 + 8 + i as u32), *b);
+        }
     }
 
     #[test]
