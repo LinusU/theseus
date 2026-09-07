@@ -88,18 +88,11 @@ fn is_index_bound(instr: &iced_x86::Instruction) -> Option<(iced_x86::Register, 
     Some((reg.full_register(), count))
 }
 
-/// Whether this instruction rewrites the register a recorded switch-index
-/// bound applies to. A bound only holds while the register keeps its bounded
-/// value; any write — `mov`, `pop`, `setcc`, an `and` with a non-contiguous
-/// mask — invalidates it. Dropping a bound is safe: the table scan falls back
-/// to stopping at the first entry that does not look like code. Instructions
-/// whose op0 is not a register (or that only read it) leave the bound intact.
-fn clears_index_bound(instr: &iced_x86::Instruction) -> bool {
-    use iced_x86::Mnemonic::*;
-    if instr.op0_kind() != iced_x86::OpKind::Register {
-        return false;
-    }
-    !matches!(instr.mnemonic(), Cmp | Test | Push | Bt | Bts | Btr | Btc)
+/// Whether the access a used-register entry describes can change the
+/// register's value — and so invalidates a recorded switch-index bound.
+fn is_reg_write(access: iced_x86::OpAccess) -> bool {
+    use iced_x86::OpAccess::*;
+    matches!(access, Write | CondWrite | ReadWrite | ReadCondWrite)
 }
 
 /// Data gathered while decoding one block.
@@ -113,6 +106,8 @@ pub struct BlockDecoder<'a, 'b> {
     found_tables: Vec<(u32, Option<usize>)>,
     // Index bounds seen so far in this block, keyed by register.
     index_bounds: HashMap<iced_x86::Register, usize>,
+    // Reused per instruction; reports every register an instruction touches.
+    info_factory: iced_x86::InstructionInfoFactory,
 }
 
 impl<'a, 'b> BlockDecoder<'a, 'b> {
@@ -122,6 +117,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             block_ip,
             found_tables: Default::default(),
             index_bounds: Default::default(),
+            info_factory: iced_x86::InstructionInfoFactory::new(),
         }
     }
 
@@ -132,6 +128,21 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             anyhow::bail!("suspicious block of 0");
         }
         Ok(())
+    }
+
+    /// Drop index bounds on every register this instruction might write. A
+    /// bound only holds while the register keeps its bounded value; any write
+    /// — `mov`, `pop`, `setcc`, an `and` with a non-contiguous mask, an `xchg`
+    /// or `xadd` second operand, or an implicit write like `mul`'s edx:eax,
+    /// `cdq`'s edx, `loop`'s ecx, or a string op's esi/edi — invalidates it.
+    /// Dropping a bound is safe: the table scan falls back to stopping at the
+    /// first entry that does not look like code.
+    fn clear_index_bounds(&mut self, instr: &iced_x86::Instruction) {
+        for used in self.info_factory.info(instr).used_registers() {
+            if is_reg_write(used.access()) {
+                self.index_bounds.remove(&used.register().full_register());
+            }
+        }
     }
 
     /// Check an instruction for validity, bailing if it is not.
@@ -201,9 +212,8 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
 
             if let Some((reg, count)) = is_index_bound(&instr) {
                 self.index_bounds.insert(reg, count);
-            } else if clears_index_bound(&instr) {
-                self.index_bounds
-                    .remove(&instr.op0_register().full_register());
+            } else if !self.index_bounds.is_empty() {
+                self.clear_index_bounds(&instr);
             }
 
             instrs.push(Instr {
@@ -349,17 +359,14 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
 mod tests {
     use crate::{Gather, Module, State, WindowsModule};
 
-    /// Gather a switch built as `cmp eax, 7` / <between> / `jmp [eax*4+table]`.
+    /// Gather `code` ending in an indirect `jmp [reg*4+table]` dispatch.
     /// The table holds three valid code entries, two invalid entries, then
     /// another valid one: a stale 8-entry bound reaches index 5 while a
     /// stop-at-first-invalid scan never does.
-    fn gather_switch(between: &[u8]) -> State {
+    fn gather_code(code: &[u8]) -> State {
         let mut state = State::default();
         state.mem.reserve("code".into(), 0x1000, 0x1000);
-        let mut code = vec![0x83, 0xf8, 0x07]; // cmp eax, 7
-        code.extend_from_slice(between);
-        code.extend_from_slice(&[0xff, 0x24, 0x85, 0x00, 0x18, 0x00, 0x00]);
-        state.mem.write_bytes(0x1000, &code);
+        state.mem.write_bytes(0x1000, code);
         state.mem.write(0x1100, 0xc3u8); // ret
         state.mem.write(0x1200, 0xc3u8); // ret
         for (i, target) in [
@@ -379,6 +386,14 @@ mod tests {
         state
     }
 
+    /// Gather a switch built as `cmp eax, 7` / <between> / `jmp [eax*4+table]`.
+    fn gather_switch(between: &[u8]) -> State {
+        let mut code = vec![0x83, 0xf8, 0x07]; // cmp eax, 7
+        code.extend_from_slice(between);
+        code.extend_from_slice(&[0xff, 0x24, 0x85, 0x00, 0x18, 0x00, 0x00]);
+        gather_code(&code)
+    }
+
     #[test]
     fn index_bound_survives_to_the_switch_dispatch() {
         let state = gather_switch(&[0x90]); // nop keeps the bound
@@ -387,8 +402,39 @@ mod tests {
     }
 
     #[test]
+    fn index_bound_survives_an_unrelated_register_write() {
+        let state = gather_switch(&[0xb9, 0x00, 0x00, 0x00, 0x00]); // mov ecx, 0
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(state.blocks.contains_key(&0x1200));
+    }
+
+    #[test]
     fn index_bound_is_dropped_when_the_register_is_rewritten() {
         let state = gather_switch(&[0x8b, 0x03]); // mov eax, [ebx]
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(!state.blocks.contains_key(&0x1200));
+    }
+
+    #[test]
+    fn index_bound_is_dropped_by_a_second_operand_write() {
+        // cmp ecx, 7; xchg ecx, ebx; jmp [ecx*4+table]
+        let state = gather_code(&[
+            0x83, 0xf9, 0x07, // cmp ecx, 7
+            0x87, 0xd9, // xchg ecx, ebx
+            0xff, 0x24, 0x8d, 0x00, 0x18, 0x00, 0x00, // jmp [ecx*4+0x1800]
+        ]);
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(!state.blocks.contains_key(&0x1200));
+    }
+
+    #[test]
+    fn index_bound_is_dropped_by_an_implicit_register_write() {
+        // cmp edx, 7; cdq (writes edx:eax); jmp [edx*4+table]
+        let state = gather_code(&[
+            0x83, 0xfa, 0x07, // cmp edx, 7
+            0x99, // cdq
+            0xff, 0x24, 0x95, 0x00, 0x18, 0x00, 0x00, // jmp [edx*4+0x1800]
+        ]);
         assert!(state.blocks.contains_key(&0x1100));
         assert!(!state.blocks.contains_key(&0x1200));
     }
