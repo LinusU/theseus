@@ -63,7 +63,7 @@ pub fn get_reg(r: iced_x86::Register) -> String {
         {
             format!("ctx.cpu.xmm.{reg}", reg = reg_name(r))
         }
-        r => todo!("{r:?}"),
+        r => panic!("unhandled register in get_reg: {r:?}"),
     }
 }
 
@@ -120,7 +120,7 @@ pub fn set_reg(r: iced_x86::Register, expr: String) -> String {
         {
             format!("ctx.cpu.xmm.{reg} = {expr};", reg = reg_name(r))
         }
-        r => todo!("{r:?}"),
+        r => panic!("unhandled register in set_reg: {r:?}"),
     }
 }
 
@@ -135,7 +135,7 @@ impl<'a> CodeGen<'a> {
                 CS | DS | ES | GS | SS => {}
                 FS => expr.push("ctx.cpu.regs.fs_base".to_string()),
                 None => {}
-                r => todo!("{r:?} in {instr}"),
+                r => panic!("unhandled memory segment in gen_addr_offset: {r:?} in {instr}"),
             }
         }
         match instr.memory_base() {
@@ -230,7 +230,7 @@ pub fn reg_size(r: iced_x86::Register) -> usize {
         EAX | EBX | ECX | EDX | ESI | EDI | ESP | EBP => 32,
         MM0 | MM1 | MM2 | MM3 | MM4 | MM5 | MM6 | MM7 => 64,
         XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 => 128,
-        r => todo!("{r:?}"),
+        r => panic!("unhandled register in reg_size: {r:?}"),
     }
 }
 
@@ -250,7 +250,7 @@ pub fn mem_size(instr: &iced_x86::Instruction) -> usize {
         | Packed64_Int32 => 64,
         DwordOffset => 32, // e.g. `call dword ptr [...]`
         s if format!("{s:?}").starts_with("Packed128") => 128,
-        s => todo!("{s:?}"),
+        s => panic!("unhandled memory size in mem_size: {s:?}"),
     }
 }
 
