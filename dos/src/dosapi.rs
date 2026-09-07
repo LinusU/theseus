@@ -12,6 +12,40 @@ pub struct File {
     ofs: u32,
 }
 
+impl File {
+    /// Copy up to `len` bytes at the current position into guest memory,
+    /// advancing the position and returning the byte count copied. `None`
+    /// means the requested guest range is not writable.
+    fn read_into(&mut self, memory: &mut runtime::Memory, addr: u32, len: u32) -> Option<u32> {
+        // A seek may have moved the position past the end; that is EOF.
+        let avail = self.buf.len().saturating_sub(self.ofs as usize);
+        let n = (len as usize).min(avail);
+        if n != 0 {
+            let end = (addr as usize).checked_add(n)?;
+            let dst = memory.bytes.get_mut(addr as usize..end)?;
+            let ofs = self.ofs as usize;
+            dst.copy_from_slice(&self.buf[ofs..ofs + n]);
+        }
+        self.ofs = self.ofs.wrapping_add(n as u32);
+        Some(n as u32)
+    }
+}
+
+/// Handles index the file table directly. A `None` slot was closed and is
+/// handed out again by the next open, matching DOS's lowest-free rule.
+fn alloc_file_handle(files: &mut Vec<Option<File>>) -> Option<usize> {
+    if let Some(slot) = files.iter().position(Option::is_none) {
+        return Some(slot);
+    }
+    // Once 255 slots are live a new open must fail rather than wrap the
+    // handle index onto an already-open file.
+    if files.len() >= 0xff {
+        return None;
+    }
+    files.push(None);
+    Some(files.len() - 1)
+}
+
 macro_rules! trace {
     ($func:expr, $($arg:expr),*) => {
         {
@@ -91,16 +125,12 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             };
-            if state.files.len() >= 0xff {
-                // Handles index `files` directly; once 255 are live a new
-                // open must fail rather than wrap the index onto an
-                // already-open file.
+            let Some(handle) = alloc_file_handle(&mut state.files) else {
                 ctx.cpu.regs.set_ax(/* too many open files */ 4);
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
-            }
-            let handle = state.files.len();
-            state.files.push(File { buf, ofs: 0 });
+            };
+            state.files[handle] = Some(File { buf, ofs: 0 });
             ctx.cpu.regs.set_ax(handle as u16);
             ctx.cpu.flags.remove(runtime::Flags::CF);
         }
@@ -109,13 +139,44 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             let handle = ctx.cpu.regs.get_bx();
             trace!("handle_delete", handle);
             let mut state = state();
-            if state.files.get_mut(handle as usize).is_none() {
+            let Some(slot) = state.files.get_mut(handle as usize) else {
+                ctx.cpu.regs.set_ax(6); // invalid handle
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
+            if slot.is_none() {
                 ctx.cpu.regs.set_ax(6); // invalid handle
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             }
-            log::warn!("TODO: close file");
+            // Free the slot so a later open reuses it, per DOS's
+            // lowest-free-handle rule.
+            *slot = None;
             ctx.cpu.regs.set_al(1); // docs say AX is clobbered, match dosbox for now
+            ctx.cpu.flags.remove(runtime::Flags::CF); // no error
+        }
+        // read from file
+        0x3f => {
+            let handle = ctx.cpu.regs.get_bx();
+            let len = ctx.cpu.regs.get_cx();
+            let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_dx());
+            trace!("handle_read", handle, len, addr);
+            let mut state = state();
+            let Some(file) = state
+                .files
+                .get_mut(handle as usize)
+                .and_then(Option::as_mut)
+            else {
+                ctx.cpu.regs.set_ax(6); // invalid handle
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
+            let Some(n) = file.read_into(&mut ctx.memory, addr, len as u32) else {
+                ctx.cpu.regs.set_ax(5); // access denied
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
+            ctx.cpu.regs.set_ax(n as u16); // bytes read
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
         }
         // write to file
@@ -150,7 +211,11 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("handle_seek", handle, origin, offset);
 
             let mut state = state();
-            let Some(file) = state.files.get_mut(handle as usize) else {
+            let Some(file) = state
+                .files
+                .get_mut(handle as usize)
+                .and_then(Option::as_mut)
+            else {
                 ctx.cpu.regs.set_ax(6); // invalid handle
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
@@ -302,4 +367,65 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
         _ => log::error!("TODO: dos int 21h ({func:02x})"),
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::Memory;
+
+    #[test]
+    fn file_read_into_copies_and_advances_the_position() {
+        let mut memory = Memory::leak_new(0x4000);
+        let mut file = File {
+            buf: b"hello world".to_vec(),
+            ofs: 0,
+        };
+
+        // A partial read copies what fits and moves the position.
+        assert_eq!(file.read_into(&mut memory, 0x1000, 5), Some(5));
+        assert_eq!(&memory.bytes[0x1000..0x1005], b"hello");
+        assert_eq!(file.ofs, 5);
+
+        // A read past the end is truncated to the remaining bytes.
+        assert_eq!(file.read_into(&mut memory, 0x2000, 100), Some(6));
+        assert_eq!(&memory.bytes[0x2000..0x2006], b" world");
+        assert_eq!(file.ofs, 11);
+
+        // At EOF a read reports zero bytes without touching memory.
+        assert_eq!(file.read_into(&mut memory, 0xffff_0000, 4), Some(0));
+        assert_eq!(file.ofs, 11);
+    }
+
+    #[test]
+    fn file_read_into_rejects_an_unwritable_range() {
+        let mut memory = Memory::leak_new(0x4000);
+        let mut file = File {
+            buf: b"data".to_vec(),
+            ofs: 0,
+        };
+        // All 4 available bytes would land past the end of emulated memory.
+        assert_eq!(file.read_into(&mut memory, 0x3ffe, 0x20), None);
+        assert_eq!(file.ofs, 0);
+        assert_eq!(file.read_into(&mut memory, u32::MAX, 4), None);
+    }
+
+    #[test]
+    fn alloc_file_handle_reuses_the_lowest_free_slot() {
+        let mut files: Vec<Option<File>> = vec![];
+        files.resize_with(5, || Some(File::default()));
+
+        // The first open gets the lowest slot past the std handles.
+        assert_eq!(alloc_file_handle(&mut files), Some(5));
+        files[5] = Some(File::default());
+
+        // A closed slot is handed out again before the table grows.
+        files[2] = None;
+        assert_eq!(alloc_file_handle(&mut files), Some(2));
+
+        // A full table refuses new handles.
+        let mut full: Vec<Option<File>> = vec![];
+        full.resize_with(0xff, || Some(File::default()));
+        assert_eq!(alloc_file_handle(&mut full), None);
+    }
 }

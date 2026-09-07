@@ -204,15 +204,15 @@ pub struct State {
     pit: PIT,
     vga: Option<VGA>,
     pub read_file: Option<ReadFileFn>,
-    files: Vec<dosapi::File>,
+    files: Vec<Option<dosapi::File>>,
 }
 
 impl State {
     fn new() -> Self {
-        let mut files: Vec<dosapi::File> = vec![];
+        let mut files: Vec<Option<dosapi::File>> = vec![];
         // Initial files: stdin, stdout, stderr, stdaux, stdprn; file handles are indexes into this vector
         // TODO: the JFT belongs in the PSP I guess.
-        files.resize_with(5, Default::default);
+        files.resize_with(5, || Some(Default::default()));
         State {
             psp_segment: 0,
             pit: PIT::default(),
