@@ -67,7 +67,11 @@ impl IPQueue {
         // if ofs > 0x8000 {
         //     panic!();
         // }
-        self.low_confidence.remove(&ip.to_addr());
+        let addr = ip.to_addr();
+        // A real control-flow edge upgrades provenance: the address is no
+        // longer a stale scan guess and any prior invalidation is overridden.
+        self.low_confidence.remove(&addr);
+        self.invalid.remove(&addr);
         self.queue.push_back(ip);
     }
 
@@ -311,6 +315,7 @@ impl<'a> Traverse<'a> {
         for addr in stale {
             log::info!("evicting mid-instruction scan guess {addr:08x}");
             self.blocks.remove(&addr);
+            self.queue.low_confidence.remove(&addr);
             self.queue.invalid.insert(addr);
         }
     }
@@ -466,5 +471,22 @@ impl<'a> Traverse<'a> {
             });
         }
         report
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enqueue_overrides_invalid_scan_guess() {
+        // A low-confidence block evicted mid-instruction is marked invalid,
+        // but a real control-flow edge to the same address should re-queue it.
+        let mut queue = IPQueue::default();
+        queue.invalid.insert(0x1102);
+        queue.enqueue(IP::Flat(0x1102));
+        assert!(queue.low_confidence.is_empty());
+        assert!(!queue.invalid.contains(&0x1102));
+        assert_eq!(queue.pop(&BTreeMap::new()), Some(IP::Flat(0x1102)));
     }
 }
