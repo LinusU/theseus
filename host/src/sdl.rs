@@ -353,16 +353,18 @@ impl Surface {
     /// Write the last uploaded frame to `path` as a binary PPM.
     fn dump(&self, path: &str) {
         use std::io::Write;
-        let need = self.height.saturating_mul(self.last_stride) as usize;
-        if self.last_stride < self.width.saturating_mul(4) || self.last.len() < need {
+        // Widen to usize before multiplying: u32 row arithmetic overflows
+        // for very large surfaces.
+        let need = self.height as usize * self.last_stride as usize;
+        if (self.last_stride as usize) < self.width as usize * 4 || self.last.len() < need {
             // Rows are 4-byte pixels; a narrower stride (or nothing
             // presented yet) cannot produce a valid dump.
             return;
         }
         let mut out = Vec::with_capacity(self.width as usize * self.height as usize * 3);
         out.extend_from_slice(format!("P6\n{} {}\n255\n", self.width, self.height).as_bytes());
-        for y in 0..self.height {
-            let row = &self.last[(y * self.last_stride) as usize..][..self.width as usize * 4];
+        for y in 0..self.height as usize {
+            let row = &self.last[y * self.last_stride as usize..][..self.width as usize * 4];
             for px in row.chunks_exact(4) {
                 out.extend_from_slice(&px[..3]);
             }
@@ -708,7 +710,9 @@ impl Host {
         // comma-separated list of hex VK_* codes, THESEUS_INJECT_AT_MS the
         // delay before the first press; keys are tapped 300ms apart.
         static INJECT: std::sync::OnceLock<Option<(Vec<u8>, u32)>> = std::sync::OnceLock::new();
-        static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        // u16 like the other injectors: a u8 wraps (or overflows in debug
+        // builds) past 255 phases, replaying a long vkey list forever.
+        static PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
         if let Some((vkeys, at_ms)) = INJECT.get_or_init(|| {
             let vkeys = std::env::var("THESEUS_INJECT_VKEY").ok()?;
             let vkeys = vkeys
@@ -728,7 +732,7 @@ impl Host {
             if key < vkeys.len() {
                 let at = at_ms + key as u32 * 300 + if down { 0 } else { 100 };
                 if self.time() >= at {
-                    PHASE.store(phase as u8 + 1, Relaxed);
+                    PHASE.store(phase as u16 + 1, Relaxed);
                     let msg = inject_vkey(vkeys[key])?;
                     return Some(if down {
                         host::Message::KeyDown(msg)
