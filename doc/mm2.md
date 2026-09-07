@@ -126,6 +126,9 @@ Debug environment knobs, all optional:
   640x480 blit source.
 - `THESEUS_TEX_DUMP=<dir>` — write each bound 16bpp texture once as a PPM.
 - `THESEUS_NO_ZTEST=1` — disable the z-test for depth debugging.
+- `THESEUS_LINE_DEBUG=1` — log every rasterized line segment's endpoints and
+  the render-state gates (z-test, alpha test, blend) for line-primitive
+  debugging.
 - `THESEUS_INJECT_VKEY` / `THESEUS_INJECT_AT_MS` — comma-separated hex VK
   codes tapped 300ms apart starting at the given millisecond. The harness
   maps the usual menu keys plus letters A–Z and digits 0–9 to PC set-1

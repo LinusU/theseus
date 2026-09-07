@@ -2438,6 +2438,37 @@ fn sample_texel_linear(
     Some((pack_565(r, g, b), a))
 }
 
+/// Clip the parameter range of segment (ax,ay)->(bx,by) to the
+/// `[0, xmax] x [0, ymax]` rect (Liang-Barsky), returning the visible
+/// `(t0, t1)` or `None` when the segment misses the rect entirely.
+fn clip_segment_t(ax: f32, ay: f32, bx: f32, by: f32, xmax: f32, ymax: f32) -> Option<(f32, f32)> {
+    let dx = bx - ax;
+    let dy = by - ay;
+    let mut t0 = 0.0f32;
+    let mut t1 = 1.0f32;
+    for (p, q) in [(-dx, ax), (dx, xmax - ax), (-dy, ay), (dy, ymax - ay)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let r = q / p;
+        if p < 0.0 {
+            if r > t1 {
+                return None;
+            }
+            t0 = t0.max(r);
+        } else {
+            if r < t0 {
+                return None;
+            }
+            t1 = t1.min(r);
+        }
+    }
+    Some((t0, t1))
+}
+
 fn rasterize(
     ctx: &mut Context,
     this: u32,
@@ -2448,8 +2479,9 @@ fn rasterize(
     lpwIndices: u32,
     dwIndexCount: u32,
 ) {
-    // Only the FVF and primitive types the race loop actually uses.
-    if !(4..=6).contains(&dptPrimitiveType) || dwVertexTypeDesc != 0x1c4 {
+    // Only the FVF and primitive types the race loop actually uses:
+    // pre-transformed XYZRHW geometry as lines or triangles.
+    if !(2..=6).contains(&dptPrimitiveType) || dwVertexTypeDesc != 0x1c4 {
         log::debug!(
             "rasterize: skip prim={} fvf={:#x} verts={}",
             dptPrimitiveType,
@@ -2710,7 +2742,8 @@ fn rasterize(
         );
         return;
     }
-    if t.rt_addr == 0 || dwVertexCount < 3 {
+    let min_verts = if dptPrimitiveType >= 4 { 3 } else { 2 };
+    if t.rt_addr == 0 || dwVertexCount < min_verts {
         log::debug!(
             "rasterize: skip prim={} verts={} rt_addr={:#x}",
             dptPrimitiveType,
@@ -2747,7 +2780,7 @@ fn rasterize(
     // then decompose it into independent triangles per D3DPRIMITIVETYPE.
     // The index buffer is a raw guest pointer: skip the draw when its range
     // falls outside emulated memory rather than panicking the host.
-    let verts: Vec<u32> = if lpwIndices != 0 && dwIndexCount >= 3 {
+    let verts: Vec<u32> = if lpwIndices != 0 && dwIndexCount >= 2 {
         let Some(index_bytes) = dwIndexCount.checked_mul(2) else {
             return;
         };
@@ -2792,9 +2825,22 @@ fn rasterize(
         return;
     }
     let mut triangles: Vec<[u32; 3]> = Vec::new();
+    let mut segments: Vec<[u32; 2]> = Vec::new();
     let mut pixels_written = 0u32;
     let mut last_color = 0u16;
     match dptPrimitiveType {
+        // D3DPT_LINELIST: consecutive vertex pairs are independent segments.
+        2 => {
+            for seg in verts.chunks_exact(2) {
+                segments.push([seg[0], seg[1]]);
+            }
+        }
+        // D3DPT_LINESTRIP: consecutive vertices form a connected chain.
+        3 => {
+            for seg in verts.windows(2) {
+                segments.push([seg[0], seg[1]]);
+            }
+        }
         // D3DPT_TRIANGLELIST: each consecutive triple is one triangle.
         4 => {
             for tri in verts.chunks_exact(3) {
@@ -2822,6 +2868,7 @@ fn rasterize(
     }
 
     let tri_count = triangles.len();
+    let seg_count = segments.len();
     for tri in triangles {
         let a = read_vertex(&ctx.memory, lpvVertices + tri[0] * vsize);
         let b = read_vertex(&ctx.memory, lpvVertices + tri[1] * vsize);
@@ -3146,11 +3193,134 @@ fn rasterize(
             }
         }
     }
+    // Lines draw as one-pixel spans: walk each segment at pixel granularity
+    // with the same shading pipeline the triangle path applies.
+    let xmax = t.rt_width.saturating_sub(1) as f32;
+    let ymax = t.rt_height.saturating_sub(1) as f32;
+    for [ia, ib] in segments {
+        let a = read_vertex(&ctx.memory, lpvVertices + ia * vsize);
+        let b = read_vertex(&ctx.memory, lpvVertices + ib * vsize);
+        let clipped = clip_segment_t(a.x, a.y, b.x, b.y, xmax, ymax);
+        if std::env::var("THESEUS_LINE_DEBUG").is_ok() {
+            log::debug!(
+                "line seg: ({},{},z={} w={} d={:#x}) -> ({},{},z={} w={} d={:#x}) clip={:?} zen={} zw={} zf={} zbuf={:#x} atest={} afunc={} aref={} blend={} sb={} db={}",
+                a.x, a.y, a.z, a.w, a.diffuse, b.x, b.y, b.z, b.w, b.diffuse, clipped,
+                t.zenable, t.zwrite, t.zfunc, zbuf_addr, t.alpha_test, t.alpha_func,
+                t.alpha_ref, t.alpha_blend, t.src_blend, t.dst_blend,
+            );
+        }
+        let Some((t0, t1)) = clipped else {
+            continue;
+        };
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let span = ((dx * (t1 - t0)).abs()).max((dy * (t1 - t0)).abs());
+        if !span.is_finite() {
+            continue;
+        }
+        // One sample per pixel along the longer axis; the cap keeps a
+        // degenerate coordinate from turning into an unbounded loop.
+        let steps = (span.ceil() as i64).clamp(0, 1 << 16);
+        for i in 0..=steps {
+            let ti = if steps == 0 {
+                t0
+            } else {
+                t0 + (t1 - t0) * (i as f32 / steps as f32)
+            };
+            let px = (a.x + dx * ti).round() as i32;
+            let py = (a.y + dy * ti).round() as i32;
+            if !(0..t.rt_width as i32).contains(&px) || !(0..t.rt_height as i32).contains(&py) {
+                continue;
+            }
+            let one = 1.0 - ti;
+            let w_sum = one * a.w + ti * b.w;
+            let persp = t.tex_addr != 0 && w_sum != 0.0;
+            let u = if persp {
+                (one * a.u_w + ti * b.u_w) / w_sum
+            } else {
+                one * a.u + ti * b.u
+            };
+            let v = if persp {
+                (one * a.v_w + ti * b.v_w) / w_sum
+            } else {
+                one * a.v + ti * b.v
+            };
+
+            let diffuse = if t.flat_shade {
+                a.diffuse
+            } else {
+                let ch = |shift: u32| {
+                    (one * ((a.diffuse >> shift) & 0xff) as f32
+                        + ti * ((b.diffuse >> shift) & 0xff) as f32) as u32
+                };
+                (ch(24).min(255) << 24)
+                    | (ch(16).min(255) << 16)
+                    | (ch(8).min(255) << 8)
+                    | ch(0).min(255)
+            };
+            let diff_a = ((diffuse >> 24) & 0xff) as f32;
+            let (mut color, sa) = if t.tex_addr != 0 {
+                // A one-pixel line has no cross direction for a mip
+                // derivative, so it samples the base level; the configured
+                // magnification filter picks nearest vs linear.
+                let (taddr, tw, th) = (t.tex_addr, t.tex_width, t.tex_height);
+                let (c, ta) = if t.mag_filter == 2 {
+                    sample_texel_linear(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
+                } else {
+                    sample_texel(&ctx.memory, taddr, tw, th, u, v, t.tex_fmt)
+                }
+                .unwrap_or((argb_to_565(0xff_00_00_00), 255));
+                (c, ta as f32 * diff_a / 255.0)
+            } else {
+                let r = ((diffuse >> 16) & 0xff).min(255);
+                let g = ((diffuse >> 8) & 0xff).min(255);
+                let bl = (diffuse & 0xff).min(255);
+                (
+                    ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (bl as u16 >> 3),
+                    diff_a,
+                )
+            };
+
+            if t.fog_linear && w_sum != 0.0 {
+                let dist = 1.0 / w_sum;
+                let f = ((t.fog_end - dist) / (t.fog_end - t.fog_start)).clamp(0.0, 1.0);
+                color = fog_565(color, t.fog_color, f);
+            }
+
+            if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u16, t.alpha_ref as u16) {
+                continue;
+            }
+
+            if zbuf_addr != 0 && (px as u32) < t.zbuf_width && (py as u32) < t.zbuf_height {
+                let z = z_to_u16(one * a.z + ti * b.z);
+                let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
+                if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
+                    continue;
+                }
+                if t.zwrite != 0 {
+                    ctx.memory.write::<u16>(zaddr, z);
+                }
+            }
+
+            let pixel_addr = t.rt_addr + py as u32 * stride + px as u32 * 2;
+            let color = if t.alpha_blend != 0 {
+                let dst = ctx.memory.read::<u16>(pixel_addr);
+                blend_565(dst, color, sa, t.src_blend, t.dst_blend)
+            } else {
+                color
+            };
+            ctx.memory.write::<u16>(pixel_addr, color);
+            pixels_written += 1;
+            last_color = color;
+        }
+    }
+
     log::debug!(
-        "rasterize: prim={} verts={} tris={} wrote {} px rt_surf={:#x} rt={:#x} {}x{} tex={:#x} color={:#06x}",
+        "rasterize: prim={} verts={} tris={} segs={} wrote {} px rt_surf={:#x} rt={:#x} {}x{} tex={:#x} color={:#06x}",
         dptPrimitiveType,
         dwVertexCount,
         tri_count,
+        seg_count,
         pixels_written,
         t.rt_surface,
         t.rt_addr,
@@ -3178,6 +3348,34 @@ mod tests {
         assert_eq!(std::mem::size_of::<D3DVIEWPORT7>(), 24);
         assert_eq!(std::mem::size_of::<D3DMATERIAL7>(), 68);
         assert_eq!(std::mem::size_of::<D3DCLIPSTATUS>(), 32);
+    }
+
+    #[test]
+    fn clip_segment_t_bounds_the_visible_range() {
+        // Fully inside horizontal segment keeps the whole range.
+        assert_eq!(
+            clip_segment_t(1.0, 5.0, 9.0, 5.0, 19.0, 19.0),
+            Some((0.0, 1.0))
+        );
+        // Entering from the left clips t0 to where x reaches the left edge.
+        assert_eq!(
+            clip_segment_t(-10.0, 5.0, 10.0, 5.0, 19.0, 19.0),
+            Some((0.5, 1.0))
+        );
+        // Exiting past the right edge clips t1.
+        assert_eq!(
+            clip_segment_t(10.0, 5.0, 30.0, 5.0, 19.0, 19.0),
+            Some((0.0, 0.45))
+        );
+        // Entirely outside on one side is rejected.
+        assert_eq!(clip_segment_t(-5.0, 1.0, -1.0, 1.0, 19.0, 19.0), None);
+        // A segment parallel to an edge but outside it is rejected.
+        assert_eq!(clip_segment_t(1.0, -3.0, 9.0, -3.0, 19.0, 19.0), None);
+        // Diagonal crossing two edges clips both ends.
+        assert_eq!(
+            clip_segment_t(-10.0, -10.0, 30.0, 30.0, 19.0, 19.0),
+            Some((0.25, 0.725))
+        );
     }
 
     #[test]
