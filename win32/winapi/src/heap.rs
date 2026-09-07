@@ -77,8 +77,17 @@ impl FreeList {
         // header the block itself must start at an offset of 4 mod 8;
         // sliding the first block forward sets that alignment, and every
         // later block keeps it because block sizes are rounded up to 8.
-        let block = u32::try_from(((addr as u64) + 4).next_multiple_of(8) - 4).unwrap_or(u32::MAX);
-        let usable = size.saturating_sub(block.wrapping_sub(addr));
+        let Ok(block) = u32::try_from(((addr as u64) + 4).next_multiple_of(8) - 4) else {
+            // A base so high the aligned first block leaves the 32-bit
+            // space: no usable room, and no node for `alloc` to overflow on.
+            return FreeList {
+                nodes: vec![],
+                live: Default::default(),
+            };
+        };
+        // The free range also stops at the top of the 32-bit space so a
+        // fully-consumed tail can never wrap `alloc`'s `addr += size`.
+        let usable = size.saturating_sub(block - addr).min(u32::MAX - block);
         FreeList {
             nodes: vec![FreeNode {
                 addr: block,
@@ -251,5 +260,21 @@ mod tests {
         // Both blocks merged with each other and the free tail.
         assert_eq!(list.nodes.len(), 1);
         assert_eq!(list.nodes[0].size, 0x3fc);
+    }
+
+    #[test]
+    fn heaps_at_the_top_of_the_address_space_cannot_wrap() {
+        let mut mem = Memory::leak_new(0x10_000);
+        // A base whose aligned first block leaves the 32-bit space entirely.
+        let mut list = FreeList::new(0xFFFF_FFFF, 0x1000);
+        assert_eq!(list.alloc(&mut mem, 8), None);
+        // A base near the top: the free tail is clamped so consuming it
+        // cannot overflow the next node address.
+        let mut list = FreeList::new(0xFFFF_FF00, 0x2000);
+        assert!(list.nodes[0].size < 0x100);
+        while list.alloc(&mut mem, 8).is_some() {}
+        // The clamped tail is exhausted: the next request cannot wrap the
+        // node address because the whole range ends at u32::MAX.
+        assert_eq!(list.alloc(&mut mem, 8), None);
     }
 }
