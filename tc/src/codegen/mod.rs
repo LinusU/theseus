@@ -430,7 +430,13 @@ impl<'a> CodeGen<'a> {
                     break;
                 }
 
-                let last = instrs.last().unwrap();
+                let Some(last) = instrs.last() else {
+                    // The gather phase rejects empty blocks before they get
+                    // here; degrade defensively rather than panicking.
+                    self.line(format!("panic!(\"empty block {}\")", block.name()));
+                    self.line("}\n");
+                    return;
+                };
                 if last.iced.flow_control() == iced_x86::FlowControl::Next
                     || (last.iced.mnemonic() == iced_x86::Mnemonic::Call && last.hint.is_some())
                 {

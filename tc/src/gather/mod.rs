@@ -164,6 +164,18 @@ impl<'a> Traverse<'a> {
                 EntryPoint::Range(r) => {
                     let mut ip = r.start;
                     while ip < r.end {
+                        // A range may overlap already-decoded code; skip past
+                        // an existing block rather than decoding it again.
+                        if let Some(next) = self.blocks.get(&ip.to_addr()).and_then(|b| {
+                            if let BlockType::Instrs(instrs) = &b.ty {
+                                instrs.last().map(|last| last.next_ip())
+                            } else {
+                                None
+                            }
+                        }) {
+                            ip = next;
+                            continue;
+                        }
                         let Ok(block) = self.decode_one(ip) else {
                             log::warn!("failed to decode range {r:#?} at {}", ip);
                             break;

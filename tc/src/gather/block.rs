@@ -242,6 +242,13 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             log::info!("jump table at {table:08x}: {n} entries");
         }
 
+        if instrs.is_empty() {
+            // The block start is already covered by another block, or the
+            // address has no decodable bytes; callers treat the error like
+            // any other undecodable address instead of storing an empty
+            // block that later unwraps would panic on.
+            anyhow::bail!("{block_ip} produced no instructions");
+        }
         Ok(instrs)
     }
 
