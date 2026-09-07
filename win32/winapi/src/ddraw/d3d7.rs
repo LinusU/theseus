@@ -2151,6 +2151,7 @@ const D3DRENDERSTATE_ALPHAREF: u32 = 24;
 const D3DRENDERSTATE_ALPHAFUNC: u32 = 25;
 const D3DRENDERSTATE_SHADEMODE: u32 = 9;
 const D3DRENDERSTATE_ALPHABLENDENABLE: u32 = 27;
+const D3DRENDERSTATE_FOGENABLE: u32 = 28;
 const D3DRENDERSTATE_FOGCOLOR: u32 = 34;
 const D3DRENDERSTATE_FOGSTART: u32 = 36;
 const D3DRENDERSTATE_FOGEND: u32 = 37;
@@ -2172,6 +2173,7 @@ const HANDLED_RENDER_STATES: &[u32] = &[
     D3DRENDERSTATE_ALPHAFUNC,
     D3DRENDERSTATE_SHADEMODE,
     D3DRENDERSTATE_ALPHABLENDENABLE,
+    D3DRENDERSTATE_FOGENABLE,
     D3DRENDERSTATE_FOGCOLOR,
     D3DRENDERSTATE_FOGSTART,
     D3DRENDERSTATE_FOGEND,
@@ -2557,13 +2559,16 @@ fn rasterize(
         let shade_mode = render_state(D3DRENDERSTATE_SHADEMODE);
         let flat_shade = shade_mode == D3DSHADE_FLAT;
 
-        // Linear fog.  FOGVERTEXMODE=3 selects linear; FOGSTART/FOGEND are
-        // stored as u32 bit patterns of an f32.
+        // Linear fog only when the app turns FOGENABLE on — the mode, color,
+        // and range can all be configured while fog stays off, and D3D7
+        // defaults FOGENABLE to 0.  FOGSTART/FOGEND are stored as u32 bit
+        // patterns of an f32.
+        let fog_enable = render_state(D3DRENDERSTATE_FOGENABLE);
         let fog_color = render_state(D3DRENDERSTATE_FOGCOLOR);
         let fog_start = f32::from_bits(render_state(D3DRENDERSTATE_FOGSTART));
         let fog_end = f32::from_bits(render_state(D3DRENDERSTATE_FOGEND));
         let fog_vertex_mode = render_state(D3DRENDERSTATE_FOGVERTEXMODE);
-        let fog_linear = fog_vertex_mode == D3DFOG_LINEAR && fog_start < fog_end;
+        let fog_linear = fog_enable != 0 && fog_vertex_mode == D3DFOG_LINEAR && fog_start < fog_end;
 
         let surfs = state().surf.borrow();
         let rt_surf = surfs.get(&rt_surface_key).cloned();
@@ -3204,9 +3209,27 @@ fn rasterize(
         if std::env::var("THESEUS_LINE_DEBUG").is_ok() {
             log::debug!(
                 "line seg: ({},{},z={} w={} d={:#x}) -> ({},{},z={} w={} d={:#x}) clip={:?} zen={} zw={} zf={} zbuf={:#x} atest={} afunc={} aref={} blend={} sb={} db={}",
-                a.x, a.y, a.z, a.w, a.diffuse, b.x, b.y, b.z, b.w, b.diffuse, clipped,
-                t.zenable, t.zwrite, t.zfunc, zbuf_addr, t.alpha_test, t.alpha_func,
-                t.alpha_ref, t.alpha_blend, t.src_blend, t.dst_blend,
+                a.x,
+                a.y,
+                a.z,
+                a.w,
+                a.diffuse,
+                b.x,
+                b.y,
+                b.z,
+                b.w,
+                b.diffuse,
+                clipped,
+                t.zenable,
+                t.zwrite,
+                t.zfunc,
+                zbuf_addr,
+                t.alpha_test,
+                t.alpha_func,
+                t.alpha_ref,
+                t.alpha_blend,
+                t.src_blend,
+                t.dst_blend,
             );
         }
         let Some((t0, t1)) = clipped else {
