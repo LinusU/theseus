@@ -420,6 +420,7 @@ impl<'a> Traverse<'a> {
         }
         let code = self.module.code_memory();
         let mut found = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for mapping in self.mem.mappings.vec() {
             if mapping.addr == 0 || mapping.addr == code.start {
                 continue;
@@ -428,7 +429,7 @@ impl<'a> Traverse<'a> {
             let data = self.mem.slice(mapping.addr, mapping.size);
             for window in data.windows(4) {
                 let value = u32::from_le_bytes(window.try_into().unwrap());
-                if code.contains(&value) {
+                if code.contains(&value) && seen.insert(value) {
                     found.push(value);
                 }
             }
@@ -477,6 +478,7 @@ impl<'a> Traverse<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WindowsModule;
 
     #[test]
     fn enqueue_overrides_invalid_scan_guess() {
@@ -488,5 +490,31 @@ mod tests {
         assert!(queue.low_confidence.is_empty());
         assert!(!queue.invalid.contains(&0x1102));
         assert_eq!(queue.pop(&BTreeMap::new()), Some(IP::Flat(0x1102)));
+    }
+
+    #[test]
+    fn scan_for_pointers_deduplicates_repeated_values() {
+        // Two windows may contain the same code pointer, or distinct pointers.
+        // The gatherer should only enqueue each distinct in-code target once.
+        let mut state = State::default();
+        state.mem.reserve("code".into(), 0x1000, 0x1000);
+        state.mem.reserve("data".into(), 0x2000, 0x100);
+        state.mem.write(0x2000, 0x1234u32);
+        state.mem.write(0x2004, 0x1234u32); // duplicate
+        state.mem.write(0x2008, 0x1238u32); // a different in-code address
+        state.module = Module::Windows(WindowsModule {
+            entry_point: 0x1010,
+            code_memory: 0x1000..0x2000,
+            ..Default::default()
+        });
+        let gather = Gather {
+            scan_memory: true,
+            ..Default::default()
+        };
+        let mut traverse = Traverse::new(&mut state, &gather);
+        traverse.scan_for_pointers();
+        assert_eq!(traverse.queue.candidates.len(), 2);
+        assert!(traverse.queue.candidates.contains(&0x1234));
+        assert!(traverse.queue.candidates.contains(&0x1238));
     }
 }
