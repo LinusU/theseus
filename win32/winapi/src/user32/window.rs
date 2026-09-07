@@ -581,10 +581,18 @@ pub fn DefWindowProcW(
                 return 0;
             };
             let pixel_count = (window.width * window.height) as usize;
+            // The pixel buffer size can be up to 1 GiB (MAX_WINDOW_DIM squared
+            // times four bytes), so the end address must not be computed in u32
+            // where it can wrap and either panic in debug builds or pass a
+            // bogus, wrapped range to the slice lookup in release.
+            let pixel_bytes = window.width as u64 * window.height as u64 * 4;
+            let Some(end) = (pixels as u64).checked_add(pixel_bytes) else {
+                return 0;
+            };
             let Some(buf) = ctx
                 .memory
                 .bytes
-                .get_mut(pixels as usize..(pixels + pixel_count as u32 * 4) as usize)
+                .get_mut(pixels as usize..end as usize)
             else {
                 return 0;
             };
@@ -1589,5 +1597,34 @@ mod tests {
         );
         assert!(hwnd.is_null());
         assert!(super::state().window.borrow().is_none());
+    }
+
+    #[test]
+    fn def_window_proc_erasebkgnd_rejects_high_pixel_buffer() {
+        let _guard = CLASS_LOCK.lock().unwrap();
+        let mut ctx = context();
+        ctx.memory[NAME_ADDR..][..10].copy_from_slice(b"TestClass\0");
+        write_wndclass(&mut ctx, WNDCLASS_ADDR, NAME_ADDR);
+        // hbrBackground at offset 0x1c; 5 is COLOR_WINDOW.
+        ctx.memory.write::<u32>(WNDCLASS_ADDR + 0x1c, 5);
+        assert_ne!(RegisterClassA(&mut ctx, Ptr::new(WNDCLASS_ADDR)), 0);
+
+        test_window(1, false);
+        let window = super::state().window.borrow().as_ref().unwrap().clone();
+        let mut w = window.borrow_mut();
+        w.width = 0x4000;
+        w.height = 0x4000;
+        // Place the backing buffer so that pixels + width*height*4 would
+        // overflow a u32; DefWindowProc must return 0 rather than panic.
+        w.pixels = Some(0xC000_0000);
+        drop(w);
+
+        assert_eq!(
+            DefWindowProcW(&mut ctx, HWND::from_raw(1), Ok(WM::ERASEBKGND), 0, 0),
+            0
+        );
+
+        super::state().window.borrow_mut().take();
+        assert!(UnregisterClassA(&mut ctx, Ptr::new(NAME_ADDR), 0));
     }
 }
