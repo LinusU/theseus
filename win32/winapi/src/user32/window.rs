@@ -360,6 +360,7 @@ pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
 
 const SW_HIDE: u32 = 0;
 const SW_MINIMIZE: u32 = 6;
+const SW_RESTORE: u32 = 9;
 
 #[win32_derive::dllexport]
 pub fn ShowWindow(
@@ -486,7 +487,7 @@ pub fn DefWindowProcW(
     ctx: &mut Context,
     hWnd: HWND,
     msg: Result<WM, u32>,
-    _wParam: u32,
+    wParam: u32,
     _lParam: u32,
 ) -> u32 {
     let msg = match msg {
@@ -498,6 +499,31 @@ pub fn DefWindowProcW(
     };
 
     match msg {
+        WM::SYSCOMMAND => {
+            // The command lives in the high nibble of wParam; the low bits
+            // are used internally or carry a mouse-origin marker.
+            match wParam & 0xfff0 {
+                // SC_MINIMIZE / SC_RESTORE: the default window procedure
+                // shows the window iconic/restored, which our model maps
+                // onto the same visibility state ShowWindow drives.
+                0xf020 => drop(ShowWindow(ctx, hWnd, SW_MINIMIZE)),
+                0xf120 => drop(ShowWindow(ctx, hWnd, SW_RESTORE)),
+                // SC_CLOSE: the default action is to send WM_CLOSE; the
+                // wndproc decides whether the program actually exits.
+                0xf060 => {
+                    use super::message::post_message;
+                    post_message(hWnd, WM::CLOSE as u32, 0, 0);
+                }
+                cmd => {
+                    log::debug!("DefWindowProc: unhandled system command {cmd:#x}")
+                }
+            }
+        }
+        WM::CLOSE => {
+            // A wndproc that forwards WM_CLOSE to DefWindowProc is asking
+            // for the default behavior: destroy the window.
+            DestroyWindow(ctx, hWnd);
+        }
         WM::PAINT => {
             // The default handler validates the update region; with no
             // BeginPaint/EndPaint from the wndproc, flush the guest pixels
