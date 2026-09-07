@@ -104,7 +104,10 @@ fn winmm_main(ctx: &mut Context) {
             if !timer.periodic {
                 lock.timers.remove(&id);
             } else if let Some(t) = lock.timers.get_mut(&id) {
-                t.next = now.saturating_add(t.period);
+                // Floor the period at 1ms: Windows clamps to the timer
+                // resolution, and an unclamped 0 here would reschedule the
+                // timer due-every-iteration and spin this thread.
+                t.next = now.saturating_add(t.period.max(1));
             }
             timers.push(timer);
         }
