@@ -130,7 +130,7 @@ pub fn GetObjectA(ctx: &mut Context, handle: HGDIOBJ, size: u32, lpOut: Ptr<BITM
     size
 }
 
-#[derive(Debug, win32_derive::ABIEnum)]
+#[derive(Debug, Copy, Clone, win32_derive::ABIEnum)]
 pub enum GetStockObjectArg {
     WHITE_BRUSH = 0,
     LTGRAY_BRUSH = 1,
@@ -153,36 +153,67 @@ pub enum GetStockObjectArg {
     DC_PEN = 19,
 }
 
+impl GetStockObjectArg {
+    /// The object a stock handle refers to. Stock objects are singletons —
+    /// this is only called the first time each kind is requested.
+    fn object(&self) -> Object {
+        use GetStockObjectArg::*;
+        let rgb = |r, g, b| Some(COLORREF::from_rgb(r, g, b));
+        match self {
+            WHITE_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
+            LTGRAY_BRUSH => Object::Brush(Brush(rgb(0xc0, 0xc0, 0xc0))),
+            GRAY_BRUSH => Object::Brush(Brush(rgb(0x80, 0x80, 0x80))),
+            DKGRAY_BRUSH => Object::Brush(Brush(rgb(0x40, 0x40, 0x40))),
+            BLACK_BRUSH => Object::Brush(Brush(rgb(0x00, 0x00, 0x00))),
+            NULL_BRUSH => Object::Brush(Brush(None)),
+            WHITE_PEN => Object::Pen(Pen(rgb(0xff, 0xff, 0xff))),
+            BLACK_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
+            NULL_PEN => Object::Pen(Pen(None)),
+            // The emulated font model does not distinguish stock faces; they
+            // all share the default metrics used by the text path.
+            OEM_FIXED_FONT | ANSI_FIXED_FONT | ANSI_VAR_FONT | SYSTEM_FONT
+            | DEVICE_DEFAULT_FONT | SYSTEM_FIXED_FONT | DEFAULT_GUI_FONT => {
+                Object::Font(Font::default())
+            }
+            // DC_BRUSH/DC_PEN are stock objects whose colors come from
+            // SetDCBrushColor/SetDCPenColor; neither is implemented, so report
+            // the documented defaults (white brush, black pen).
+            DC_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
+            DC_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
+            DEFAULT_PALETTE => Object::Palette(Palette),
+        }
+    }
+}
+
+impl crate::gdi32::State {
+    /// The shared stock-object handle for `kind`, creating its table entry
+    /// on first use. Windows returns the same handle from every
+    /// GetStockObject call, and a fresh DC's initial pen/brush/font are
+    /// these shared handles rather than new per-DC objects.
+    pub fn stock_object(&mut self, kind: GetStockObjectArg) -> HGDIOBJ {
+        if let Some(&handle) = self.stock.get(&(kind as u32)) {
+            return handle;
+        }
+        let handle = self.objects.add(kind.object());
+        self.stock.insert(kind as u32, handle);
+        handle
+    }
+
+    /// Whether `handle` names a stock object. Deleting a stock object is a
+    /// documented harmless no-op, so DeleteObject must not remove it — other
+    /// DCs may still have it selected.
+    pub fn is_stock_object(&self, handle: HGDIOBJ) -> bool {
+        self.stock.values().any(|&h| h == handle)
+    }
+}
+
 #[win32_derive::dllexport]
 pub fn GetStockObject(_ctx: &mut Context, i: u32) -> HGDIOBJ {
     let Ok(i) = GetStockObjectArg::try_from(i) else {
         log::warn!("GetStockObject({i}): unknown stock object type");
         return HGDIOBJ::null();
     };
-    use GetStockObjectArg::*;
-    let rgb = |r, g, b| Some(COLORREF::from_rgb(r, g, b));
-    let object = match i {
-        WHITE_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
-        LTGRAY_BRUSH => Object::Brush(Brush(rgb(0xc0, 0xc0, 0xc0))),
-        GRAY_BRUSH => Object::Brush(Brush(rgb(0x80, 0x80, 0x80))),
-        DKGRAY_BRUSH => Object::Brush(Brush(rgb(0x40, 0x40, 0x40))),
-        BLACK_BRUSH => Object::Brush(Brush(rgb(0x00, 0x00, 0x00))),
-        NULL_BRUSH => Object::Brush(Brush(None)),
-        WHITE_PEN => Object::Pen(Pen(rgb(0xff, 0xff, 0xff))),
-        BLACK_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
-        NULL_PEN => Object::Pen(Pen(None)),
-        // The emulated font model does not distinguish stock faces; they all
-        // share the default metrics used by the text path.
-        OEM_FIXED_FONT | ANSI_FIXED_FONT | ANSI_VAR_FONT | SYSTEM_FONT | DEVICE_DEFAULT_FONT
-        | SYSTEM_FIXED_FONT | DEFAULT_GUI_FONT => Object::Font(Font::default()),
-        // DC_BRUSH/DC_PEN are stock objects whose colors come from
-        // SetDCBrushColor/SetDCPenColor; neither is implemented, so report the
-        // documented defaults (white brush, black pen).
-        DC_BRUSH => Object::Brush(Brush(rgb(0xff, 0xff, 0xff))),
-        DC_PEN => Object::Pen(Pen(rgb(0x00, 0x00, 0x00))),
-        DEFAULT_PALETTE => Object::Palette(Palette),
-    };
-    gdi32::lock().objects.add(object)
+    gdi32::lock().stock_object(i)
 }
 
 #[win32_derive::dllexport]
@@ -287,6 +318,47 @@ mod tests {
         ] {
             assert!(!GetStockObject(&mut ctx, i as u32).is_null());
         }
+    }
+
+    #[test]
+    fn get_stock_object_returns_the_same_handle() {
+        let mut ctx = context();
+        // Stock objects are singletons: repeated requests share one handle
+        // and one table entry instead of growing the object table per call.
+        let pen = GetStockObject(&mut ctx, GetStockObjectArg::BLACK_PEN as u32);
+        assert_eq!(
+            pen,
+            GetStockObject(&mut ctx, GetStockObjectArg::BLACK_PEN as u32)
+        );
+        assert_ne!(
+            pen,
+            GetStockObject(&mut ctx, GetStockObjectArg::WHITE_PEN as u32)
+        );
+    }
+
+    #[test]
+    fn fresh_dcs_select_the_shared_stock_objects() {
+        let mut ctx = context();
+        // The initial pen/brush/font handles are the stock objects, so a
+        // create/release cycle adds no per-DC objects to the table.
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x3000));
+        let (pen, brush, font) = {
+            let state = gdi32::lock();
+            let dc = state.dcs.get(hdc).unwrap();
+            (dc.pen.0, dc.brush.0, dc.font.0)
+        };
+        assert_eq!(
+            pen,
+            GetStockObject(&mut ctx, GetStockObjectArg::BLACK_PEN as u32)
+        );
+        assert_eq!(
+            brush,
+            GetStockObject(&mut ctx, GetStockObjectArg::WHITE_BRUSH as u32)
+        );
+        assert_eq!(
+            font,
+            GetStockObject(&mut ctx, GetStockObjectArg::SYSTEM_FONT as u32)
+        );
     }
 
     #[test]

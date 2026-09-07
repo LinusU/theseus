@@ -948,7 +948,7 @@ pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
 
     let mut lock = gdi32::lock();
     let (hbitmap, bitmap) = lock.new_bitmap_handle(bitmap);
-    let dc = DC::new(hbitmap, bitmap, &mut lock.objects);
+    let dc = DC::new(hbitmap, bitmap, &mut lock);
     // dc.hwnd = Some(hWnd);
     lock.dcs.add(dc)
 }

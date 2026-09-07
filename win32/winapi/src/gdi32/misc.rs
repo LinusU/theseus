@@ -8,6 +8,11 @@ pub type HGDIOBJ = u32;
 pub fn DeleteObject(ctx: &mut Context, ho: HGDIOBJ) -> bool {
     let mut state = crate::gdi32::lock();
     let handle = HANDLE::from_raw(ho);
+    // Deleting a stock object is a documented harmless no-op; the shared
+    // handle must survive because other DCs may still have it selected.
+    if state.is_stock_object(handle) {
+        return true;
+    }
     // Deleting an object that is still selected into a DC fails.
     let selected = state.dcs.iter().any(|(_, dc)| {
         dc.bitmap.0 == handle || dc.pen.0 == handle || dc.brush.0 == handle || dc.font.0 == handle
@@ -180,6 +185,26 @@ mod tests {
         assert_eq!(
             GetDeviceCaps(&mut ctx, hdc, GetDeviceCapsArg::SIZEPALETTE as u32),
             0
+        );
+    }
+
+    #[test]
+    fn delete_object_ignores_a_stock_object() {
+        let mut ctx = context();
+        let stock = crate::gdi32::GetStockObject(
+            &mut ctx,
+            crate::gdi32::GetStockObjectArg::BLACK_PEN as u32,
+        );
+        // Deleting a stock object is a harmless no-op: the shared handle
+        // keeps resolving for the DCs that have it selected.
+        assert!(DeleteObject(&mut ctx, stock.to_raw()));
+        assert!(gdi32::lock().objects.get(stock).is_some());
+        assert_eq!(
+            crate::gdi32::GetStockObject(
+                &mut ctx,
+                crate::gdi32::GetStockObjectArg::BLACK_PEN as u32
+            ),
+            stock
         );
     }
 

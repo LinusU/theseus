@@ -3,9 +3,10 @@ use std::sync::Arc;
 use runtime::{Context, Memory};
 
 use crate::{
-    HANDLE, Handles, POINT, Ptr,
+    HANDLE, POINT, Ptr,
     gdi32::{
-        self, Bitmap, Brush, COLORREF, Font, HBITMAP, HBRUSH, HGDIOBJ, HPEN, Object, Pen, State,
+        self, Bitmap, Brush, COLORREF, Font, GetStockObjectArg, HBITMAP, HBRUSH, HGDIOBJ, HPEN,
+        Object, Pen, State,
     },
     kernel32,
 };
@@ -15,7 +16,7 @@ pub type HDC = HANDLE;
 impl State {
     pub fn new_memory_dc(&mut self, bitmap: Bitmap) -> HDC {
         let (hbitmap, bitmap) = self.new_bitmap_handle(bitmap);
-        let dc = DC::new(hbitmap, bitmap, &mut self.objects);
+        let dc = DC::new(hbitmap, bitmap, self);
         self.dcs.add(dc)
     }
 
@@ -65,17 +66,30 @@ pub struct SIZE {
 
 impl DC {
     /// A fresh DC selects the stock objects Windows gives it (black pen,
-    /// white brush, system font), so SelectObject reports a real previous
-    /// handle rather than null.
-    pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>, objects: &mut Handles<Object>) -> Self {
-        let pen = Pen(Some(COLORREF::default()));
-        let brush = Brush(Some(COLORREF::from_rgb(0xff, 0xff, 0xff)));
-        let font = Font::default();
+    /// white brush, system font) — the shared singleton handles, so
+    /// SelectObject reports the real stock handle and a create/release DC
+    /// cycle cannot grow the object table.
+    pub fn new(hbitmap: HBITMAP, bitmap: Arc<Bitmap>, state: &mut State) -> Self {
+        let pen = state.stock_object(GetStockObjectArg::BLACK_PEN);
+        let brush = state.stock_object(GetStockObjectArg::WHITE_BRUSH);
+        let font = state.stock_object(GetStockObjectArg::SYSTEM_FONT);
+        let (
+            Some(Object::Pen(pen_obj)),
+            Some(Object::Brush(brush_obj)),
+            Some(Object::Font(font_obj)),
+        ) = (
+            state.objects.get(pen),
+            state.objects.get(brush),
+            state.objects.get(font),
+        )
+        else {
+            unreachable!("the stock objects were just created");
+        };
         DC {
             bitmap: (hbitmap, bitmap),
-            pen: (objects.add(Object::Pen(pen.clone())), pen),
-            brush: (objects.add(Object::Brush(brush.clone())), brush),
-            font: (objects.add(Object::Font(font.clone())), font),
+            pen: (pen, pen_obj.clone()),
+            brush: (brush, brush_obj.clone()),
+            font: (font, font_obj.clone()),
             rop2: R2::COPYPEN,
             bk_mode: 2,
             text_color: COLORREF::default(),

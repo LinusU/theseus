@@ -24,6 +24,11 @@ pub struct State {
     /// Bitmap pixels pointing into guest- or window-owned memory are never
     /// in this set.
     pub heap_bitmap_pixels: std::collections::HashSet<u32>,
+    /// Stock-object handles, keyed by GetStockObjectArg and created lazily
+    /// on first use. Stock objects are shared singletons: GetStockObject
+    /// returns the same handle every call, a fresh DC's initial pen/brush/
+    /// font are these handles, and DeleteObject must not remove them.
+    stock: std::collections::HashMap<u32, HGDIOBJ>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -35,6 +40,7 @@ pub fn lock() -> Lock {
         objects: Handles::new(0x1000),
         dcs: Default::default(),
         heap_bitmap_pixels: Default::default(),
+        stock: Default::default(),
     })
 }
 
