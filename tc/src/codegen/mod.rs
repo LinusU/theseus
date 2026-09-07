@@ -128,28 +128,52 @@ impl<'a> CodeGen<'a> {
     /// Code generate a memory address reference.
     pub fn gen_addr_offset(&self, instr: &iced_x86::Instruction) -> String {
         use iced_x86::Register::*;
+        // In flat code a 67h prefix selects 16-bit addressing: iced reports
+        // 16-bit base/index registers, a disp16-only form, or the implicit
+        // 16-bit string operands. The effective address is the sum mod
+        // 0x10000, so compute it in u32 (get_* returns u16) and mask.
+        let addr16 = !self.module.segment_addressed()
+            && (instr.memory_base().size() == 2
+                || instr.memory_index().size() == 2
+                || (instr.memory_base() == None
+                    && instr.memory_index() == None
+                    && instr.memory_displ_size() == 2)
+                || (0..instr.op_count()).any(|i| {
+                    matches!(
+                        instr.op_kind(i),
+                        iced_x86::OpKind::MemorySegSI
+                            | iced_x86::OpKind::MemorySegDI
+                            | iced_x86::OpKind::MemoryESDI
+                    )
+                }));
         let mut expr = Vec::new();
+        let mut prefix = String::new();
         if !self.module.segment_addressed() {
             // 16-bit segments handled in gen_addr(), not here
             match instr.memory_segment() {
                 CS | DS | ES | GS | SS => {}
-                FS => expr.push("ctx.cpu.regs.fs_base".to_string()),
+                FS => prefix = "ctx.cpu.regs.fs_base".to_string(),
                 None => {}
                 r => panic!("unhandled memory segment in gen_addr_offset: {r:?} in {instr}"),
             }
         }
+        // Register terms are u16 in 16-bit addressing; widen them to u32 so
+        // the sum can be masked to the 16-bit effective address.
+        let cast = |e: String| {
+            if addr16 { format!("({e} as u32)") } else { e }
+        };
         match instr.memory_base() {
             None => {
                 if let Some(base) =
                     (0..instr.op_count()).find_map(|i| memory_kind_base(instr.op_kind(i)))
                 {
-                    expr.push(base);
+                    expr.push(cast(base));
                 }
             }
-            r => expr.push(get_reg(r)),
+            r => expr.push(cast(get_reg(r))),
         }
         if instr.memory_index() != None {
-            let index = get_reg(instr.memory_index());
+            let index = cast(get_reg(instr.memory_index()));
             if instr.memory_index_scale() != 1 {
                 let scale = instr.memory_index_scale();
                 let bitness = self.module.bitness();
@@ -165,7 +189,19 @@ impl<'a> CodeGen<'a> {
 
         let mut it = expr.into_iter();
         let first = it.next().unwrap();
-        it.fold(first, |s, e| format!("{s}.wrapping_add({e})"))
+        let addr = it.fold(first, |s, e| format!("{s}.wrapping_add({e})"));
+        // The fs_base is part of the flat linear address, not the 16-bit
+        // effective address, so it stays outside the mask.
+        let addr = if addr16 {
+            format!("({addr} & 0xffff)")
+        } else {
+            addr
+        };
+        if prefix.is_empty() {
+            addr
+        } else {
+            format!("{prefix}.wrapping_add({addr})")
+        }
     }
 
     /// Codegen the absolute address found in an instruction that has a memory reference.
@@ -680,6 +716,48 @@ fn rustfmt(text: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn codegen_masks_16_bit_flat_addresses() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // 16-bit base+index pair: the sum is masked to the low word.
+            (
+                &[0x67u8, 0x8b, 0x00][..],
+                "((ctx.cpu.regs.get_bx() as u32).wrapping_add((ctx.cpu.regs.get_si() as u32)) & 0xffff)",
+            ),
+            // disp16-only form: the 16-bit displacement is the EA.
+            (
+                &[0x67u8, 0x8b, 0x06, 0x34, 0x12][..],
+                "(0x1234u32 & 0xffff)",
+            ),
+            // disp8 sign-extends to the 16-bit address size, then masks.
+            (
+                &[0x67u8, 0x8b, 0x46, 0xfe][..],
+                "((ctx.cpu.regs.get_bp() as u32).wrapping_add(0xfffeu32) & 0xffff)",
+            ),
+            // An fs: override adds the base outside the 16-bit mask.
+            (
+                &[0x64u8, 0x67, 0x8b, 0x00][..],
+                "ctx.cpu.regs.fs_base.wrapping_add(((ctx.cpu.regs.get_bx() as u32).wrapping_add((ctx.cpu.regs.get_si() as u32)) & 0xffff))",
+            ),
+            // Ordinary 32-bit addressing is unchanged.
+            (
+                &[0x8bu8, 0x40, 0xfe][..],
+                "ctx.cpu.regs.eax.wrapping_add(0xfffffffeu32)",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = decoder.decode();
+            assert_eq!(codegen.gen_addr_offset(&instr), want, "{instr}");
+        }
+    }
+
     #[test]
     fn mem_size_handles_float80() {
         let bytes = [0xdb, 0x28];
