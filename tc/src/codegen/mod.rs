@@ -67,6 +67,26 @@ pub fn get_reg(r: iced_x86::Register) -> String {
     }
 }
 
+/// True when `instr`'s memory operand uses 16-bit addressing: a 67h prefix
+/// in a 32-bit module, or the natural form in a 16-bit module. iced reports
+/// the width through 16-bit base/index registers, a disp16-only form, or the
+/// implicit 16-bit string operands.
+pub fn instr_uses_16bit_addressing(instr: &iced_x86::Instruction) -> bool {
+    instr.memory_base().size() == 2
+        || instr.memory_index().size() == 2
+        || (instr.memory_base() == iced_x86::Register::None
+            && instr.memory_index() == iced_x86::Register::None
+            && instr.memory_displ_size() == 2)
+        || (0..instr.op_count()).any(|i| {
+            matches!(
+                instr.op_kind(i),
+                iced_x86::OpKind::MemorySegSI
+                    | iced_x86::OpKind::MemorySegDI
+                    | iced_x86::OpKind::MemoryESDI
+            )
+        })
+}
+
 /// True for any OpKind that refers to a memory location.
 pub fn is_memory_op(kind: iced_x86::OpKind) -> bool {
     use iced_x86::OpKind::*;
@@ -128,24 +148,16 @@ impl<'a> CodeGen<'a> {
     /// Code generate a memory address reference.
     pub fn gen_addr_offset(&self, instr: &iced_x86::Instruction) -> String {
         use iced_x86::Register::*;
-        // In flat code a 67h prefix selects 16-bit addressing: iced reports
+        // A 67h prefix selects the opposite of the module's natural address
+        // size. iced reports the actual width: 16-bit addressing shows up as
         // 16-bit base/index registers, a disp16-only form, or the implicit
-        // 16-bit string operands. The effective address is the sum mod
-        // 0x10000, so compute it in u32 (get_* returns u16) and mask.
-        let addr16 = !self.module.segment_addressed()
-            && (instr.memory_base().size() == 2
-                || instr.memory_index().size() == 2
-                || (instr.memory_base() == None
-                    && instr.memory_index() == None
-                    && instr.memory_displ_size() == 2)
-                || (0..instr.op_count()).any(|i| {
-                    matches!(
-                        instr.op_kind(i),
-                        iced_x86::OpKind::MemorySegSI
-                            | iced_x86::OpKind::MemorySegDI
-                            | iced_x86::OpKind::MemoryESDI
-                    )
-                }));
+        // 16-bit string operands, and 32-bit addressing likewise.
+        let addr16 = instr_uses_16bit_addressing(instr);
+        // When the operand's address size differs from the module bitness
+        // the register terms are the wrong width: widen them to u32.
+        let wide = (addr16 && !self.module.segment_addressed())
+            || (!addr16 && self.module.segment_addressed());
+        let addr16 = addr16 && !self.module.segment_addressed();
         let mut expr = Vec::new();
         let mut prefix = String::new();
         if !self.module.segment_addressed() {
@@ -157,10 +169,11 @@ impl<'a> CodeGen<'a> {
                 r => panic!("unhandled memory segment in gen_addr_offset: {r:?} in {instr}"),
             }
         }
-        // Register terms are u16 in 16-bit addressing; widen them to u32 so
-        // the sum can be masked to the 16-bit effective address.
+        // Register terms are u16 in 16-bit addressing and u32 in 32-bit
+        // addressing; widen whichever side differs from the module so the
+        // sum is a consistent u32 expression.
         let cast = |e: String| {
-            if addr16 { format!("({e} as u32)") } else { e }
+            if wide { format!("({e} as u32)") } else { e }
         };
         match instr.memory_base() {
             None => {
@@ -176,7 +189,7 @@ impl<'a> CodeGen<'a> {
             let index = cast(get_reg(instr.memory_index()));
             if instr.memory_index_scale() != 1 {
                 let scale = instr.memory_index_scale();
-                let bitness = self.module.bitness();
+                let bitness = if wide { 32 } else { self.module.bitness() };
                 expr.push(format!("{index}.wrapping_mul({scale}u{bitness})"));
             } else {
                 expr.push(index);
@@ -184,14 +197,16 @@ impl<'a> CodeGen<'a> {
         }
         let offset = instr.memory_displacement32();
         if offset != 0 || expr.is_empty() {
-            expr.push(format!("{offset:#x}u{}", self.module.bitness()));
+            let bitness = if wide { 32 } else { self.module.bitness() };
+            expr.push(format!("{offset:#x}u{bitness}"));
         }
 
         let mut it = expr.into_iter();
         let first = it.next().unwrap();
         let addr = it.fold(first, |s, e| format!("{s}.wrapping_add({e})"));
         // The fs_base is part of the flat linear address, not the 16-bit
-        // effective address, so it stays outside the mask.
+        // effective address, so it stays outside the mask. 32-bit addressing
+        // in a segmented module keeps the full u32 offset for segofs32.
         let addr = if addr16 {
             format!("({addr} & 0xffff)")
         } else {
@@ -212,8 +227,13 @@ impl<'a> CodeGen<'a> {
         if self.module.segment_addressed() {
             // The above offset expression will be a u16 in real mode.
             // Convert to u32 as we add the segment.
+            let f = if instr_uses_16bit_addressing(instr) {
+                "segofs"
+            } else {
+                "segofs32"
+            };
             format!(
-                "segofs(ctx.cpu.regs.get_{seg}(), {addr})",
+                "{f}(ctx.cpu.regs.get_{seg}(), {addr})",
                 seg = reg_name(instr.memory_segment())
             )
         } else {
@@ -755,6 +775,31 @@ mod tests {
                 iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
             let instr = decoder.decode();
             assert_eq!(codegen.gen_addr_offset(&instr), want, "{instr}");
+        }
+
+        // In a segmented module a 67h prefix selects 32-bit addressing: the
+        // u32 terms are not truncated, and segofs32 takes the u32 offset.
+        let seg_state = crate::State::default();
+        let seg_codegen = super::CodeGen::new(&seg_state, false);
+        for (bytes, want) in [
+            (
+                &[0x67u8, 0x8b, 0x40, 0x02][..],
+                "segofs32(ctx.cpu.regs.get_ds(), (ctx.cpu.regs.eax as u32).wrapping_add(0x2u32))",
+            ),
+            (
+                &[0x67u8, 0x8b, 0x05, 0x78, 0x56, 0x34, 0x12][..],
+                "segofs32(ctx.cpu.regs.get_ds(), 0x12345678u32)",
+            ),
+            // Ordinary 16-bit addressing is unchanged.
+            (
+                &[0x8bu8, 0x44, 0x10][..],
+                "segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_si().wrapping_add(0x10u16))",
+            ),
+        ] {
+            let mut decoder =
+                iced_x86::Decoder::with_ip(16, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = decoder.decode();
+            assert_eq!(seg_codegen.gen_addr(&instr), want, "{instr}");
         }
     }
 

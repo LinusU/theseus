@@ -192,6 +192,13 @@ pub const fn segofs(seg: u16, off: u16) -> u32 {
     ((seg as u32) << 4) + (off as u32)
 }
 
+/// Combine a seg:ofs address where the offset is 32 bits: a 67h-prefixed
+/// operand in a 16-bit module uses 32-bit addressing and the effective
+/// address is not truncated to 16 bits.
+pub const fn segofs32(seg: u16, off: u32) -> u32 {
+    ((seg as u32) << 4).wrapping_add(off)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{cpuid, xgetbv};

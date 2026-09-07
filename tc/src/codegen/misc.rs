@@ -462,10 +462,13 @@ impl<'a> CodeGen<'a> {
                     "ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32)".to_string()
                 };
                 let addr = if self.module.segment_addressed() {
-                    format!(
-                        "segofs(ctx.cpu.regs.get_{}(), ({off}) as u16)",
-                        reg_name(instr.memory_segment())
-                    )
+                    let seg = reg_name(instr.memory_segment());
+                    if instr.memory_base() == iced_x86::Register::BX {
+                        format!("segofs(ctx.cpu.regs.get_{seg}(), ({off}) as u16)")
+                    } else {
+                        // 32-bit addressing keeps the full u32 offset.
+                        format!("segofs32(ctx.cpu.regs.get_{seg}(), {off})")
+                    }
                 } else if instr.memory_segment() == iced_x86::Register::FS {
                     format!("ctx.cpu.regs.fs_base.wrapping_add({off})")
                 } else {
