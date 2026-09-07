@@ -433,7 +433,11 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 let address = self.gen_addr(instr);
-                if self.module.bitness() == 16 {
+                // The far-pointer layout follows the operand size (the 66h
+                // prefix), not the module bitness: `les ax` loads an m16:16
+                // even in a 32-bit module, and `les eax` loads an m16:32
+                // even in a 16-bit module.
+                if op_size(instr, 0) == 16 {
                     self.line(format!("let ptr = {};", get_mem("u32".into(), address),));
                     self.line(format!("ctx.cpu.regs.{segment} = (ptr >> 16) as u16;"));
                     self.line(self.set_op(instr, 0, "ptr as u16".into()));
