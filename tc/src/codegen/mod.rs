@@ -216,7 +216,7 @@ impl<'a> CodeGen<'a> {
             Immediate32 => format!("{:#x}u32", instr.immediate32()),
             Register => get_reg(instr.op_register(n)),
             k if is_memory_op(k) => get_mem(type_for_size(mem_size(instr)), self.gen_addr(instr)),
-            k => todo!("{:?}", k),
+            k => panic!("unhandled source operand kind in get_op: {:?}", k),
         }
     }
 }
@@ -264,7 +264,7 @@ pub fn op_size(instr: &iced_x86::Instruction, n: u32) -> usize {
         Immediate8to16 => 16,
         Immediate8to32 => 32,
         Immediate32 => 32,
-        k => todo!("{k:?}"),
+        k => panic!("unhandled operand kind in op_size: {:?}", k),
     }
 }
 
@@ -278,7 +278,7 @@ impl<'a> CodeGen<'a> {
                 let size = mem_size(instr);
                 set_mem(type_for_size(size), addr, expr)
             }
-            k => todo!("{:?}", k),
+            k => panic!("unhandled destination operand kind in set_op: {:?}", k),
         }
     }
 }
