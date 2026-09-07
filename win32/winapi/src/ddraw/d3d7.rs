@@ -2382,8 +2382,10 @@ fn sample_texel(
     let u = if u < 0.0 { u + 1.0 } else { u };
     let v = v.fract();
     let v = if v < 0.0 { v + 1.0 } else { v };
-    let x = (u * (width - 1) as f32) as u32 % width;
-    let y = (v * (height - 1) as f32) as u32 % height;
+    // Point sampling selects the texel containing the coordinate: texel i
+    // covers u in [i/w, (i+1)/w), so the index is floor(u*w) wrapped.
+    let x = (u * width as f32) as u32 % width;
+    let y = (v * height as f32) as u32 % height;
     let p = mem.read::<u16>(addr + (y * width + x) * 2);
     let (r, g, b, a) = decode_texel(p, fmt);
     Some((pack_565(r, g, b), a))
@@ -3399,6 +3401,34 @@ mod tests {
             clip_segment_t(-10.0, -10.0, 30.0, 30.0, 19.0, 19.0),
             Some((0.25, 0.725))
         );
+    }
+
+    #[test]
+    fn point_sampling_reaches_every_texel() {
+        // A 2x1 texture: u*(width-1) could never select the right texel.
+        let mut memory = Memory::leak_new(0x1000);
+        memory.write::<u16>(0x100, pack_565(255, 0, 0));
+        memory.write::<u16>(0x102, pack_565(0, 0, 255));
+        let sample = |u: f32| {
+            sample_texel(&memory, 0x100, 2, 1, u, 0.0, TEXFMT_RGB565)
+                .unwrap()
+                .0
+        };
+        assert_eq!(sample(0.25), pack_565(255, 0, 0));
+        assert_eq!(sample(0.5), pack_565(0, 0, 255));
+        assert_eq!(sample(0.75), pack_565(0, 0, 255));
+        // Wrap: u just below 1 selects the last texel, u = 1 wraps to first.
+        let mut memory = Memory::leak_new(0x1000);
+        for i in 0..4u32 {
+            memory.write::<u16>(0x100 + i * 2, pack_565((i * 60) as u8, 0, 0));
+        }
+        let sample4 = |u: f32| {
+            sample_texel(&memory, 0x100, 4, 1, u, 0.0, TEXFMT_RGB565)
+                .unwrap()
+                .0
+        };
+        assert_eq!(sample4(0.9), pack_565(180, 0, 0));
+        assert_eq!(sample4(1.0), pack_565(0, 0, 0));
     }
 
     #[test]
