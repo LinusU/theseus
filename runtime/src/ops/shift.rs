@@ -134,10 +134,13 @@ pub fn sar<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
         return x;
     }
 
+    // Past the operand width the register is already all sign bits, so each
+    // further shift drops a sign bit: CF = the original sign, not zero like
+    // the zero-filled shl/shr paths.
     let cf = if y <= I::bits() as u8 {
         x.shr(y as usize - 1).bitand(I::one()).is_one()
     } else {
-        false
+        x.high_bit().is_one()
     };
     flags.set(Flags::CF, cf);
     // Note: OF only defined for 1-bit rotates.
@@ -277,6 +280,32 @@ mod tests {
         let mut flags = Flags::default();
         assert_eq!(super::shr(0x80u8, 8, &mut flags), 0);
         assert_eq!(super::sar(0x80u8, 8, &mut flags), 0xff);
+    }
+
+    #[test]
+    fn sar_past_the_operand_width_reports_the_sign_in_cf() {
+        // `sar al, 9..31` has already pushed every original bit out; each
+        // remaining shift drops a sign-fill bit, so CF = the sign.
+        for count in 9..32u8 {
+            let mut flags = Flags::default();
+            assert_eq!(super::sar(0x80u8, count, &mut flags), 0xff);
+            assert!(flags.contains(Flags::CF));
+
+            let mut flags = Flags::default();
+            assert_eq!(super::sar(0x7fu8, count, &mut flags), 0);
+            assert!(!flags.contains(Flags::CF));
+
+            let mut flags = Flags::default();
+            assert_eq!(super::sar(0x8000u16, count.max(17), &mut flags), 0xffff);
+            assert!(flags.contains(Flags::CF));
+        }
+        // The boundary count still reports the last real bit shifted out.
+        let mut flags = Flags::default();
+        assert_eq!(super::sar(0x80u8, 8, &mut flags), 0xff);
+        assert!(flags.contains(Flags::CF));
+        let mut flags = Flags::default();
+        assert_eq!(super::sar(0x40u8, 8, &mut flags), 0x00);
+        assert!(!flags.contains(Flags::CF));
     }
 
     #[test]
