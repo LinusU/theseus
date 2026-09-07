@@ -157,7 +157,12 @@ fn run() -> anyhow::Result<()> {
                 let IP::Flat(addr) = src else {
                     anyhow::bail!("--jump-table {src} must be flat address");
                 };
-                next = IP::Flat(addr + 4);
+                // A slot at the address-space top has no next entry; stop
+                // there rather than wrapping back to address zero.
+                let Some(next_addr) = addr.checked_add(4) else {
+                    break;
+                };
+                next = IP::Flat(next_addr);
                 if addr == 0 {
                     // A null table slot still occupies four bytes; advance
                     // past it instead of spinning on the same address.
