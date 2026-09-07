@@ -493,7 +493,7 @@ pub mod IDirect3D7 {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> DD {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
@@ -826,7 +826,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> DD {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
@@ -1969,7 +1969,7 @@ pub mod IDirect3DVertexBuffer7 {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> DD {
-        if ppv == 0 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
