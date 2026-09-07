@@ -3157,6 +3157,49 @@ mod tests {
     }
 
     #[test]
+    fn codegen_handles_xlat_address_sizes() {
+        let state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        for (bytes, want) in [
+            // xlatb: [ebx+al]
+            (
+                &[0xd7u8][..],
+                "ctx.xlat(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32));",
+            ),
+            // 67-prefixed xlat uses BX, wrapping the sum to 16 bits.
+            (
+                &[0x67u8, 0xd7][..],
+                "ctx.xlat(ctx.cpu.regs.get_bx().wrapping_add(ctx.cpu.regs.get_al() as u16) as u32);",
+            ),
+            // fs: xlatb reads through fs_base in flat code.
+            (
+                &[0x64u8, 0xd7][..],
+                "ctx.xlat(ctx.cpu.regs.fs_base.wrapping_add(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32)));",
+            ),
+        ] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "{bytes:02x?}: wanted {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_picks_the_loop_counter_from_the_address_size() {
         // The loop counter is CX for a 16-bit address-size attribute and
         // ECX otherwise — independent of the module's code width.

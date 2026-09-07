@@ -310,14 +310,11 @@ impl Context {
             .set(Flags::PF, result.count_ones().is_multiple_of(2));
     }
 
-    pub fn xlat(&mut self) {
-        let offset = if self.cpu.real_mode {
-            self.cpu.regs.get_bx() as u32
-        } else {
-            self.cpu.regs.ebx
-        };
-        let offset = offset.wrapping_add(self.cpu.regs.get_al() as u32);
-        let value = self.memory.read::<u8>(self.addr(self.cpu.regs.ds, offset));
+    /// XLAT loads AL from the table byte at `addr` — the fully resolved
+    /// seg:[(E)BX + AL] address, which codegen computes so the segment
+    /// override and address-size attribute are honored.
+    pub fn xlat(&mut self, addr: u32) {
+        let value = self.memory.read::<u8>(addr);
         self.cpu.regs.set_al(value);
     }
 

@@ -1,4 +1,4 @@
-use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, op_size, reg_size};
+use crate::codegen::{CodeGen, get_mem, instr_name, is_memory_op, op_size, reg_name, reg_size};
 
 impl<'a> CodeGen<'a> {
     pub fn codegen_misc(&mut self, instr: &iced_x86::Instruction) -> bool {
@@ -434,7 +434,28 @@ impl<'a> CodeGen<'a> {
                 }
             }
 
-            Xlatb => self.line("ctx.xlat();"),
+            Xlatb => {
+                // XLAT reads [seg:(E)BX + AL]: the base is BX or EBX per the
+                // address-size attribute, and the segment may be overridden.
+                let off = if instr.memory_base() == iced_x86::Register::BX {
+                    // 16-bit addressing wraps the index sum to 16 bits.
+                    "ctx.cpu.regs.get_bx().wrapping_add(ctx.cpu.regs.get_al() as u16) as u32"
+                        .to_string()
+                } else {
+                    "ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32)".to_string()
+                };
+                let addr = if self.module.segment_addressed() {
+                    format!(
+                        "segofs(ctx.cpu.regs.get_{}(), ({off}) as u16)",
+                        reg_name(instr.memory_segment())
+                    )
+                } else if instr.memory_segment() == iced_x86::Register::FS {
+                    format!("ctx.cpu.regs.fs_base.wrapping_add({off})")
+                } else {
+                    off
+                };
+                self.line(format!("ctx.xlat({addr});"));
+            }
 
             // ARPL compares and adjusts the RPL fields of two selectors; it
             // needs no descriptor-table model. iced reports a register
