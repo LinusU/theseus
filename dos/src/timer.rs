@@ -83,17 +83,19 @@ impl PIT {
         log::info!("PIT divisor set to {divisor:#x}");
     }
 
-    pub fn check_timer(&mut self, ctx: &mut Context, handler: (u16, u16)) {
+    /// Count how many timer interrupts are due as of `now_ms` and advance
+    /// the schedule past them. Splitting the count from the handler calls
+    /// lets the caller run the (guest-code) handler without holding a
+    /// borrow on the shared `State`.
+    pub fn due_ticks(&mut self, now_ms: u32) -> u32 {
         const MAX_TICKS_PER_CHECK: u32 = 8;
         let Some(mut next) = self.next_interrupt else {
-            return;
+            return 0;
         };
 
-        let now = host::host().time();
-        let now_ticks = pit_ticks(now);
+        let now_ticks = pit_ticks(now_ms);
         let mut fired = 0;
         while next <= now_ticks && fired < MAX_TICKS_PER_CHECK {
-            self.call_timer(ctx, handler);
             next += pit_period_ticks(self.divisor);
             fired += 1;
         }
@@ -103,30 +105,33 @@ impl PIT {
             next = now_ticks + pit_period_ticks(self.divisor);
         }
         self.next_interrupt = Some(next);
+        fired
     }
+}
 
-    fn call_timer(&mut self, ctx: &mut Context, handler: (u16, u16)) {
-        let (seg, ofs) = handler;
-        if seg == 0 {
-            // No int 8 handler is installed; drop the tick instead of
-            // running the null page.
-            return;
-        }
-        log::info!("timer {seg:x}:{ofs:x}");
+/// Run one due int 8 handler. This executes guest code, which may itself
+/// call `dos::state()` — it must not run under a borrow of `State`.
+pub fn call_timer(ctx: &mut Context, handler: (u16, u16)) {
+    let (seg, ofs) = handler;
+    if seg == 0 {
+        // No int 8 handler is installed; drop the tick instead of
+        // running the null page.
+        return;
+    }
+    log::info!("timer {seg:x}:{ofs:x}");
 
-        // The interrupted context can be in a different segment than the
-        // handler. The pushed frame reports the interrupted CS; the offset
-        // is the handler's own because the true resume IP is not tracked
-        // here — the loop below exits on the iret regardless of it.
-        let esp = ctx.cpu.regs.esp;
-        ctx.push16(ctx.cpu.flags.bits() as u16);
-        ctx.push16(ctx.cpu.regs.cs);
-        ctx.push16(ofs);
+    // The interrupted context can be in a different segment than the
+    // handler. The pushed frame reports the interrupted CS; the offset
+    // is the handler's own because the true resume IP is not tracked
+    // here — the loop below exits on the iret regardless of it.
+    let esp = ctx.cpu.regs.esp;
+    ctx.push16(ctx.cpu.flags.bits() as u16);
+    ctx.push16(ctx.cpu.regs.cs);
+    ctx.push16(ofs);
 
-        let mut f = ctx.indirect16((seg, ofs).into());
-        while ctx.cpu.regs.esp != esp {
-            // don't check interrupts while running interrupt handler
-            f = f.0(ctx);
-        }
+    let mut f = ctx.indirect16((seg, ofs).into());
+    while ctx.cpu.regs.esp != esp {
+        // don't check interrupts while running interrupt handler
+        f = f.0(ctx);
     }
 }

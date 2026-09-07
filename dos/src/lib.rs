@@ -182,7 +182,7 @@ pub fn start(ctx: &mut Context, exe: &EXEData) {
     let mut i = 0;
     loop {
         if i % 0x2000 == 0 {
-            state().check_interrupts(ctx);
+            check_interrupts(ctx);
         }
         f = f.0(ctx);
         i += 1;
@@ -331,13 +331,20 @@ pub fn dump_com(ctx: &mut Context) -> &[u8] {
     data.get(..end).unwrap_or(&[])
 }
 
-impl State {
-    fn check_interrupts(&mut self, ctx: &mut Context) {
-        let handler = ivt(&mut ctx.memory)[8];
-        self.pit.check_timer(ctx, handler.into());
-        if let Some(vga) = &mut self.vga {
-            vga.update_screen(ctx);
-        }
+/// Poll the devices that feed guest interrupts and the display.
+///
+/// The `state()` RefCell must not stay borrowed while the timer handler or
+/// the host poll run: the handler is guest code that can call back into
+/// `state()` (port I/O, int21), and a nested borrow would panic.
+fn check_interrupts(ctx: &mut Context) {
+    let handler: (u16, u16) = ivt(&mut ctx.memory)[8].into();
+    let ticks = state().pit.due_ticks(host::host().time());
+    for _ in 0..ticks {
+        timer::call_timer(ctx, handler);
+    }
+    if let Some(mut vga) = state().vga.take() {
+        vga.update_screen(ctx);
+        state().vga = Some(vga);
     }
 }
 
