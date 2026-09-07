@@ -263,6 +263,18 @@ impl MainThread {
             if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_NO_SIGNAL_HANDLERS, c"1".as_ptr()) {
                 log::warn!("SDL_SetHint(NO_SIGNAL_HANDLERS) failed: {}", sdl_error());
             }
+            // SDL's default is to swallow the click that focuses an
+            // unfocused window, which makes the first click on the game do
+            // nothing; deliver it like a normal click instead.
+            if !sdl::hints::SDL_SetHint(
+                sdl::hints::SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH,
+                c"1".as_ptr(),
+            ) {
+                log::warn!(
+                    "SDL_SetHint(MOUSE_FOCUS_CLICKTHROUGH) failed: {}",
+                    sdl_error()
+                );
+            }
             if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_RENDER_VSYNC, c"1".as_ptr()) {
                 log::warn!("SDL_SetHint(RENDER_VSYNC) failed: {}", sdl_error());
             }
@@ -900,5 +912,135 @@ impl Host {
         use std::io::Write;
         // A broken pipe or closed stdout shouldn't kill the emulator.
         let _ = std::io::stdout().write_all(text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn main_thread() -> MainThread {
+        // Tests drive `msg_from_event` directly, so no SDL subsystem is
+        // needed; build the state without touching SDL_Init.
+        MainThread {
+            headless: true,
+            buttons: Default::default(),
+        }
+    }
+
+    fn motion(x: f32, y: f32, state: sdl::mouse::SDL_MouseButtonFlags) -> sdl::events::SDL_Event {
+        let mut event = sdl::events::SDL_Event::default();
+        event.motion = sdl::events::SDL_MouseMotionEvent {
+            r#type: sdl::events::SDL_EventType::MOUSE_MOTION,
+            state,
+            x,
+            y,
+            ..Default::default()
+        };
+        event
+    }
+
+    fn button(
+        typ: sdl::events::SDL_EventType,
+        button: u8,
+        x: f32,
+        y: f32,
+    ) -> sdl::events::SDL_Event {
+        let mut event = sdl::events::SDL_Event::default();
+        event.button = sdl::events::SDL_MouseButtonEvent {
+            r#type: typ,
+            button,
+            down: typ == sdl::events::SDL_EventType::MOUSE_BUTTON_DOWN,
+            x,
+            y,
+            ..Default::default()
+        };
+        event
+    }
+
+    /// A physical left click is a motion, a down, and an up event; each must
+    /// translate to the matching host message with the button mask reflecting
+    /// the state right after that event.
+    #[test]
+    fn single_click_translates_to_down_then_up() {
+        let main = main_thread();
+        let down = sdl::events::SDL_EventType::MOUSE_BUTTON_DOWN;
+        let up = sdl::events::SDL_EventType::MOUSE_BUTTON_UP;
+        let left = sdl::mouse::SDL_BUTTON_LEFT as u8;
+
+        let Some(host::Message::MouseMove(msg)) = main.msg_from_event(&motion(
+            10.0,
+            20.0,
+            sdl::mouse::SDL_MouseButtonFlags::default(),
+        )) else {
+            panic!("motion did not produce a mouse-move message")
+        };
+        assert_eq!((msg.x, msg.y), (10, 20));
+        assert!(msg.buttons.is_empty());
+
+        let Some(host::Message::MouseDown(msg)) =
+            main.msg_from_event(&button(down, left, 10.0, 20.0))
+        else {
+            panic!("button-down did not produce a mouse-down message")
+        };
+        assert_eq!((msg.x, msg.y), (10, 20));
+        assert_eq!(msg.button, host::MouseButton::Left);
+        assert_eq!(msg.buttons, host::MouseButton::Left);
+
+        let Some(host::Message::MouseUp(msg)) = main.msg_from_event(&button(up, left, 10.0, 20.0))
+        else {
+            panic!("button-up did not produce a mouse-up message")
+        };
+        assert_eq!(msg.button, host::MouseButton::Left);
+        assert!(msg.buttons.is_empty());
+    }
+
+    /// A down+up pair closer than one frame still produces both edges, and a
+    /// second click is not swallowed by stale tracked state.
+    #[test]
+    fn back_to_back_clicks_repeat() {
+        let main = main_thread();
+        let down = sdl::events::SDL_EventType::MOUSE_BUTTON_DOWN;
+        let up = sdl::events::SDL_EventType::MOUSE_BUTTON_UP;
+        let left = sdl::mouse::SDL_BUTTON_LEFT as u8;
+        for _ in 0..2 {
+            assert!(matches!(
+                main.msg_from_event(&button(down, left, 5.0, 5.0)),
+                Some(host::Message::MouseDown(_))
+            ));
+            assert!(matches!(
+                main.msg_from_event(&button(up, left, 5.0, 5.0)),
+                Some(host::Message::MouseUp(_))
+            ));
+        }
+    }
+
+    /// Motion events resync the tracked mask, so a state the button events
+    /// missed (focus churn, an off-window release) cannot wedge the next click.
+    #[test]
+    fn motion_resyncs_the_tracked_button_mask() {
+        let main = main_thread();
+        let down = sdl::events::SDL_EventType::MOUSE_BUTTON_DOWN;
+        let left = sdl::mouse::SDL_BUTTON_LEFT as u8;
+        assert!(matches!(
+            main.msg_from_event(&button(down, left, 5.0, 5.0)),
+            Some(host::Message::MouseDown(_))
+        ));
+        // The release was never delivered; the next motion reports no buttons.
+        let Some(host::Message::MouseMove(msg)) = main.msg_from_event(&motion(
+            6.0,
+            6.0,
+            sdl::mouse::SDL_MouseButtonFlags::default(),
+        )) else {
+            panic!("motion did not produce a mouse-move message")
+        };
+        assert!(msg.buttons.is_empty());
+        // A following click is a fresh down edge, not a stuck-button repeat.
+        let Some(host::Message::MouseDown(msg)) =
+            main.msg_from_event(&button(down, left, 6.0, 6.0))
+        else {
+            panic!("button-down did not produce a mouse-down message")
+        };
+        assert_eq!(msg.buttons, host::MouseButton::Left);
     }
 }
