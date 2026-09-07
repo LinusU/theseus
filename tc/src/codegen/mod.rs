@@ -1317,6 +1317,14 @@ mod tests {
                 .buf
                 .contains("ctx.callf32(0x3, seg, ctx.indirect32(addr))")
         );
+        // The m16:32 selector lives at EA+4, not at the loaded offset+4.
+        assert!(
+            codegen.buf.contains(
+                "ctx.memory.read::<u16>((ctx.cpu.regs.ecx.wrapping_add(0xffffffc3u32)).wrapping_add(4u32))"
+            ),
+            "selector read must come from the pointer's effective address: {:?}",
+            codegen.buf
+        );
     }
 
     #[test]

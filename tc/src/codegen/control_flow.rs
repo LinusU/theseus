@@ -70,7 +70,7 @@ impl<'a> CodeGen<'a> {
                     }
                     iced_x86::MemorySize::SegPtr32 => {
                         extra = Some(format!(
-                            "let addr = ctx.memory.read::<u32>({addr}); let seg = ctx.memory.read::<u16>(addr.wrapping_add(4u32));"
+                            "let addr = ctx.memory.read::<u32>({addr}); let seg = ctx.memory.read::<u16>(({addr}).wrapping_add(4u32));"
                         ));
                         seg = Some("seg".into());
                         cont = "ctx.indirect32(addr)".into();
