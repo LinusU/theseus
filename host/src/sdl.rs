@@ -224,6 +224,13 @@ fn map_to_guest(win_w: i32, win_h: i32, guest_w: u32, guest_h: u32, x: f32, y: f
     )
 }
 
+/// Alt+Enter is the host-level fullscreen chord: the guest keeps its logical
+/// mode and never sees it, so both the down and up edges are consumed.
+fn is_fullscreen_chord(event: &sdl::events::SDL_KeyboardEvent) -> bool {
+    event.scancode == sdl::scancode::SDL_Scancode::RETURN
+        && (event.r#mod & sdl::keycode::SDL_KMOD_ALT).0 != 0
+}
+
 impl MainThread {
     /// Window-point mouse position -> guest logical coordinates. Headless and
     /// pre-window events pass through unchanged (they are already guest
@@ -299,7 +306,25 @@ impl MainThread {
                     }
                 }
                 SDL_EventType::KEY_DOWN | SDL_EventType::KEY_UP => {
-                    let key = key_from_sdl(&event.key)?;
+                    let event = &event.key;
+                    let window = self.window.get();
+                    if is_fullscreen_chord(event) && !window.is_null() {
+                        if typ == SDL_EventType::KEY_DOWN && !event.repeat {
+                            let fullscreen = (sdl::video::SDL_GetWindowFlags(window)
+                                & sdl::video::SDL_WindowFlags::FULLSCREEN)
+                                .0
+                                != 0;
+                            if !sdl::video::SDL_SetWindowFullscreen(window, !fullscreen) {
+                                log::warn!(
+                                    "SDL_SetWindowFullscreen({}) failed: {}",
+                                    !fullscreen,
+                                    sdl_error()
+                                );
+                            }
+                        }
+                        return None;
+                    }
+                    let key = key_from_sdl(event)?;
                     if typ == SDL_EventType::KEY_DOWN {
                         return Some(host::Message::KeyDown(key));
                     } else {
@@ -666,6 +691,17 @@ impl MainThread {
             // would stay dead until the user clicked into the window.
             if !sdl::video::SDL_RaiseWindow(window) {
                 log::warn!("SDL_RaiseWindow failed ({}); continuing", sdl_error());
+            }
+            // THESEUS_FULLSCREEN=1 starts in native fullscreen; the guest's
+            // logical mode is unchanged (present letterboxes, input maps
+            // back through it). Alt+Enter toggles it at runtime.
+            if std::env::var("THESEUS_FULLSCREEN").unwrap_or_default() != ""
+                && !sdl::video::SDL_SetWindowFullscreen(window, true)
+            {
+                log::warn!(
+                    "SDL_SetWindowFullscreen(true) failed ({}); staying windowed",
+                    sdl_error()
+                );
             }
             let renderer = sdl::render::SDL_CreateRenderer(window, std::ptr::null());
             if renderer.is_null() {
@@ -1230,6 +1266,32 @@ mod tests {
             letterbox(640.0, 480.0, 0.0, 480.0),
             (0.0, 0.0, 640.0, 480.0)
         );
+    }
+
+    /// The fullscreen chord is Return with an Alt modifier; plain Return and
+    /// Alt+other keys are ordinary input the guest must still see.
+    #[test]
+    fn alt_enter_is_the_fullscreen_chord() {
+        let key_event = |scancode, mods: u16| sdl::events::SDL_KeyboardEvent {
+            r#type: sdl::events::SDL_EventType::KEY_DOWN,
+            scancode,
+            r#mod: sdl::keycode::SDL_Keymod(mods),
+            ..Default::default()
+        };
+        use sdl::scancode::SDL_Scancode as SC;
+        assert!(is_fullscreen_chord(&key_event(
+            SC::RETURN,
+            sdl::keycode::SDL_KMOD_LALT.0
+        )));
+        assert!(is_fullscreen_chord(&key_event(
+            SC::RETURN,
+            sdl::keycode::SDL_KMOD_RALT.0
+        )));
+        assert!(!is_fullscreen_chord(&key_event(SC::RETURN, 0)));
+        assert!(!is_fullscreen_chord(&key_event(
+            SC::A,
+            sdl::keycode::SDL_KMOD_ALT.0
+        )));
     }
 
     /// The inverse mapping recovers guest coordinates anywhere in the frame
