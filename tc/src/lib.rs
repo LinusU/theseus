@@ -63,7 +63,7 @@ pub enum Module {
 
 impl Module {
     // TODO: remove some of these methods as we untangle DOS vs Windows
-    pub fn bitness(&self) -> u32 {
+    pub(crate) fn bitness(&self) -> u32 {
         match self {
             Module::DOS(_) => 16,
             Module::Windows(_) => 32,
@@ -82,7 +82,7 @@ impl Module {
     /// True if the bytes at `addr` form at least one non-empty, non-invalid
     /// x86 instruction. Used to avoid treating data that happens to look like
     /// a branch target as a real code address.
-    pub fn is_valid_instr_start(&self, mem: &Memory, addr: u32) -> bool {
+    pub(crate) fn is_valid_instr_start(&self, mem: &Memory, addr: u32) -> bool {
         let Some(bytes) = mem.bytes.get(addr as usize..) else {
             return false;
         };
@@ -99,7 +99,7 @@ impl Module {
         !instr.is_invalid() && instr.len() != 0
     }
 
-    pub fn local_addr(&self, addr: u32) -> IP {
+    pub(crate) fn local_addr(&self, addr: u32) -> IP {
         match self {
             Module::DOS(m) => IP::Seg((m.load_segment, addr as u16).into()),
             Module::Windows(_) => IP::Flat(addr),
