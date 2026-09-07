@@ -175,8 +175,10 @@ Debug environment knobs, all optional:
 Known non-blocking noise: missing `.CHK` checksum caches (including the
 game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced), absent
 `aud\aud22`/`aud\dmusic` content, `nodeGetBitmap` art misses, LOD warnings,
-the `london` room-count version warning, and benign `SelectObject` diagnostics
-for game-internal handles.
+the `london` room-count version warning, `datParser::Read` warnings for
+unrecognized race/city tokens like `Approach` and `Ocean`, `DMusicObject`
+scan failures for missing segment directories, and benign `SelectObject`
+diagnostics for game-internal handles.
 
 ## External prerequisites that cannot be filled from this repo
 
@@ -203,6 +205,10 @@ warnings in the run log but are outside the scope of the shared port code:
   `VPPANOZGT`, `VPPANOZG`, `VPPANOZ`, `VPSEMI`) but not for others, so the
   SELECT VEHICLE description panel works for e.g. the Mustang but cannot render
   labels that depend on the missing `*_DESC` assets.
+- `datParser` race/city configuration tokens that the game's own parser does not
+  recognize, such as `Approach` and `Ocean`. These tokens are logged and skipped
+  by the parser; they may come from a data format or patch revision that differs
+  from the executable's parser table.
 
 The missing `nodeGetBitmap` assets are the direct cause of the translucent
 overlay panels not showing their text labels, and the absent audio/DirectMusic
