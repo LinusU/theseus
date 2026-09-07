@@ -11,6 +11,19 @@ impl<'a> CodeGen<'a> {
         {
             return false;
         }
+        // A 16-bit address-size attribute (`67` in 32-bit code, plain forms
+        // in 16-bit code) shows up as the 16-bit implicit operand kinds;
+        // those forms count in CX and advance SI/DI rather than ECX/ESI/EDI.
+        let addr16 = (0..instr.op_count()).any(|i| {
+            matches!(
+                instr.op_kind(i),
+                iced_x86::OpKind::MemorySegSI
+                    | iced_x86::OpKind::MemorySegDI
+                    | iced_x86::OpKind::MemoryESDI
+            )
+        });
+        let suffix = if addr16 { "_16" } else { "" };
+        let rep_fn = if addr16 { "rep16" } else { "rep" };
         match instr.mnemonic() {
             Movsb | Movsw | Movsd | // x
             Lodsb | Lodsw | Lodsd | // x
@@ -20,9 +33,9 @@ impl<'a> CodeGen<'a> {
                 let name = instr_name(instr);
                 // Note: repe/repne behaves the same as rep for these instructions,
                 if instr.has_rep_prefix() || instr.has_repne_prefix() {
-                    self.line(format!("ctx.rep(Rep::REP, Context::{name});"));
+                    self.line(format!("ctx.{rep_fn}(Rep::REP, Context::{name}{suffix});"));
                 } else {
-                    self.line(format!("ctx.{name}();"));
+                    self.line(format!("ctx.{name}{suffix}();"));
                 }
             }
 
@@ -31,11 +44,11 @@ impl<'a> CodeGen<'a> {
             Scasb | Scasw | Scasd => {
                 let name = instr_name(instr);
                 if instr.has_repe_prefix() {
-                    self.line(format!("ctx.rep(Rep::REPE, Context::{name});"));
+                    self.line(format!("ctx.{rep_fn}(Rep::REPE, Context::{name}{suffix});"));
                 } else if instr.has_repne_prefix() {
-                    self.line(format!("ctx.rep(Rep::REPNE, Context::{name});"));
+                    self.line(format!("ctx.{rep_fn}(Rep::REPNE, Context::{name}{suffix});"));
                 } else {
-                    self.line(format!("ctx.{name}();"));
+                    self.line(format!("ctx.{name}{suffix}();"));
                 };
             }
 

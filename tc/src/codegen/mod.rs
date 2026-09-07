@@ -5861,6 +5861,14 @@ mod tests {
         for (bytes, want, avoid) in [
             // movsd (string): A5 has implicit DS:(E)SI / ES:(E)DI operands.
             (&[0xa5][..], "ctx.movsd();", "ctx.cpu.xmm"),
+            // 67-prefixed movsd in 32-bit code is the 16-bit address form.
+            (&[0x67, 0xa5][..], "ctx.movsd_16();", "ctx.movsd();"),
+            // 67 f3 a4 is rep movsb counting in CX.
+            (
+                &[0x67, 0xf3, 0xa4][..],
+                "ctx.rep16(Rep::REP, Context::movsb_16);",
+                "ctx.rep(",
+            ),
             // movsd xmm0, xmm1: F2 0F 10 /r, registers only.
             (
                 &[0xf2, 0x0f, 0x10, 0xc1][..],
