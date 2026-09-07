@@ -161,9 +161,12 @@ Debug environment knobs, all optional:
   `aud22\`) to a writable host directory, for titles that generate
   on-demand audio caches (`.22k`/`.dls`) without touching the read-only
   game install.
-- `THESEUS_TRACE=<rules>` — trace winapi calls whose generated name
-  contains each comma-separated key; prefix a key with `-` to disable or
-  `+` to re-enable it, and the last matching rule wins.
+- `THESEUS_TRACE=<rules>` — `log::info!` a `<ret> Name(arg=…)` line for
+  each winapi export whose defining source path contains a comma-separated
+  key (`kernel32/file` selects every export in `kernel32/file.rs`); prefix
+  a key with `-` to disable or `+` to re-enable it, and the last matching
+  rule wins. The records land at `info`, so pair it with a `RUST_LOG`
+  spec that includes `info` for the `winapi` target.
 - `RUST_LOG` — env-filter-style logging: a bare level (`warn`, `debug`) or
   comma-separated `target=level` directives (`warn,winapi=debug`); the
   draw-call and rasterizer diagnostics live at `debug`, honest problems at
