@@ -5452,9 +5452,9 @@ mod tests {
         };
         let mut codegen = super::CodeGen::new(&state, false);
 
-        // maskmovdqu m128, xmm1 (mask implicit in xmm0)
+        // maskmovdqu xmm0, xmm1 (data in xmm0, mask in xmm1)
         let bytes = &[0x66, 0x0f, 0xf7, 0xc1][..];
-        let want = "ctx.maskmovdqu(ctx.cpu.xmm.xmm1, ctx.cpu.xmm.xmm0);";
+        let want = "ctx.maskmovdqu(ctx.cpu.xmm.xmm0, ctx.cpu.xmm.xmm1);";
 
         let mut decoder = iced_x86::Decoder::with_ip(32, bytes, 0, iced_x86::DecoderOptions::NONE);
         let instr = crate::Instr {

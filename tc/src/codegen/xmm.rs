@@ -148,10 +148,12 @@ impl<'a> CodeGen<'a> {
 
             // MASKMOVDQU stores the source to the implicit DS:(E)DI destination,
             // writing a byte only when the corresponding mask byte's high bit is
-            // set. The mask is always in XMM0.
+            // set. iced exposes the implicit memory destination as operand 0,
+            // the source data register as operand 1, and the mask operand
+            // (a register or m128) as operand 2.
             Maskmovdqu => {
-                let src = self.xmm_get(instr, 2);
-                let mask = self.xmm_get(instr, 1);
+                let src = self.xmm_get(instr, 1);
+                let mask = self.xmm_get(instr, 2);
                 self.line(format!("ctx.maskmovdqu({src}, {mask});"));
             }
 
