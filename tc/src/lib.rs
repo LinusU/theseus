@@ -215,25 +215,50 @@ impl State {
         let Module::Windows(module) = &mut self.module else {
             unreachable!()
         };
-        let mut addr = 0; // only set up if vtables are needd
-        for (dll, vtables) in [
+        // Vtables are contiguous arrays in guest memory and data imports are
+        // laid out right after them, so size the region before writing: one
+        // slot per vtable entry plus one per dynamic export that is not also
+        // statically imported.
+        let vtables = [
             ("ddraw", winapi::ddraw::VTABLES.as_slice()),
             ("dsound", winapi::dsound::VTABLES.as_slice()),
             ("dinput", winapi::dinput::VTABLES.as_slice()),
-        ] {
+        ];
+        let mut entries = 0usize;
+        for (dll, interfaces) in &vtables {
+            if module.imports.iter().any(|imp| same_dll(&imp.dll, dll)) {
+                entries += interfaces.iter().map(|(_, e)| e.len()).sum::<usize>();
+            }
+        }
+        for (dll, funcs) in winapi::DYNAMIC_EXPORTS {
             if !module.imports.iter().any(|imp| same_dll(&imp.dll, dll)) {
                 continue;
             }
-            if addr == 0 {
-                addr = self
-                    .mem
-                    .mappings
-                    .try_alloc("vtables".into(), 0x1000, Memory::LIMIT)
-                    .expect("vtables mapping could not be allocated");
+            entries += funcs
+                .iter()
+                .filter(|func| {
+                    !module
+                        .imports
+                        .iter()
+                        .any(|imp| same_dll(&imp.dll, dll) && imp.func == **func)
+                })
+                .count();
+        }
+        let mut addr = if entries == 0 {
+            0
+        } else {
+            self.mem
+                .mappings
+                .try_alloc("vtables".into(), (entries * 4) as u32, Memory::LIMIT)
+                .expect("vtables mapping could not be allocated")
+        };
+        for (dll, interfaces) in &vtables {
+            if !module.imports.iter().any(|imp| same_dll(&imp.dll, dll)) {
+                continue;
             }
-            for (interface, entries) in vtables {
+            for (interface, funcs) in interfaces.iter() {
                 module.vtables.push((format!("{dll}::{interface}"), addr));
-                for func in entries.iter() {
+                for func in funcs.iter() {
                     module.imports.push(Import {
                         dll: dll.to_string(),
                         func: format!("{interface}::{func}"),
@@ -262,13 +287,6 @@ impl State {
                     .any(|imp| same_dll(&imp.dll, dll) && imp.func == *func)
                 {
                     continue;
-                }
-                if addr == 0 {
-                    addr = self
-                        .mem
-                        .mappings
-                        .try_alloc("vtables".into(), 0x1000, Memory::LIMIT)
-                        .expect("vtables mapping could not be allocated");
                 }
                 module.imports.push(Import {
                     dll: dll.to_string(),
