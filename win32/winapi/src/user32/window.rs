@@ -1109,8 +1109,14 @@ pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCoun
     }
     let title = window.title.as_bytes();
     let copy = (nMaxCount as usize - 1).min(title.len());
-    let end = lpString.addr as usize + copy + 1;
-    if lpString.addr < 0x1000 || end > ctx.memory.bytes.len() {
+    let Some(end) = lpString
+        .addr
+        .checked_add(copy as u32)
+        .and_then(|e| e.checked_add(1))
+    else {
+        return 0;
+    };
+    if lpString.addr < 0x1000 || end as usize > ctx.memory.bytes.len() {
         return 0;
     }
     if let Some(dst) = ctx
@@ -1121,7 +1127,7 @@ pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCoun
     {
         dst.copy_from_slice(&title[..copy]);
     }
-    ctx.memory.write::<u8>(lpString.addr + copy as u32, 0);
+    ctx.memory.write::<u8>(end - 1, 0);
     copy as i32
 }
 
@@ -1161,8 +1167,10 @@ fn get_class_name(ctx: &mut Context, hWnd: HWND, addr: u32, nMaxCount: i32, wide
     } else {
         let bytes = name.as_bytes();
         let copy = (nMaxCount as usize - 1).min(bytes.len());
-        let end = addr as usize + copy + 1;
-        if addr < 0x1000 || end > ctx.memory.bytes.len() {
+        let Some(end) = addr.checked_add(copy as u32).and_then(|e| e.checked_add(1)) else {
+            return 0;
+        };
+        if addr < 0x1000 || end as usize > ctx.memory.bytes.len() {
             return 0;
         }
         if let Some(dst) = ctx
@@ -1173,7 +1181,7 @@ fn get_class_name(ctx: &mut Context, hWnd: HWND, addr: u32, nMaxCount: i32, wide
         {
             dst.copy_from_slice(&bytes[..copy]);
         }
-        ctx.memory.write::<u8>(addr + copy as u32, 0);
+        ctx.memory.write::<u8>(end - 1, 0);
         copy as i32
     }
 }
@@ -1456,6 +1464,9 @@ mod tests {
         ctx.memory[0x4000..][..8].fill(0xAB);
         assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0x500), 16), 0);
         assert_eq!(&ctx.memory.bytes[0x4000..0x4008], &[0xAB; 8]);
+
+        // A destination whose null terminator would overflow u32 is rejected.
+        assert_eq!(GetWindowTextA(&mut ctx, hwnd, Ptr::new(0xffff_fff0), 16), 0);
 
         super::state().window.borrow_mut().take();
     }
