@@ -265,14 +265,17 @@ impl DDSURFACEDESC {
 
             lPitch_dwLinearSize: desc2.lPitch_dwLinearSize,
             dwBackBufferCount: desc2.dwBackBufferCount_dwDepth,
-            dwMipMapCount_dwZBufferBitDepth_dwRefreshRate: Default::default(),
-            dwAlphaBitDepth: Default::default(),
-            dwReserved: Default::default(),
+            // The union'd dwords sit at identical offsets in both structs;
+            // carrying them keeps the DDSD flags honest.
+            dwMipMapCount_dwZBufferBitDepth_dwRefreshRate: desc2
+                .dwMipMapCount_dwRefreshRate_dwSrcVBHandle,
+            dwAlphaBitDepth: desc2.dwAlphaBitDepth,
+            dwReserved: desc2.dwReserved,
             lpSurface: desc2.lpSurface,
-            ddckCKDestOverlay: Default::default(),
-            ddckCKDestBlt: Default::default(),
-            ddckCKSrcOverlay: Default::default(),
-            ddckCKSrcBlt: Default::default(),
+            ddckCKDestOverlay: desc2.ddckCKDestOverlay_dwEmptyFaceColor.clone(),
+            ddckCKDestBlt: desc2.ddckCKDestBlt.clone(),
+            ddckCKSrcOverlay: desc2.ddckCKSrcOverlay.clone(),
+            ddckCKSrcBlt: desc2.ddckCKSrcBlt.clone(),
             ddpfPixelFormat: desc2.ddpfPixelFormat.clone(),
             ddsCaps: desc2.ddsCaps.dwCaps,
         }
@@ -393,15 +396,16 @@ impl DDSURFACEDESC2 {
             dwWidth: desc.dwWidth,
             lPitch_dwLinearSize: desc.lPitch_dwLinearSize,
             dwBackBufferCount_dwDepth: desc.dwBackBufferCount,
-            dwMipMapCount_dwRefreshRate_dwSrcVBHandle: Default::default(),
-            dwAlphaBitDepth: Default::default(),
-            dwReserved: Default::default(),
+            dwMipMapCount_dwRefreshRate_dwSrcVBHandle: desc
+                .dwMipMapCount_dwZBufferBitDepth_dwRefreshRate,
+            dwAlphaBitDepth: desc.dwAlphaBitDepth,
+            dwReserved: desc.dwReserved,
             lpSurface: desc.lpSurface,
-            ddckCKDestOverlay_dwEmptyFaceColor: Default::default(),
-            ddckCKDestBlt: Default::default(),
-            ddckCKSrcOverlay: Default::default(),
-            ddckCKSrcBlt: Default::default(),
-            ddpfPixelFormat: Default::default(),
+            ddckCKDestOverlay_dwEmptyFaceColor: desc.ddckCKDestOverlay.clone(),
+            ddckCKDestBlt: desc.ddckCKDestBlt.clone(),
+            ddckCKSrcOverlay: desc.ddckCKSrcOverlay.clone(),
+            ddckCKSrcBlt: desc.ddckCKSrcBlt.clone(),
+            ddpfPixelFormat: desc.ddpfPixelFormat.clone(),
             ddsCaps: DDSCAPS2 {
                 dwCaps: desc.ddsCaps,
                 dwCaps2: Default::default(),
@@ -648,4 +652,61 @@ pub struct DDDEVICEIDENTIFIER2 {
     pub dwReserved2: u32,
     pub dwReserved3: u32,
     pub dwReserved4: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desc_conversions_carry_all_shared_fields() {
+        let key = |v: u32| DDCOLORKEY {
+            dwColorSpaceLowValue: v,
+            dwColorSpaceHighValue: v + 1,
+        };
+        let pf = DDPIXELFORMAT {
+            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+            dwFlags: 0x40,
+            dwRGBBitCount: 16,
+            dwRBitMask: 0xF800,
+            ..Default::default()
+        };
+
+        let desc = DDSURFACEDESC {
+            dwFlags: DDSD::MIPMAPCOUNT
+                | DDSD::ALPHABITDEPTH
+                | DDSD::CKDESTBLT
+                | DDSD::CKSRCBLT
+                | DDSD::PIXELFORMAT,
+            dwMipMapCount_dwZBufferBitDepth_dwRefreshRate: 7,
+            dwAlphaBitDepth: 4,
+            lpSurface: 0x1234,
+            ddckCKDestBlt: key(0x10),
+            ddckCKSrcBlt: key(0x20),
+            ddpfPixelFormat: pf.clone(),
+            ..Default::default()
+        };
+
+        let desc2 = DDSURFACEDESC2::from_desc(&desc);
+        assert_eq!(
+            desc2.dwMipMapCount_dwRefreshRate_dwSrcVBHandle, 7,
+            "mip/zbuf/refresh union must survive"
+        );
+        assert_eq!(desc2.dwAlphaBitDepth, 4);
+        assert_eq!(desc2.lpSurface, 0x1234);
+        assert_eq!(
+            desc2.ddckCKSrcBlt.dwColorSpaceLowValue, 0x20,
+            "a source color key must not be zeroed while its flag survives"
+        );
+        assert_eq!(desc2.ddckCKDestBlt.dwColorSpaceLowValue, 0x10);
+        assert_eq!(desc2.ddpfPixelFormat.dwRGBBitCount, 16);
+
+        let back = DDSURFACEDESC::from_desc2(&desc2);
+        assert_eq!(back.dwMipMapCount_dwZBufferBitDepth_dwRefreshRate, 7);
+        assert_eq!(back.dwAlphaBitDepth, 4);
+        assert_eq!(back.lpSurface, 0x1234);
+        assert_eq!(back.ddckCKSrcBlt.dwColorSpaceLowValue, 0x20);
+        assert_eq!(back.ddckCKDestBlt.dwColorSpaceHighValue, 0x11);
+        assert_eq!(back.ddpfPixelFormat.dwRBitMask, 0xF800);
+    }
 }
