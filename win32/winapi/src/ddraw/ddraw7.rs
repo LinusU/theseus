@@ -286,11 +286,11 @@ pub mod IDirectDraw7 {
                     {
                         continue;
                     }
-                    let (flags, r, g, b) = match bpp {
-                        8 => (0x40 | 0x20, 0, 0, 0),
-                        16 => (0x40, 0xF800, 0x07E0, 0x001F),
-                        _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF),
-                    };
+                    // Modes must advertise the byte order surfaces actually
+                    // store: 32bpp memory is RGBA order (R in the low byte),
+                    // not the usual Windows BGRA.
+                    let mut ddpfPixelFormat = crate::ddraw::ddraw::surface_pixel_format(bpp / 8);
+                    ddpfPixelFormat.dwRGBAlphaBitMask = 0; // modes carry no alpha
                     let desc = DDSURFACEDESC2 {
                         dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
                         dwFlags: DDSD::WIDTH
@@ -302,16 +302,7 @@ pub mod IDirectDraw7 {
                         dwHeight: height,
                         lPitch_dwLinearSize: width * bpp.div_ceil(8),
                         dwMipMapCount_dwRefreshRate_dwSrcVBHandle: refresh,
-                        ddpfPixelFormat: DDPIXELFORMAT {
-                            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                            dwFlags: flags,
-                            dwFourCC: 0,
-                            dwRGBBitCount: bpp,
-                            dwRBitMask: r,
-                            dwGBitMask: g,
-                            dwBBitMask: b,
-                            dwRGBAlphaBitMask: 0,
-                        },
+                        ddpfPixelFormat,
                         ..Default::default()
                     };
 
