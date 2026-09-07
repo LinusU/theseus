@@ -464,8 +464,9 @@ pub fn lstrlenW(ctx: &mut Context, lpString: Ptr<u16>) -> i32 {
 mod tests {
     use super::{
         GetComputerNameA, GetPrivateProfileStringW, GetStartupInfoA, GetSystemInfo,
-        GlobalMemoryStatus, MEMORYSTATUS, STARTUPINFOA, SYSTEM_INFO, SetConsoleCtrlHandler,
-        SetUnhandledExceptionFilter, lstrcpyW, lstrlenW, processor_feature_present,
+        GlobalMemoryStatus, MEMORYSTATUS, OutputDebugStringA, STARTUPINFOA, SYSTEM_INFO,
+        SetConsoleCtrlHandler, SetUnhandledExceptionFilter, lstrcpyW, lstrlenW,
+        processor_feature_present,
     };
     use crate::Ptr;
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -533,6 +534,19 @@ mod tests {
         assert!(processor_feature_present(8));
         assert!(!processor_feature_present(6));
         assert!(!processor_feature_present(u32::MAX));
+    }
+
+    #[test]
+    fn output_debug_string_ignores_low_and_malformed_pointers() {
+        let mut ctx = context();
+        // Low addresses are rejected silently, not logged.
+        OutputDebugStringA(&mut ctx, Ptr::new(0));
+        OutputDebugStringA(&mut ctx, Ptr::new(0x500));
+        // Far out-of-range strings are handled by Memory::read_str without panic.
+        OutputDebugStringA(&mut ctx, Ptr::new(0xffff_fff0));
+        // A normal NUL-terminated string in guest memory is accepted.
+        ctx.memory.write_bytes(0x1000, b"hello\0");
+        OutputDebugStringA(&mut ctx, Ptr::new(0x1000));
     }
 
     #[test]
