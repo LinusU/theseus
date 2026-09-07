@@ -45,6 +45,49 @@ pub const CLSID_DirectPlayLobby: GUID = GUID::new(
     [0xa7, 0x87, 0x00, 0x00, 0xf8, 0x03, 0xab, 0xfc],
 );
 
+pub const CLSID_DirectPlay: GUID = GUID::new(
+    0xd1eb_6d20,
+    0x8923,
+    0x11d0,
+    [0x9d, 0x97, 0x00, 0xa0, 0xc9, 0x0a, 0x43, 0xcb],
+);
+pub const IID_IDirectPlay2: GUID = GUID::new(
+    0x2b74_f7c0,
+    0x9154,
+    0x11cf,
+    [0xa9, 0xcd, 0x00, 0xaa, 0x00, 0x68, 0x86, 0xe3],
+);
+pub const IID_IDirectPlay2A: GUID = GUID::new(
+    0x9d46_0580,
+    0xa822,
+    0x11cf,
+    [0x96, 0x0c, 0x00, 0x80, 0xc7, 0x53, 0x4e, 0x82],
+);
+pub const IID_IDirectPlay3: GUID = GUID::new(
+    0x133e_fe40,
+    0x32dc,
+    0x11d0,
+    [0x9c, 0xfb, 0x00, 0xa0, 0xc9, 0x0a, 0x43, 0xcb],
+);
+pub const IID_IDirectPlay3A: GUID = GUID::new(
+    0x133e_fe41,
+    0x32dc,
+    0x11d0,
+    [0x9c, 0xfb, 0x00, 0xa0, 0xc9, 0x0a, 0x43, 0xcb],
+);
+pub const IID_IDirectPlay4: GUID = GUID::new(
+    0x0ab1_c530,
+    0x4745,
+    0x11d1,
+    [0xa7, 0xa1, 0x00, 0x00, 0xf8, 0x03, 0xab, 0xfc],
+);
+pub const IID_IDirectPlay4A: GUID = GUID::new(
+    0x0ab1_c531,
+    0x4745,
+    0x11d1,
+    [0xa7, 0xa1, 0x00, 0x00, 0xf8, 0x03, 0xab, 0xfc],
+);
+
 pub(crate) fn read_guid(ctx: &Context, addr: u32) -> Option<GUID> {
     Ptr::<GUID>::new(addr).read(&ctx.memory)
 }
@@ -458,6 +501,273 @@ pub mod IDirectPlayLobby3A {
     #[win32_derive::dllexport]
     pub fn WaitForConnectionSettings(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> u32 {
         E_FAIL
+    }
+}
+
+/// `IDirectPlay4A` object: a DirectPlay instance with no service providers.
+///
+/// The game creates this through `CoCreateInstance(CLSID_DirectPlay)` inside
+/// `NETMGR.Initialize()`; without it the manager stores a null interface
+/// pointer and later virtual calls crash the guest. The object answers every
+/// vtable entry the way real DirectPlay does on a machine with no usable
+/// service provider: enumeration entry points succeed with empty results,
+/// and session/provider-dependent methods return the matching DPERR code.
+pub mod directplay {
+    use super::*;
+
+    const DP_OK: u32 = S_OK;
+    const DPERR_NOCONNECTION: u32 = 0x8877_00AA;
+    const DPERR_UNAVAILABLE: u32 = 0x8877_00FA;
+    const DPERR_NOSERVICEPROVIDER: u32 = 0x8877_0410;
+
+    /// A DirectPlay method that returns `ret` and stdcall-pops `nargs`
+    /// parameters (including `this`).
+    macro_rules! dp_stub {
+        ($name:ident, $nargs:expr) => {
+            dp_stub!($name, $nargs, DPERR_NOCONNECTION);
+        };
+        ($name:ident, $nargs:expr, $ret:expr) => {
+            #[allow(non_snake_case)]
+            pub fn $name(ctx: &mut Context) -> runtime::Cont {
+                let esp = ctx.cpu.regs.esp;
+                let return_addr = ctx.memory.read::<u32>(esp);
+                log::debug!("dplayx {} (ret={return_addr:#x})", stringify!($name));
+                ctx.cpu.regs.eax = $ret;
+                ctx.cpu.regs.esp = esp.wrapping_add((1 + $nargs) * 4);
+                ctx.indirect(return_addr)
+            }
+        };
+    }
+
+    /// Interfaces the object answers for. IDirectPlay2 through IDirectPlay4
+    /// (A and W) share one vtable prefix, so the same vtable satisfies all
+    /// of them; the legacy IDirectPlay v1 layout differs and is not offered.
+    const IIDS: &[GUID] = &[
+        IID_IDirectPlay2,
+        IID_IDirectPlay2A,
+        IID_IDirectPlay3,
+        IID_IDirectPlay3A,
+        IID_IDirectPlay4,
+        IID_IDirectPlay4A,
+    ];
+
+    /// QueryInterface(this, riid, ppv).
+    pub fn QueryInterface(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        let riid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        let ppv = crate::Ptr::<u32>::new(ctx.memory.read::<u32>(esp.wrapping_add(12)));
+        let mut ret = S_OK;
+        if ppv.addr == 0 {
+            ret = E_POINTER;
+        } else {
+            match read_guid(ctx, riid) {
+                Some(iid)
+                    if iid == IID_IUnknown || iid == IID_NullUnknown || IIDS.contains(&iid) =>
+                {
+                    if ppv.write(&mut ctx.memory, this).is_none() {
+                        ret = E_POINTER;
+                    }
+                }
+                _ => {
+                    if ppv.write(&mut ctx.memory, 0).is_none() {
+                        ret = E_POINTER;
+                    } else {
+                        ret = E_NOINTERFACE;
+                    }
+                }
+            }
+        }
+        ctx.cpu.regs.eax = ret;
+        ctx.cpu.regs.esp = esp.wrapping_add(4 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// Initialize(this, lpGUID): a null GUID leaves the object unbound, which
+    /// real DirectPlay allows; a specific provider cannot be loaded.
+    pub fn Initialize(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let guid = ctx.memory.read::<u32>(esp.wrapping_add(8));
+        log::debug!("dplayx Initialize guid={guid:#x} (ret={return_addr:#x})");
+        ctx.cpu.regs.eax = if guid == 0 {
+            DP_OK
+        } else {
+            DPERR_NOSERVICEPROVIDER
+        };
+        ctx.cpu.regs.esp = esp.wrapping_add(3 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    dp_stub!(AddRef, 1, 1);
+    dp_stub!(Release, 1, 0);
+    dp_stub!(Close, 1, DP_OK);
+    dp_stub!(EnumSessions, 6, DP_OK);
+    dp_stub!(EnumConnections, 5, DP_OK);
+    dp_stub!(InitializeConnection, 3, DPERR_UNAVAILABLE);
+    dp_stub!(AddPlayerToGroup, 3);
+    dp_stub!(CreateGroup, 6);
+    dp_stub!(CreatePlayer, 7);
+    dp_stub!(DeletePlayerFromGroup, 3);
+    dp_stub!(DestroyGroup, 2);
+    dp_stub!(DestroyPlayer, 2);
+    dp_stub!(EnumGroupPlayers, 6);
+    dp_stub!(EnumGroups, 5);
+    dp_stub!(EnumPlayers, 5);
+    dp_stub!(GetCaps, 3);
+    dp_stub!(GetGroupData, 5);
+    dp_stub!(GetGroupName, 4);
+    dp_stub!(GetMessageCount, 3);
+    dp_stub!(GetPlayerAddress, 4);
+    dp_stub!(GetPlayerCaps, 4);
+    dp_stub!(GetPlayerData, 5);
+    dp_stub!(GetPlayerName, 4);
+    dp_stub!(GetSessionDesc, 3);
+    dp_stub!(Open, 3);
+    dp_stub!(Receive, 6);
+    dp_stub!(Send, 6);
+    dp_stub!(SetGroupData, 5);
+    dp_stub!(SetGroupName, 4);
+    dp_stub!(SetPlayerData, 5);
+    dp_stub!(SetPlayerName, 4);
+    dp_stub!(SetSessionDesc, 3);
+    dp_stub!(AddGroupToGroup, 3);
+    dp_stub!(CreateGroupInGroup, 7);
+    dp_stub!(DeleteGroupFromGroup, 3);
+    dp_stub!(EnumGroupsInGroup, 6);
+    dp_stub!(GetGroupConnectionSettings, 5);
+    dp_stub!(SecureOpen, 5);
+    dp_stub!(SendChatMessage, 5);
+    dp_stub!(SetGroupConnectionSettings, 4);
+    dp_stub!(StartSession, 3);
+    dp_stub!(GetGroupFlags, 3);
+    dp_stub!(GetGroupParent, 3);
+    dp_stub!(GetPlayerAccount, 5);
+    dp_stub!(GetPlayerFlags, 3);
+    dp_stub!(GetGroupOwner, 3);
+    dp_stub!(SetGroupOwner, 3);
+    dp_stub!(SendEx, 10);
+    dp_stub!(GetMessageQueue, 6);
+    dp_stub!(CancelMessage, 3);
+    dp_stub!(CancelPriority, 4);
+
+    pub const VTABLE_FUNCS: [ContFn; 53] = [
+        QueryInterface,
+        AddRef,
+        Release,
+        // IDirectPlay2
+        AddPlayerToGroup,
+        Close,
+        CreateGroup,
+        CreatePlayer,
+        DeletePlayerFromGroup,
+        DestroyGroup,
+        DestroyPlayer,
+        EnumGroupPlayers,
+        EnumGroups,
+        EnumPlayers,
+        EnumSessions,
+        GetCaps,
+        GetGroupData,
+        GetGroupName,
+        GetMessageCount,
+        GetPlayerAddress,
+        GetPlayerCaps,
+        GetPlayerData,
+        GetPlayerName,
+        GetSessionDesc,
+        Initialize,
+        Open,
+        Receive,
+        Send,
+        SetGroupData,
+        SetGroupName,
+        SetPlayerData,
+        SetPlayerName,
+        SetSessionDesc,
+        // IDirectPlay3
+        AddGroupToGroup,
+        CreateGroupInGroup,
+        DeleteGroupFromGroup,
+        EnumConnections,
+        EnumGroupsInGroup,
+        GetGroupConnectionSettings,
+        InitializeConnection,
+        SecureOpen,
+        SendChatMessage,
+        SetGroupConnectionSettings,
+        StartSession,
+        GetGroupFlags,
+        GetGroupParent,
+        GetPlayerAccount,
+        GetPlayerFlags,
+        // IDirectPlay4
+        GetGroupOwner,
+        SetGroupOwner,
+        SendEx,
+        GetMessageQueue,
+        CancelMessage,
+        CancelPriority,
+    ];
+
+    static mut VTABLE: u32 = 0;
+
+    fn vtable(ctx: &mut Context) -> u32 {
+        unsafe {
+            if VTABLE == 0 {
+                let mut kernel32 = kernel32::lock();
+                if let Some((addr, blocks)) =
+                    init_vtable(ctx, &mut kernel32.process_heap, 0xfafd_2000, &VTABLE_FUNCS)
+                {
+                    VTABLE = addr;
+                    drop(kernel32);
+                    add_blocks(ctx, blocks);
+                    log::debug!("IDirectPlay4A vtable allocated at {addr:#x}");
+                }
+            }
+            VTABLE
+        }
+    }
+
+    /// `CoCreateInstance` body for `CLSID_DirectPlay`.
+    pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
+        if !crate::ddraw::guest_range(ctx, ppv, 4) {
+            return E_POINTER;
+        }
+        let ppv_ptr = crate::Ptr::<u32>::new(ppv);
+        let iid = match read_guid(ctx, riid) {
+            Some(iid) => iid,
+            None => {
+                if ppv_ptr.write(&mut ctx.memory, 0).is_none() {
+                    return E_POINTER;
+                }
+                return E_NOINTERFACE;
+            }
+        };
+        if !(iid == IID_IUnknown || iid == IID_NullUnknown || IIDS.contains(&iid)) {
+            if ppv_ptr.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
+            return E_NOINTERFACE;
+        }
+        let vtable = vtable(ctx);
+        if vtable == 0 {
+            if ppv_ptr.write(&mut ctx.memory, 0).is_none() {
+                return E_POINTER;
+            }
+            return E_OUTOFMEMORY;
+        }
+        let kernel32 = kernel32::lock();
+        let Some(obj) = kernel32.process_heap.try_alloc(&mut ctx.memory, 4) else {
+            return E_OUTOFMEMORY;
+        };
+        drop(kernel32);
+        ctx.memory.write(obj, vtable);
+        if ppv_ptr.write(&mut ctx.memory, obj).is_none() {
+            return E_POINTER;
+        }
+        S_OK
     }
 }
 

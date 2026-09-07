@@ -38,6 +38,9 @@ pub fn CoCreateInstance(
         if clsid == dplayx::CLSID_DirectPlayLobby {
             return dplayx::IDirectPlayLobby3A::create(ctx, _riid, ppv.addr);
         }
+        if clsid == dplayx::CLSID_DirectPlay {
+            return dplayx::directplay::create(ctx, _riid, ppv.addr);
+        }
         if clsid == dmusic::CLSID_DirectMusicPerformance {
             return dmusic::performance::create(ctx, _riid, ppv.addr);
         }
