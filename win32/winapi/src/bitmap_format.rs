@@ -274,11 +274,19 @@ impl Bitmap {
 
     pub fn read_pixels(&self, pixels: &[u8], y: u32, x1: u32, x2: u32, dst: &mut [u8]) {
         // Degenerate or truncated bitmaps may not have a full row available.
-        if x2 > self.width || x1 > x2 || pixels.len() < (y as usize + 1) * self.stride() as usize {
+        // Saturating arithmetic keeps the guard fail-closed on hosts where
+        // usize is narrower than 64 bits.
+        if x2 > self.width
+            || x1 > x2
+            || pixels.len()
+                < (y as usize)
+                    .saturating_add(1)
+                    .saturating_mul(self.stride() as usize)
+        {
             return;
         }
         let row_pixels = (x2 - x1) as usize;
-        let row_bytes = row_pixels * 4;
+        let row_bytes = row_pixels.saturating_mul(4);
         if dst.len() < row_bytes {
             return;
         }
