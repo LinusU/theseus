@@ -446,4 +446,36 @@ mod tests {
         assert!(state.blocks.contains_key(&0x1100));
         assert!(!state.blocks.contains_key(&0x1200));
     }
+
+    /// A pointer-scan candidate that lands mid-instruction must not keep a
+    /// decoded block once real code covering it is found later: its edges
+    /// report garbage branch targets. Regression for the MM2 `00595449`
+    /// diagnostic, where `7c 51` inside a `mov` immediate decoded as `jl`.
+    #[test]
+    fn mid_instruction_scan_candidate_is_evicted() {
+        let mut state = State::default();
+        state.mem.reserve("code".into(), 0x1000, 0x1000);
+        state.mem.write(0x1000, 0xc3u8); // ret
+        // mov ax, 0x517c / ret — the bytes at 0x1102 decode as `jl +0x51`.
+        state
+            .mem
+            .write_bytes(0x1100, &[0x66, 0xb8, 0x7c, 0x51, 0xc3]);
+        // The pointer scan sees the mid-instruction address before the
+        // real block start.
+        state.mem.reserve("data".into(), 0x2000, 0x100);
+        state.mem.write(0x2000, 0x1102u32);
+        state.mem.write(0x2004, 0x1100u32);
+        state.module = Module::Windows(WindowsModule {
+            entry_point: 0x1000,
+            code_memory: 0x1000..0x2000,
+            ..Default::default()
+        });
+        state.gather(Gather {
+            scan_memory: true,
+            ..Default::default()
+        });
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(state.blocks.contains_key(&0x1104));
+        assert!(!state.blocks.contains_key(&0x1102));
+    }
 }

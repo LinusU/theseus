@@ -109,6 +109,11 @@ struct Traverse<'a> {
     seen_tables: HashSet<u32>,
     /// Ranges within code sections that are known to be data (e.g. jump tables).
     data_ranges: Vec<std::ops::Range<u32>>,
+    /// Addresses promoted from low-confidence scans. A block discovered only
+    /// by a scan whose start is later covered mid-instruction by another
+    /// decode is a stale guess and is evicted, which also removes the false
+    /// branch targets its instructions would have produced.
+    low_confidence: HashSet<u32>,
     blocks: BTreeMap<u32, Block>,
 }
 
@@ -124,6 +129,7 @@ impl<'a> Traverse<'a> {
             queue: IPQueue::default(),
             seen_tables: HashSet::new(),
             data_ranges: Vec::new(),
+            low_confidence: HashSet::new(),
             blocks: Default::default(),
         }
     }
@@ -255,6 +261,7 @@ impl<'a> Traverse<'a> {
             if !self.looks_like_code(addr) {
                 continue;
             }
+            self.low_confidence.insert(addr);
             self.queue.enqueue(self.module.local_addr(addr));
         }
     }
@@ -274,12 +281,47 @@ impl<'a> Traverse<'a> {
 
         match self.decode_one(ip) {
             Ok(block) => {
+                self.evict_stale_candidates(&block);
                 self.blocks.insert(addr, block);
             }
             Err(e) => {
                 log::warn!("omitting {ip}: {e}");
                 self.queue.invalid.insert(addr);
             }
+        }
+    }
+
+    /// A scan-candidate block whose start is strictly inside another block's
+    /// instruction range is a stale guess: the real decode stopped there
+    /// because the address is mid-instruction, not an instruction boundary.
+    /// Drop it so the branch targets it reported cannot leak into codegen.
+    /// Blocks discovered through real control-flow edges are never removed —
+    /// a genuine jump into the middle of a block keeps the existing split
+    /// behavior in `process`.
+    fn evict_stale_candidates(&mut self, block: &Block) {
+        if self.low_confidence.is_empty() {
+            return;
+        }
+        let BlockType::Instrs(instrs) = &block.ty else {
+            return;
+        };
+        let Some(first) = instrs.first().unwrap().ip.to_addr().checked_add(1) else {
+            return;
+        };
+        let end = instrs.last().unwrap().next_ip().to_addr();
+        if first >= end {
+            return;
+        }
+        let stale: Vec<u32> = self
+            .blocks
+            .range(first..end)
+            .map(|(&addr, _)| addr)
+            .filter(|addr| self.low_confidence.contains(addr))
+            .collect();
+        for addr in stale {
+            log::info!("evicting mid-instruction scan guess {addr:08x}");
+            self.blocks.remove(&addr);
+            self.queue.invalid.insert(addr);
         }
     }
 
