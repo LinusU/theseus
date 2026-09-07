@@ -168,7 +168,7 @@ impl<'a> Traverse<'a> {
                     addr,
                     Block {
                         name: Some(info.name.clone()),
-                        ty: BlockType::Extern(addr),
+                        ty: BlockType::Extern(self.module.local_addr(addr)),
                     },
                 );
             }

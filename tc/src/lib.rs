@@ -175,7 +175,7 @@ pub struct Block {
 pub enum BlockType {
     Instrs(Vec<Instr>),
     Stdcall(String),
-    Extern(u32), // TODO: use ip instead
+    Extern(IP),
 }
 
 impl Block {
@@ -189,7 +189,7 @@ impl Block {
                 IP::Seg(addr) => format!("x{:04x}_{:04x}", addr.seg, addr.ofs),
             },
             BlockType::Stdcall(func) => format!("{}_stdcall", func),
-            BlockType::Extern(ip) => format!("x{:x}", ip),
+            BlockType::Extern(ip) => format!("x{:x}", ip.to_addr()),
         }
     }
 }
