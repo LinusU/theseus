@@ -8,6 +8,19 @@ use crate::{
 
 #[win32_derive::dllexport]
 pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX */) -> i32 {
+    // SM_CXSCREEN/SM_CYSCREEN track the current display mode; in this
+    // single-window model that is the emulated window's client size, which
+    // ChangeDisplaySettings and IDirectDraw::SetDisplayMode keep current.
+    if nIndex <= 1
+        && let Some(window) = state().window.borrow().as_ref()
+    {
+        let window = window.borrow();
+        return if nIndex == 0 {
+            window.width as i32
+        } else {
+            window.height as i32
+        };
+    }
     // These were dumped from a win2k VM running at 640x480.
     // See retrowin32's exe/cpp/metrics.cc.
     const METRICS: [i32; 100] = [
@@ -734,6 +747,38 @@ mod tests {
         // Indices past the table report 0 like Windows, not a panic.
         assert_eq!(GetSystemMetrics(&mut ctx, 100), 0);
         assert_eq!(GetSystemMetrics(&mut ctx, u32::MAX), 0);
+    }
+
+    #[test]
+    fn system_metrics_track_the_current_display_mode() {
+        // Insert the emulated window directly: CreateWindowExA would touch
+        // SDL's main-thread-only window APIs.
+        let mut ctx = context();
+        let window = std::rc::Rc::new(std::cell::RefCell::new(crate::user32::Window {
+            hwnd: crate::user32::HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: String::new(),
+            enabled: true,
+            visible: false,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 1024,
+            height: 768,
+            pixels: None,
+            host: unsafe { std::mem::zeroed() },
+            surface: None,
+        }));
+        crate::user32::state().window.borrow_mut().replace(window);
+        assert_eq!(GetSystemMetrics(&mut ctx, 0), 1024); // SM_CXSCREEN
+        assert_eq!(GetSystemMetrics(&mut ctx, 1), 768); // SM_CYSCREEN
+        crate::user32::state().window.borrow_mut().take();
     }
 
     #[test]
