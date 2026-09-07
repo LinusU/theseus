@@ -21,10 +21,13 @@ impl<'a> CodeGen<'a> {
                 self.line(format!("let x = ctx.{func}();"));
                 self.line(self.set_op(instr, 0, "x".into()))
             }
-            // The 16-bit PUSHA/POPA forms share the same helpers; pushad/
-            // popad pick 16- or 32-bit registers from cpu.real_mode.
-            Pusha | Pushad => self.line("ctx.pushad();"),
-            Popa | Popad => self.line("ctx.popad();"),
+            // PUSHA/POPA and PUSHAD/POPAD are distinct mnemonics keyed by
+            // the operand-size attribute; the helpers push 16- or 32-bit
+            // registers while push16/push32 handle the stack-pointer width.
+            Pusha => self.line("ctx.pusha();"),
+            Pushad => self.line("ctx.pushad();"),
+            Popa => self.line("ctx.popa();"),
+            Popad => self.line("ctx.popad();"),
             Mov => {
                 // Moves to or from control, debug, or test registers are
                 // privileged in Windows usermode, and on DOS would imply a
@@ -86,11 +89,25 @@ impl<'a> CodeGen<'a> {
                 self.line(self.set_op(instr, 0, read));
             }
 
-            Leave => self.line("ctx.leave();"),
+            // ENTER/LEAVE share their mnemonics across operand sizes; the
+            // iced code's w/d suffix picks the register and push width.
+            Leave => {
+                let func = if instr.code() == iced_x86::Code::Leavew {
+                    "leave16"
+                } else {
+                    "leave"
+                };
+                self.line(format!("ctx.{func}();"));
+            }
             Enter => {
                 assert!(instr.op1_kind() == iced_x86::OpKind::Immediate8_2nd);
                 let op1 = instr.immediate8_2nd();
-                self.line(format!("ctx.enter({}, {:x});", self.get_op(instr, 0), op1));
+                let func = if instr.code() == iced_x86::Code::Enterw_imm16_imm8 {
+                    "enter16"
+                } else {
+                    "enter"
+                };
+                self.line(format!("ctx.{func}({}, {:x});", self.get_op(instr, 0), op1));
             }
 
             Xchg => {

@@ -2859,9 +2859,18 @@ mod tests {
             (32, &[0x0f, 0x01, 0xf9], "ctx.cpu.regs.ecx = 0;"),
             // int1
             (32, &[0xf1], "unhandled_interrupt(0x1, 0x0);"),
-            // 16-bit pusha/popa share the pushad/popad helpers
-            (16, &[0x60], "ctx.pushad();"),
-            (16, &[0x61], "ctx.popad();"),
+            // The 16-bit operand-size forms use the word-register helpers.
+            (16, &[0x60], "ctx.pusha();"),
+            (16, &[0x61], "ctx.popa();"),
+            // The 66-prefixed forms in 32-bit code are the word forms too.
+            (32, &[0x66, 0x60], "ctx.pusha();"),
+            (32, &[0x66, 0x61], "ctx.popa();"),
+            // 66 c9 in 32-bit code is leavew; plain c9 is leaved.
+            (32, &[0x66, 0xc9], "ctx.leave16();"),
+            (32, &[0xc9], "ctx.leave();"),
+            // 66 c8 is enterw.
+            (32, &[0x66, 0xc8, 0x04, 0x00, 0x00], "ctx.enter16("),
+            (32, &[0xc8, 0x04, 0x00, 0x00], "ctx.enter("),
         ] {
             codegen.buf.clear();
             let mut decoder =

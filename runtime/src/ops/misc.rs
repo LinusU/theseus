@@ -49,101 +49,130 @@ impl Context {
         }
     }
 
+    /// PUSHA: push the 16-bit registers; the operand-size attribute picks
+    /// the register width while push16/push32 pick the stack-pointer width.
+    pub fn pusha(&mut self) {
+        let sp = self.cpu.regs.get_sp();
+        self.push16(self.cpu.regs.get_ax());
+        self.push16(self.cpu.regs.get_cx());
+        self.push16(self.cpu.regs.get_dx());
+        self.push16(self.cpu.regs.get_bx());
+        self.push16(sp);
+        self.push16(self.cpu.regs.get_bp());
+        self.push16(self.cpu.regs.get_si());
+        self.push16(self.cpu.regs.get_di());
+    }
+
+    /// PUSHAD: push the 32-bit registers.
     pub fn pushad(&mut self) {
-        if self.cpu.real_mode {
-            let sp = self.cpu.regs.get_sp();
-            self.push16(self.cpu.regs.get_ax());
-            self.push16(self.cpu.regs.get_cx());
-            self.push16(self.cpu.regs.get_dx());
-            self.push16(self.cpu.regs.get_bx());
-            self.push16(sp);
-            self.push16(self.cpu.regs.get_bp());
-            self.push16(self.cpu.regs.get_si());
-            self.push16(self.cpu.regs.get_di());
-        } else {
-            let esp = self.cpu.regs.esp;
-            self.push32(self.cpu.regs.eax);
-            self.push32(self.cpu.regs.ecx);
-            self.push32(self.cpu.regs.edx);
-            self.push32(self.cpu.regs.ebx);
-            self.push32(esp);
-            self.push32(self.cpu.regs.ebp);
-            self.push32(self.cpu.regs.esi);
-            self.push32(self.cpu.regs.edi);
-        }
+        let esp = self.cpu.regs.esp;
+        self.push32(self.cpu.regs.eax);
+        self.push32(self.cpu.regs.ecx);
+        self.push32(self.cpu.regs.edx);
+        self.push32(self.cpu.regs.ebx);
+        self.push32(esp);
+        self.push32(self.cpu.regs.ebp);
+        self.push32(self.cpu.regs.esi);
+        self.push32(self.cpu.regs.edi);
     }
 
+    /// POPA: pop the 16-bit registers.
+    pub fn popa(&mut self) {
+        let di = self.pop16();
+        let si = self.pop16();
+        let bp = self.pop16();
+        self.pop16();
+        let bx = self.pop16();
+        let dx = self.pop16();
+        let cx = self.pop16();
+        let ax = self.pop16();
+        self.cpu.regs.set_di(di);
+        self.cpu.regs.set_si(si);
+        self.cpu.regs.set_bp(bp);
+        self.cpu.regs.set_bx(bx);
+        self.cpu.regs.set_dx(dx);
+        self.cpu.regs.set_cx(cx);
+        self.cpu.regs.set_ax(ax);
+    }
+
+    /// POPAD: pop the 32-bit registers.
     pub fn popad(&mut self) {
-        if self.cpu.real_mode {
-            let di = self.pop16();
-            let si = self.pop16();
-            let bp = self.pop16();
-            self.pop16();
-            let bx = self.pop16();
-            let dx = self.pop16();
-            let cx = self.pop16();
-            let ax = self.pop16();
-            self.cpu.regs.set_di(di);
-            self.cpu.regs.set_si(si);
-            self.cpu.regs.set_bp(bp);
-            self.cpu.regs.set_bx(bx);
-            self.cpu.regs.set_dx(dx);
-            self.cpu.regs.set_cx(cx);
-            self.cpu.regs.set_ax(ax);
-        } else {
-            self.cpu.regs.edi = self.pop32();
-            self.cpu.regs.esi = self.pop32();
-            self.cpu.regs.ebp = self.pop32();
-            self.pop32();
-            self.cpu.regs.ebx = self.pop32();
-            self.cpu.regs.edx = self.pop32();
-            self.cpu.regs.ecx = self.pop32();
-            self.cpu.regs.eax = self.pop32();
-        }
+        self.cpu.regs.edi = self.pop32();
+        self.cpu.regs.esi = self.pop32();
+        self.cpu.regs.ebp = self.pop32();
+        self.pop32();
+        self.cpu.regs.ebx = self.pop32();
+        self.cpu.regs.edx = self.pop32();
+        self.cpu.regs.ecx = self.pop32();
+        self.cpu.regs.eax = self.pop32();
     }
 
+    /// ENTER with a 16-bit operand-size attribute: BP frames and word pushes.
+    /// push16 still resolves SP vs ESP from the stack-address attribute.
+    pub fn enter16(&mut self, bytes: u16, nesting: u8) {
+        let nesting = nesting & 0x1f;
+        let old_bp = self.cpu.regs.get_bp();
+        self.push16(old_bp);
+        let frame_temp = self.cpu.regs.get_sp();
+        for i in 1..nesting {
+            let addr = self.addr16_stack(old_bp.wrapping_sub(u16::from(i) * 2));
+            self.push16(self.memory.read::<u16>(addr));
+        }
+        if nesting != 0 {
+            self.push16(frame_temp);
+        }
+        self.cpu.regs.set_bp(frame_temp);
+        self.cpu
+            .regs
+            .set_sp(self.cpu.regs.get_sp().wrapping_sub(bytes));
+    }
+
+    /// ENTER with a 32-bit operand-size attribute: EBP frames, dword pushes.
     pub fn enter(&mut self, bytes: u16, nesting: u8) {
         let nesting = nesting & 0x1f;
+        let old_bp = self.cpu.regs.ebp;
+        self.push32(old_bp);
+        let frame_temp = self.cpu.regs.esp;
+        for i in 1..nesting {
+            let addr = self.stack_addr(old_bp.wrapping_sub(u32::from(i) * 4));
+            self.push32(self.memory.read::<u32>(addr));
+        }
+        if nesting != 0 {
+            self.push32(frame_temp);
+        }
+        self.cpu.regs.ebp = frame_temp;
+        self.cpu.regs.esp = self.cpu.regs.esp.wrapping_sub(bytes as u32);
+    }
+
+    /// The stack memory address for a 16-bit stack-address attribute.
+    fn addr16_stack(&self, offset: u16) -> u32 {
         if self.cpu.real_mode {
-            let old_bp = self.cpu.regs.get_bp();
-            self.push16(old_bp);
-            let frame_temp = self.cpu.regs.get_sp();
-            for i in 1..nesting {
-                let addr = segofs(self.cpu.regs.ss, old_bp.wrapping_sub(u16::from(i) * 2));
-                self.push16(self.memory.read::<u16>(addr));
-            }
-            if nesting != 0 {
-                self.push16(frame_temp);
-            }
-            self.cpu.regs.set_bp(frame_temp);
-            self.cpu
-                .regs
-                .set_sp(self.cpu.regs.get_sp().wrapping_sub(bytes));
+            segofs(self.cpu.regs.ss, offset)
         } else {
-            let old_bp = self.cpu.regs.ebp;
-            self.push32(old_bp);
-            let frame_temp = self.cpu.regs.esp;
-            for i in 1..nesting {
-                let addr = old_bp.wrapping_sub(u32::from(i) * 4);
-                self.push32(self.memory.read::<u32>(addr));
-            }
-            if nesting != 0 {
-                self.push32(frame_temp);
-            }
-            self.cpu.regs.ebp = frame_temp;
-            self.cpu.regs.esp = self.cpu.regs.esp.wrapping_sub(bytes as u32);
+            offset as u32
         }
     }
 
-    pub fn leave(self: &mut Context) {
+    /// The stack memory address for a 32-bit stack-address attribute.
+    fn stack_addr(&self, offset: u32) -> u32 {
         if self.cpu.real_mode {
-            self.cpu.regs.set_sp(self.cpu.regs.get_bp());
-            let bp = self.pop16();
-            self.cpu.regs.set_bp(bp);
+            segofs(self.cpu.regs.ss, offset as u16)
         } else {
-            self.cpu.regs.esp = self.cpu.regs.ebp;
-            self.cpu.regs.ebp = self.pop32();
+            offset
         }
+    }
+
+    /// LEAVE with a 16-bit operand-size attribute: SP = BP, pop BP.
+    pub fn leave16(self: &mut Context) {
+        self.cpu.regs.set_sp(self.cpu.regs.get_bp());
+        let bp = self.pop16();
+        self.cpu.regs.set_bp(bp);
+    }
+
+    /// LEAVE with a 32-bit operand-size attribute: ESP = EBP, pop EBP.
+    pub fn leave(self: &mut Context) {
+        self.cpu.regs.esp = self.cpu.regs.ebp;
+        self.cpu.regs.ebp = self.pop32();
     }
 
     pub fn sete(self: &Context) -> u8 {
@@ -643,24 +672,24 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_enter_leave_use_bp_and_sp() {
+    fn enter16_leave16_use_bp_and_sp() {
         let mut ctx = context();
         ctx.cpu.real_mode = true;
         ctx.cpu.regs.ss = 0x1000;
         ctx.cpu.regs.esp = 0xabcd_0100;
         ctx.cpu.regs.ebp = 0xfeed_0200;
 
-        ctx.enter(4, 0);
+        ctx.enter16(4, 0);
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_00fa);
         assert_eq!(ctx.cpu.regs.ebp, 0xfeed_00fe);
 
-        ctx.leave();
+        ctx.leave16();
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
         assert_eq!(ctx.cpu.regs.ebp, 0xfeed_0200);
     }
 
     #[test]
-    fn real_mode_enter_copies_nested_frame_pointers() {
+    fn enter16_copies_nested_frame_pointers() {
         let mut ctx = context();
         ctx.cpu.real_mode = true;
         ctx.cpu.regs.ss = 0x1000;
@@ -668,7 +697,7 @@ mod tests {
         ctx.cpu.regs.ebp = 0xfeed_0100;
         ctx.memory.write::<u16>(segofs(0x1000, 0x00fe), 0xaaaa);
 
-        ctx.enter(4, 2);
+        ctx.enter16(4, 2);
 
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_01f6);
         assert_eq!(ctx.cpu.regs.ebp, 0xfeed_01fe);
@@ -677,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_pushad_popad_use_16_bit_registers() {
+    fn pusha_popa_use_16_bit_registers() {
         let mut ctx = context();
         ctx.cpu.real_mode = true;
         ctx.cpu.regs.ss = 0x1000;
@@ -690,7 +719,7 @@ mod tests {
         ctx.cpu.regs.esi = 0x6666_0006;
         ctx.cpu.regs.edi = 0x7777_0007;
 
-        ctx.pushad();
+        ctx.pusha();
         ctx.cpu.regs.eax = 0;
         ctx.cpu.regs.ecx = 0;
         ctx.cpu.regs.edx = 0;
@@ -698,7 +727,7 @@ mod tests {
         ctx.cpu.regs.ebp = 0;
         ctx.cpu.regs.esi = 0;
         ctx.cpu.regs.edi = 0;
-        ctx.popad();
+        ctx.popa();
 
         assert_eq!(ctx.cpu.regs.esp, 0xabcd_0100);
         assert_eq!(ctx.cpu.regs.eax, 0x0000_0001);
