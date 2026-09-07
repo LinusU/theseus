@@ -321,8 +321,6 @@ impl<'a> CodeGen<'a> {
                     self.set_op(instr, 0, self.get_op(instr, 1))
                 ));
             }
-            Div => self.todo(instr_name(instr)),
-
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),
             Cwde => self.line("ctx.cpu.regs.eax = ctx.cpu.regs.get_ax() as i16 as i32 as u32;"),
