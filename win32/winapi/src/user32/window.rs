@@ -436,14 +436,39 @@ pub fn MoveWindow(
     if window.hwnd != hWnd {
         return false;
     }
-    window.x = X;
-    window.y = Y;
-    // A negative size clamps to zero like SetWindowPos, not up to
-    // MAX_WINDOW_DIM via the u32 cast.
-    window.resize(ctx, nWidth.max(0) as u32, nHeight.max(0) as u32);
+    // Windows implements MoveWindow on top of SetWindowPos, so a real
+    // position or size change posts the same WM_MOVE/WM_SIZE pair.
+    let moved = window.x != X || window.y != Y;
+    let resized = {
+        let (old_w, old_h) = (window.width, window.height);
+        window.x = X;
+        window.y = Y;
+        // A negative size clamps to zero like SetWindowPos, not up to
+        // MAX_WINDOW_DIM via the u32 cast.
+        window.resize(ctx, nWidth.max(0) as u32, nHeight.max(0) as u32);
+        window.width != old_w || window.height != old_h
+    };
     if bRepaint {
         window.dirty = true;
     };
+    use super::message::post_message;
+    if moved {
+        post_message(
+            hWnd,
+            WM::MOVE as u32,
+            0,
+            ((Y as u16 as u32) << 16) | X as u16 as u32,
+        );
+    }
+    if resized {
+        // WM_SIZE: SIZE_RESTORED wParam, client dimensions in lParam.
+        post_message(
+            hWnd,
+            WM::SIZE as u32,
+            0,
+            (window.height << 16) | window.width,
+        );
+    }
     true // sucess
 }
 

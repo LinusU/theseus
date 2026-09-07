@@ -408,6 +408,15 @@ impl MessageQueue {
         }
     }
 
+    /// Enqueue host messages that were already polled; `pump_host_input`
+    /// uses this so the host poll — which can initialize SDL on first use —
+    /// does not run while the shared queue is borrowed.
+    pub(crate) fn enqueue_all(&mut self, messages: Vec<host::Message>) {
+        for message in messages {
+            self.enqueue_message(message);
+        }
+    }
+
     /// Wait for a new message to arrive.
     fn wait_host(&mut self) {
         let message = host::host().wait();
@@ -813,6 +822,20 @@ pub fn SendMessageW(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
 
     fn msg(hwnd: u32, message: u32) -> MSG {
         MSG {
@@ -937,5 +960,92 @@ mod tests {
             queue.timer_msg(false, 100, &any).unwrap().message,
             WM::TIMER as u32
         );
+    }
+
+    /// Drain the shared message queue, retrying a transient concurrent
+    /// `borrow_mut` (other tests reach it via `pump_host_input`, and the
+    /// RefCell flag is shared across test threads).
+    fn take_messages() -> Vec<MSG> {
+        loop {
+            if let Ok(mut queue) = state().message_queue.try_borrow_mut() {
+                return queue.messages.drain(..).collect();
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn move_window_posts_move_and_size() {
+        let _guard = crate::user32::WINDOW_STATE_LOCK.lock().unwrap();
+        let mut ctx = context();
+        // Install the single emulated window directly; CreateWindowExA would
+        // touch SDL's main-thread-only window APIs.
+        let window = Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: String::new(),
+            enabled: true,
+            visible: true,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            pixels: None,
+            host: unsafe { std::mem::zeroed() },
+            surface: None,
+        }));
+        state().window.borrow_mut().replace(window);
+
+        // A no-op move posts nothing.
+        assert!(crate::user32::MoveWindow(
+            &mut ctx,
+            HWND::from_raw(1),
+            0,
+            0,
+            640,
+            480,
+            false
+        ));
+        assert!(take_messages().is_empty());
+
+        // A position change posts WM_MOVE with the new client origin.
+        assert!(crate::user32::MoveWindow(
+            &mut ctx,
+            HWND::from_raw(1),
+            20,
+            30,
+            640,
+            480,
+            false
+        ));
+        let msgs = take_messages();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].message, WM::MOVE as u32);
+        assert_eq!(msgs[0].lParam, (30 << 16) | 20);
+
+        // A size change posts WM_SIZE with the new client dimensions.
+        assert!(crate::user32::MoveWindow(
+            &mut ctx,
+            HWND::from_raw(1),
+            20,
+            30,
+            320,
+            200,
+            false
+        ));
+        let msgs = take_messages();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].message, WM::SIZE as u32);
+        assert_eq!(msgs[0].wParam, 0);
+        assert_eq!(msgs[0].lParam, (200 << 16) | 320);
+
+        state().window.borrow_mut().take();
     }
 }

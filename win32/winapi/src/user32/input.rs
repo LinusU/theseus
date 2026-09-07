@@ -391,7 +391,15 @@ impl Input {
 /// DirectInput reads state without touching the message queue, so it calls
 /// this first to avoid reporting a stale keyboard.
 pub fn pump_host_input() {
-    state().message_queue.borrow_mut().poll_host_all();
+    // Poll outside the queue borrow: the first host() call initializes SDL,
+    // which must not run while the shared queue's RefCell is held.
+    let mut messages = Vec::new();
+    while let Some(message) = host::host().poll() {
+        messages.push(message);
+    }
+    if !messages.is_empty() {
+        state().message_queue.borrow_mut().enqueue_all(messages);
+    }
 }
 
 fn vkey_to_char(vkey: u8, shift: bool, caps: bool) -> Option<u8> {
