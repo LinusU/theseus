@@ -471,7 +471,7 @@ impl<'a> CodeGen<'a> {
                 } else {
                     off
                 };
-                self.line(format!("ctx.xlat({addr});"));
+                self.line(format!("ctx.xlat_addr({addr});"));
             }
 
             // ARPL compares and adjusts the RPL fields of two selectors; it

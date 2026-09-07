@@ -3177,17 +3177,17 @@ mod tests {
             // xlatb: [ebx+al]
             (
                 &[0xd7u8][..],
-                "ctx.xlat(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32));",
+                "ctx.xlat_addr(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32));",
             ),
             // 67-prefixed xlat uses BX, wrapping the sum to 16 bits.
             (
                 &[0x67u8, 0xd7][..],
-                "ctx.xlat(ctx.cpu.regs.get_bx().wrapping_add(ctx.cpu.regs.get_al() as u16) as u32);",
+                "ctx.xlat_addr(ctx.cpu.regs.get_bx().wrapping_add(ctx.cpu.regs.get_al() as u16) as u32);",
             ),
             // fs: xlatb reads through fs_base in flat code.
             (
                 &[0x64u8, 0xd7][..],
-                "ctx.xlat(ctx.cpu.regs.fs_base.wrapping_add(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32)));",
+                "ctx.xlat_addr(ctx.cpu.regs.fs_base.wrapping_add(ctx.cpu.regs.ebx.wrapping_add(ctx.cpu.regs.get_al() as u32)));",
             ),
         ] {
             codegen.buf.clear();

@@ -342,8 +342,22 @@ impl Context {
     /// XLAT loads AL from the table byte at `addr` — the fully resolved
     /// seg:[(E)BX + AL] address, which codegen computes so the segment
     /// override and address-size attribute are honored.
-    pub fn xlat(&mut self, addr: u32) {
+    pub fn xlat_addr(&mut self, addr: u32) {
         let value = self.memory.read::<u8>(addr);
+        self.cpu.regs.set_al(value);
+    }
+
+    /// Backward-compatible `xlat` for generated snapshots that predate the
+    /// address-size/segment-override fix. It resolves DS:[(E)BX + AL] using
+    /// the module's `real_mode` bit, which is sufficient for those images.
+    pub fn xlat(&mut self) {
+        let offset = if self.cpu.real_mode {
+            self.cpu.regs.get_bx() as u32
+        } else {
+            self.cpu.regs.ebx
+        };
+        let offset = offset.wrapping_add(self.cpu.regs.get_al() as u32);
+        let value = self.memory.read::<u8>(self.addr(self.cpu.regs.ds, offset));
         self.cpu.regs.set_al(value);
     }
 
