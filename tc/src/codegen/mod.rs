@@ -374,6 +374,27 @@ impl<'a> CodeGen<'a> {
     /// `from` is the address of the instruction that references `addr`, if
     /// known, and is included in the diagnostic so the source can be tracked
     /// down.
+    // Try to decode a single instruction at `addr` in the loaded image.
+    // Returns true if the bytes at that address form at least one non-zero
+    // valid instruction; this is used to avoid warning on branches into data
+    // that is only accidentally x86-shaped.
+    fn is_valid_instr_start(&self, addr: u32) -> bool {
+        let Some(bytes) = self.mem.bytes.get(addr as usize..) else {
+            return false;
+        };
+        if bytes.is_empty() {
+            return false;
+        }
+        let mut decoder = iced_x86::Decoder::with_ip(
+            self.module.bitness(),
+            bytes,
+            addr as u64,
+            iced_x86::DecoderOptions::NONE,
+        );
+        let instr = decoder.decode();
+        !instr.is_invalid() && instr.len() != 0
+    }
+
     pub fn resolve_cont(&mut self, addr: u32, from: u32) -> String {
         if let Some(block) = self.blocks.get(&addr) {
             format!("Cont({})", block.name())
@@ -383,7 +404,11 @@ impl<'a> CodeGen<'a> {
             // same never-discovered block.
             if self.unknown.insert(addr) {
                 if self.module.code_memory().contains(&addr) {
-                    log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
+                    if self.is_valid_instr_start(addr) {
+                        log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
+                    } else {
+                        log::debug!("{from:08x} -> static jmp to non-instruction {addr:08x}");
+                    }
                 } else {
                     log::debug!("{from:08x} -> static jmp to out-of-module block {addr:08x}");
                 }
@@ -6279,6 +6304,11 @@ mod tests {
             }),
             ..Default::default()
         };
+        // Reserve enough backing memory so 0x402000 is addressable but 0x403000
+        // is not, giving both valid and non-instruction in-module targets.
+        state.mem.bytes.resize(0x402010, 0);
+        state.mem.bytes[0x402000] = 0x90;
+
         state.blocks.insert(
             0x401000,
             crate::Block {
@@ -6291,15 +6321,20 @@ mod tests {
         // Known targets keep using the block name.
         assert_eq!(codegen.resolve_cont(0x401000, 0x401005), "Cont(xknown)");
 
-        // Unknown in-module targets fall back to a stub and are tracked.
+        // Unknown in-module target that does decode as an instruction gets a stub.
         assert_eq!(codegen.resolve_cont(0x402000, 0x401006), "Cont(unk_402000)");
         assert_eq!(codegen.resolve_cont(0x402000, 0x401007), "Cont(unk_402000)");
         assert_eq!(codegen.unknown.len(), 1);
         assert!(codegen.unknown.contains(&0x402000));
 
+        // Unknown in-module target that cannot be decoded (out-of-bounds bytes)
+        // still generates a stub but is tracked as a distinct address.
+        assert_eq!(codegen.resolve_cont(0x403000, 0x401008), "Cont(unk_403000)");
+        assert_eq!(codegen.resolve_cont(0x403000, 0x401009), "Cont(unk_403000)");
+
         // Unknown out-of-module targets are also deduped.
-        assert_eq!(codegen.resolve_cont(0x600000, 0x401008), "Cont(unk_600000)");
-        assert_eq!(codegen.resolve_cont(0x600000, 0x401009), "Cont(unk_600000)");
-        assert_eq!(codegen.unknown.len(), 2);
+        assert_eq!(codegen.resolve_cont(0x600000, 0x40100a), "Cont(unk_600000)");
+        assert_eq!(codegen.resolve_cont(0x600000, 0x40100b), "Cont(unk_600000)");
+        assert_eq!(codegen.unknown.len(), 3);
     }
 }
