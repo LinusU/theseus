@@ -66,8 +66,14 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
+        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         log::warn!("IDirectDraw::QueryInterface({iid:?}): not supported");
+        ctx.memory.write::<u32>(_ppvObject, 0);
         DD::E_NOINTERFACE
     }
 
@@ -601,8 +607,14 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
+        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         log::warn!("IDirectDrawSurface::QueryInterface({iid:?}): not supported");
+        ctx.memory.write::<u32>(_ppvObject, 0);
         DD::E_NOINTERFACE
     }
 
@@ -1163,8 +1175,14 @@ pub mod IDirectDrawPalette {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
+        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+            return DD::ERR_INVALIDPARAMS;
+        }
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
         log::warn!("IDirectDrawPalette::QueryInterface({iid:?}): not supported");
+        ctx.memory.write::<u32>(_ppvObject, 0);
         DD::E_NOINTERFACE
     }
 

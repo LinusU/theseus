@@ -1922,4 +1922,58 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn query_interface_validates_riid_and_ppv() {
+        let mut ctx = context();
+        const THIS: u32 = 0x1234;
+        const PPV: u32 = 0x1000;
+        const RIID: u32 = 0x2000;
+
+        // A supported ddraw7 interface writes the object pointer and returns OK.
+        ctx.memory
+            .write(RIID, crate::ddraw::ddraw7::IID_IDirectDraw7);
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, THIS, RIID, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(THIS));
+
+        // An unsupported interface zeros the output pointer and returns E_NOINTERFACE.
+        let unknown =
+            crate::ddraw::GUID::new(0xdead_beef, 0xcafe, 0xbabe, [1, 2, 3, 4, 5, 6, 7, 8]);
+        ctx.memory.write(RIID + 0x20, unknown);
+        ctx.memory.write::<u32>(PPV, 0x42);
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, THIS, RIID + 0x20, PPV),
+            DD::E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0));
+
+        // Bad riid or ppv pointers return ERR_INVALIDPARAMS instead of ignoring
+        // the failure or returning E_NOINTERFACE.
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, THIS, 0xffff_fff0, PPV),
+            DD::ERR_INVALIDPARAMS
+        );
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, THIS, RIID, 0xffff_fff0),
+            DD::ERR_INVALIDPARAMS
+        );
+
+        // The ddraw1 QueryInterface stubs also validate both pointers.
+        assert_eq!(
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, THIS, RIID, PPV),
+            DD::E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0));
+        assert_eq!(
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, THIS, 0xffff_fff0, PPV),
+            DD::ERR_INVALIDPARAMS
+        );
+        assert_eq!(
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, THIS, RIID, 0xffff_fff0),
+            DD::ERR_INVALIDPARAMS
+        );
+    }
 }

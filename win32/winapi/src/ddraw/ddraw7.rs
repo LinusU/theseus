@@ -93,23 +93,22 @@ pub mod IDirectDraw7 {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
-        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory);
-        if let Some(iid) = iid {
-            if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
-                ctx.memory.write::<u32>(ppv, _this);
-                return DD::OK;
-            }
-            if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
-                let mut kernel32 = kernel32::lock();
-                let Some(addr) =
-                    crate::ddraw::d3d7::IDirect3D7::new(ctx, &mut kernel32.process_heap)
-                else {
-                    return DD::ERR_OUTOFMEMORY;
-                };
-                drop(kernel32);
-                ctx.memory.write::<u32>(ppv, addr);
-                return DD::OK;
-            }
+        let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
+            ctx.memory.write::<u32>(ppv, _this);
+            return DD::OK;
+        }
+        if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
+            let mut kernel32 = kernel32::lock();
+            let Some(addr) = crate::ddraw::d3d7::IDirect3D7::new(ctx, &mut kernel32.process_heap)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            drop(kernel32);
+            ctx.memory.write::<u32>(ppv, addr);
+            return DD::OK;
         }
         ctx.memory.write::<u32>(ppv, 0);
         DD::E_NOINTERFACE
@@ -935,8 +934,7 @@ pub mod IDirectDrawSurface7 {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
-            ctx.memory.write::<u32>(ppv, 0);
-            return DD::E_NOINTERFACE;
+            return DD::ERR_INVALIDPARAMS;
         };
         if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDIRECTDRAWSURFACE7 {
             ctx.memory.write::<u32>(ppv, this);
