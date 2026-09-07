@@ -192,12 +192,37 @@ impl<'a> CodeGen<'a> {
                 self.line(next);
             }
             Je | Jne | Jb | Js | Jns | Jo | Jno | Jp | Jnp | Ja | Jae | Jl | Jg | Jge | Jecxz
-            | Jle | Jbe | Jcxz | Loop | Loope | Loopne => {
+            | Jle | Jbe | Jcxz => {
                 let next = self.resolve_jmp(instr.next_ip(), instr.ip.to_addr());
                 let (None, None, cont) = self.jmp_target(instr) else {
                     panic!()
                 };
                 let func = instr_name(&instr.iced);
+                self.line(format!("ctx.{func}({next}, {cont})"));
+            }
+            // LOOP/LOOPE/LOOPNE share their mnemonics across address sizes;
+            // the iced code's CX/ECX/RCX suffix picks the counter register,
+            // which is the address-size attribute, not the module's mode.
+            Loop | Loope | Loopne => {
+                let next = self.resolve_jmp(instr.next_ip(), instr.ip.to_addr());
+                let (None, None, cont) = self.jmp_target(instr) else {
+                    panic!()
+                };
+                let cx = matches!(
+                    instr.iced.code(),
+                    iced_x86::Code::Loop_rel8_16_CX
+                        | iced_x86::Code::Loop_rel8_32_CX
+                        | iced_x86::Code::Loope_rel8_16_CX
+                        | iced_x86::Code::Loope_rel8_32_CX
+                        | iced_x86::Code::Loopne_rel8_16_CX
+                        | iced_x86::Code::Loopne_rel8_32_CX
+                );
+                let func = match (instr.iced.mnemonic(), cx) {
+                    (Loop, true) => "loop_cx".to_string(),
+                    (Loope, true) => "loope_cx".to_string(),
+                    (Loopne, true) => "loopne_cx".to_string(),
+                    _ => instr_name(&instr.iced),
+                };
                 self.line(format!("ctx.{func}({next}, {cont})"));
             }
 

@@ -236,28 +236,39 @@ impl Context {
         self.indirect(segofs(seg, ofs))
     }
 
+    /// Decrement the 16-bit CX counter, preserving the high bits of ECX.
+    /// Returns the post-decrement count.
+    fn loop_dec_cx(&mut self) -> u32 {
+        let count = self.cpu.regs.get_cx().wrapping_sub(1);
+        self.cpu.regs.set_cx(count);
+        count as u32
+    }
+
+    fn loop_dec_ecx(&mut self) -> u32 {
+        self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
+        self.cpu.regs.ecx
+    }
+
     pub fn loop_(&mut self, from: Cont, x: Cont) -> Cont {
-        let count = if self.cpu.real_mode {
-            let count = self.cpu.regs.get_cx().wrapping_sub(1);
-            self.cpu.regs.set_cx(count);
-            count as u32
-        } else {
-            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
-            self.cpu.regs.ecx
-        };
-        if count != 0 { x } else { from }
+        if self.loop_dec_ecx() != 0 { x } else { from }
+    }
+
+    /// LOOP with a 16-bit address-size attribute counts in CX.
+    pub fn loop_cx(&mut self, from: Cont, x: Cont) -> Cont {
+        if self.loop_dec_cx() != 0 { x } else { from }
     }
 
     pub fn loope(&mut self, from: Cont, x: Cont) -> Cont {
-        let count = if self.cpu.real_mode {
-            let count = self.cpu.regs.get_cx().wrapping_sub(1);
-            self.cpu.regs.set_cx(count);
-            count as u32
+        if self.loop_dec_ecx() != 0 && self.cpu.flags.contains(Flags::ZF) {
+            x
         } else {
-            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
-            self.cpu.regs.ecx
-        };
-        if count != 0 && self.cpu.flags.contains(Flags::ZF) {
+            from
+        }
+    }
+
+    /// LOOPE with a 16-bit address-size attribute counts in CX.
+    pub fn loope_cx(&mut self, from: Cont, x: Cont) -> Cont {
+        if self.loop_dec_cx() != 0 && self.cpu.flags.contains(Flags::ZF) {
             x
         } else {
             from
@@ -265,15 +276,16 @@ impl Context {
     }
 
     pub fn loopne(&mut self, from: Cont, x: Cont) -> Cont {
-        let count = if self.cpu.real_mode {
-            let count = self.cpu.regs.get_cx().wrapping_sub(1);
-            self.cpu.regs.set_cx(count);
-            count as u32
+        if self.loop_dec_ecx() != 0 && !self.cpu.flags.contains(Flags::ZF) {
+            x
         } else {
-            self.cpu.regs.ecx = self.cpu.regs.ecx.wrapping_sub(1);
-            self.cpu.regs.ecx
-        };
-        if count != 0 && !self.cpu.flags.contains(Flags::ZF) {
+            from
+        }
+    }
+
+    /// LOOPNE with a 16-bit address-size attribute counts in CX.
+    pub fn loopne_cx(&mut self, from: Cont, x: Cont) -> Cont {
+        if self.loop_dec_cx() != 0 && !self.cpu.flags.contains(Flags::ZF) {
             x
         } else {
             from
@@ -439,12 +451,11 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_loop_uses_cx_without_changing_high_bits() {
+    fn loop_cx_uses_cx_without_changing_high_bits() {
         let mut ctx = context();
-        ctx.cpu.real_mode = true;
         ctx.cpu.regs.ecx = 0xabcd_0001;
 
-        let next = ctx.loop_(Cont(from), Cont(taken));
+        let next = ctx.loop_cx(Cont(from), Cont(taken));
 
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
@@ -452,19 +463,18 @@ mod tests {
     }
 
     #[test]
-    fn real_mode_loopne_uses_cx_for_count_and_zero_flag() {
+    fn loopne_cx_uses_cx_for_count_and_zero_flag() {
         let mut ctx = context();
-        ctx.cpu.real_mode = true;
         ctx.cpu.regs.ecx = 0xabcd_0002;
 
-        let next = ctx.loopne(Cont(from), Cont(taken));
+        let next = ctx.loopne_cx(Cont(from), Cont(taken));
 
         let expected: ContFn = taken;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0001);
 
         ctx.cpu.flags.insert(Flags::ZF);
-        let next = ctx.loopne(Cont(from), Cont(taken));
+        let next = ctx.loopne_cx(Cont(from), Cont(taken));
         let expected: ContFn = from;
         assert!(std::ptr::fn_addr_eq(next.0, expected));
         assert_eq!(ctx.cpu.regs.ecx, 0xabcd_0000);

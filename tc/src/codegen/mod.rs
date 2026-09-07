@@ -3157,6 +3157,40 @@ mod tests {
     }
 
     #[test]
+    fn codegen_picks_the_loop_counter_from_the_address_size() {
+        // The loop counter is CX for a 16-bit address-size attribute and
+        // ECX otherwise — independent of the module's code width.
+        for (bitness, bytes, want) in [
+            (32, &[0xe2u8, 0x00][..], "ctx.loop_("),
+            (32, &[0x67u8, 0xe2, 0x00][..], "ctx.loop_cx("),
+            (32, &[0x67u8, 0xe1, 0x00][..], "ctx.loope_cx("),
+            (32, &[0x67u8, 0xe0, 0x00][..], "ctx.loopne_cx("),
+            (16, &[0xe2u8, 0x00][..], "ctx.loop_cx("),
+            (16, &[0x67u8, 0xe2, 0x00][..], "ctx.loop_("),
+        ] {
+            let state = crate::State {
+                module: crate::Module::Windows(crate::WindowsModule::default()),
+                ..Default::default()
+            };
+            let mut codegen = super::CodeGen::new(&state, false);
+            let mut decoder =
+                iced_x86::Decoder::with_ip(bitness, bytes, 0, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Flat(0),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen.buf.contains(want),
+                "{bytes:02x?} in {bitness}-bit: want {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_into_overflow_trap() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),
