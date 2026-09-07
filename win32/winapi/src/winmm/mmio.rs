@@ -226,8 +226,14 @@ pub fn mmioOpenA(ctx: &mut Context, szFilename: u32, _lpmmioinfo: u32, _dwOpenFl
 
     let mut winmm = super::state();
     let mmio = winmm.mmio();
-    // Handle 0 is reserved for failure.
-    mmio.next_handle += 1;
+    // Handle 0 is reserved for failure; on wrap, skip it and any handle
+    // still in use.
+    loop {
+        mmio.next_handle = mmio.next_handle.wrapping_add(1).max(1);
+        if !mmio.files.contains_key(&mmio.next_handle) {
+            break;
+        }
+    }
     let handle = mmio.next_handle;
     mmio.files.insert(
         handle,
@@ -397,6 +403,9 @@ pub fn mmioAscend(ctx: &mut Context, hmmio: u32, lpck: u32, _wFlags: u32) -> u32
 /// Expose the file's contents as a buffer the caller can read from directly.
 #[win32_derive::dllexport]
 pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32) -> u32 {
+    if !guest_fits(ctx, lpmmioinfo, std::mem::size_of::<MMIOINFO>() as u32) {
+        return MMIOERR_CANNOTOPEN;
+    }
     let Some((buffer, pos, len)) = ensure_buffer(ctx, hmmio) else {
         return MMIOERR_CANNOTOPEN;
     };
@@ -414,7 +423,9 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
     info.dwFlags = 0;
     info.cchBuffer = len;
     info.pchBuffer = buffer;
-    info.pchNext = buffer + pos;
+    // A truncated container descend can leave pos a few bytes past EOF;
+    // pchNext must stay inside [pchBuffer, pchEndRead].
+    info.pchNext = buffer + pos.min(len);
     info.pchEndRead = buffer + len;
     info.pchEndWrite = buffer + len;
     // The buffer covers the file from its start, so buffer offsets and file
@@ -428,6 +439,9 @@ pub fn mmioGetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
 /// Take back the file position the caller advanced through pchNext.
 #[win32_derive::dllexport]
 pub fn mmioSetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32) -> u32 {
+    if !guest_fits(ctx, lpmmioinfo, std::mem::size_of::<MMIOINFO>() as u32) {
+        return MMIOERR_CANNOTOPEN;
+    }
     let info = ctx
         .memory
         .bytes
@@ -449,6 +463,9 @@ pub fn mmioSetInfo(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32)
 /// this only syncs the position; pchNext == pchEndRead then signals EOF.
 #[win32_derive::dllexport]
 pub fn mmioAdvance(ctx: &mut Context, hmmio: u32, lpmmioinfo: u32, _wFlags: u32) -> u32 {
+    if !guest_fits(ctx, lpmmioinfo, std::mem::size_of::<MMIOINFO>() as u32) {
+        return MMIOERR_CANNOTOPEN;
+    }
     let Some((buffer, _, len)) = ensure_buffer(ctx, hmmio) else {
         return MMIOERR_CANNOTOPEN;
     };
@@ -569,6 +586,30 @@ mod tests {
         assert_eq!(mmioRead(&mut ctx, 10, oob, 0), 0);
         assert_eq!(mmioRead(&mut ctx, 10, oob, 16), MMIO_FAILURE);
         crate::winmm::state().mmio().files.remove(&10);
+    }
+
+    #[test]
+    fn mmio_info_calls_reject_low_out_pointers() {
+        let mut ctx = context();
+        {
+            let mut winmm = crate::winmm::state();
+            winmm.mmio().files.insert(
+                11,
+                File {
+                    data: vec![0xAA; 0x40],
+                    pos: 0,
+                    buffer: 0,
+                },
+            );
+        }
+        // A valid handle with a null-page out-pointer must fail instead of
+        // reading from or writing into guest low memory.
+        assert_eq!(mmioGetInfo(&mut ctx, 11, 0, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioGetInfo(&mut ctx, 11, 0x500, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioSetInfo(&mut ctx, 11, 0, 0), MMIOERR_CANNOTOPEN);
+        assert_eq!(mmioAdvance(&mut ctx, 11, 0, 0), MMIOERR_CANNOTOPEN);
+        assert!(ctx.memory.bytes[..0x40].iter().all(|b| *b == 0));
+        crate::winmm::state().mmio().files.remove(&11);
     }
 
     #[test]
