@@ -621,6 +621,11 @@ pub fn PeekMessageA(
     // PM_REMOVE is bit 0; the remaining bits (PM_NOYIELD, PM_QS_*) are
     // filtering/scheduling hints that change nothing in this emulated queue.
     let remove = wRemoveMsg & 1 != 0;
+    // A missing or out-of-range output buffer must fail before the queue is
+    // inspected; otherwise a message could be removed and then lost.
+    if !crate::ddraw::guest_range(ctx, lpMsg.addr, std::mem::size_of::<MSG>() as u32) {
+        return false;
+    }
     // Games poll for messages every frame; keep the audio mixer fed from here
     // too, in case the app renders without flipping.
     crate::dsound::pump(ctx);
@@ -680,6 +685,11 @@ pub fn GetMessageW(
 ) -> i32 {
     let filter = MsgFilter::new(hWnd, wMsgFilterMin, wMsgFilterMax);
     if filter.is_invalid_window() {
+        return -1;
+    }
+    // GetMessage blocks until it can write a message; reject an unusable
+    // output buffer up front so the queue is not modified if the write fails.
+    if !crate::ddraw::guest_range(ctx, lpMsg.addr, std::mem::size_of::<MSG>() as u32) {
         return -1;
     }
     let msg = loop {
