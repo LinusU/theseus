@@ -36,7 +36,17 @@ impl<'a> CodeGen<'a> {
                 cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
             iced_x86::OpKind::FarBranch32 => {
-                let ip = IP::Flat(instr.iced.far_branch32());
+                let ip = if self.module.segment_addressed() {
+                    IP::Seg(
+                        (
+                            instr.iced.far_branch_selector(),
+                            instr.iced.far_branch32() as u16,
+                        )
+                            .into(),
+                    )
+                } else {
+                    IP::Flat(instr.iced.far_branch32())
+                };
                 seg = Some(format!("{:#x}", instr.iced.far_branch_selector()));
                 cont = self.resolve_jmp(ip, instr.ip.to_addr());
             }
