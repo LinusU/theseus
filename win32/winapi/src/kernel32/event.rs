@@ -65,19 +65,29 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
         }
     };
 
+    // The timeout is absolute: a notify that leaves the event unsignaled (a
+    // pulse, or a reset landing before a waiter runs) must not re-arm the
+    // full wait and extend it past the caller's deadline.
+    const INFINITE: u32 = u32::MAX;
+    let deadline = (dwMilliseconds != INFINITE).then(|| {
+        std::time::Instant::now() + std::time::Duration::from_millis(dwMilliseconds as u64)
+    });
     let mut signaled = event.signaled.lock().unwrap_or_else(|e| e.into_inner());
     while !*signaled {
-        let (new_signaled, result) = event
-            .cond
-            .wait_timeout(
-                signaled,
-                std::time::Duration::from_millis(dwMilliseconds as u64),
-            )
-            .unwrap_or_else(|e| e.into_inner());
-        signaled = new_signaled;
-        if result.timed_out() {
-            return WAIT_TIMEOUT;
-        }
+        signaled = match deadline {
+            Some(deadline) => {
+                let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now())
+                else {
+                    return WAIT_TIMEOUT;
+                };
+                event
+                    .cond
+                    .wait_timeout(signaled, remaining)
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0
+            }
+            None => event.cond.wait(signaled).unwrap_or_else(|e| e.into_inner()),
+        };
     }
     if !event.manual_reset {
         *signaled = false;
@@ -286,10 +296,50 @@ mod tests {
 
     #[test]
     fn create_event_rejects_low_name_pointer() {
+        crate::kernel32::ensure_test_state();
         let mut ctx = context();
         // A null name is a legal unnamed event.
         assert!(!CreateEventA(&mut ctx, Ptr::new(0), false, false, Ptr::new(0)).is_null());
         // A low non-null name is an invalid pointer and fails the call.
         assert!(CreateEventA(&mut ctx, Ptr::new(0), false, false, Ptr::new(0x500)).is_null());
+    }
+
+    #[test]
+    fn wait_for_single_object_timeout_is_absolute() {
+        crate::kernel32::ensure_test_state();
+        let mut ctx = context();
+        let event = CreateEventA(&mut ctx, Ptr::new(0), false, false, Ptr::new(0));
+        // Pulses from another thread (the winmm timer path does exactly
+        // this) wake the waiter without leaving the event signaled; each
+        // one must not re-arm the full timeout.
+        let pulser = std::thread::spawn(move || {
+            for _ in 0..5 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                signal_event(event, true);
+            }
+        });
+        let start = std::time::Instant::now();
+        // WAIT_TIMEOUT
+        assert_eq!(WaitForSingleObject(&mut ctx, event, 150), 0x102);
+        // Re-arming per pulse would wait ~250ms; the absolute deadline
+        // returns at ~150ms.
+        assert!(start.elapsed() < std::time::Duration::from_millis(210));
+        pulser.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_single_object_consumes_an_auto_reset_event() {
+        crate::kernel32::ensure_test_state();
+        let mut ctx = context();
+        let event = CreateEventA(&mut ctx, Ptr::new(0), false, true, Ptr::new(0));
+        // WAIT_OBJECT_0
+        assert_eq!(WaitForSingleObject(&mut ctx, event, 0), 0);
+        // The auto-reset wait consumed the signal; a poll now times out.
+        assert_eq!(WaitForSingleObject(&mut ctx, event, 0), 0x102);
+        // An unknown handle fails rather than waiting.
+        assert_eq!(
+            WaitForSingleObject(&mut ctx, HANDLE::from_raw(0xdead), 0),
+            u32::MAX
+        );
     }
 }
