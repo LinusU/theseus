@@ -1075,7 +1075,7 @@ pub mod IDirect3DDevice7 {
         };
         if dwFlags & D3DCLEAR_ZBUFFER != 0 {
             // The z-buffer is the DDSCAPS_ZBUFFER surface attached to the
-            // render target; store dvZ packed to its 16-bit depth.
+            // render target; store dvZ packed into its declared depth field.
             let zbuf = {
                 let rt = surf.borrow();
                 rt.attachments
@@ -1084,11 +1084,10 @@ pub mod IDirect3DDevice7 {
                     .cloned()
             };
             if let Some(zbuf) = zbuf {
-                let z = z_to_u16(f32::from_bits(dvZ));
-                {
+                let (bpp, mask) = {
                     let zsurf = zbuf.borrow();
                     log::debug!(
-                        "Clear zbuf: surf={:#x} {}x{} bpp={} pixels={:#x} z={z:#x} rt={}x{}",
+                        "Clear zbuf: surf={:#x} {}x{} bpp={} pixels={:#x} rt={}x{}",
                         zsurf.addr,
                         zsurf.width,
                         zsurf.height,
@@ -1097,13 +1096,37 @@ pub mod IDirect3DDevice7 {
                         surf.borrow().width,
                         surf.borrow().height,
                     );
+                    let mask = if zsurf.pixel_format.dwFlags & 0x400 != 0 {
+                        zsurf.pixel_format.dwGBitMask
+                    } else {
+                        0
+                    };
+                    (zsurf.bytes_per_pixel, mask)
+                };
+                if !(1..=4).contains(&bpp) {
+                    log::debug!("Clear zbuf: unsupported {bpp}-byte depth elements");
+                } else {
+                    let mask = if mask != 0 {
+                        mask
+                    } else {
+                        u32::MAX >> ((4 - bpp.min(4)) * 8)
+                    };
+                    let z = depth_to_field(f32::from_bits(dvZ), mask);
+                    fill(ctx, &zbuf, &|buf| {
+                        // Write only the depth field; a stencil or other
+                        // trailing field keeps its current value.
+                        for px in buf.chunks_exact_mut(bpp as usize) {
+                            let mut cur = 0u32;
+                            for (i, b) in px.iter().enumerate() {
+                                cur |= (*b as u32) << (i * 8);
+                            }
+                            let v = (cur & !mask) | z;
+                            for (i, b) in px.iter_mut().enumerate() {
+                                *b = (v >> (i * 8)) as u8;
+                            }
+                        }
+                    });
                 }
-                fill(ctx, &zbuf, &|buf| {
-                    let bytes = z.to_le_bytes();
-                    for chunk in buf.chunks_exact_mut(2) {
-                        chunk.copy_from_slice(&bytes);
-                    }
-                });
             } else {
                 log::debug!("Clear zbuf: no z-buffer attached to {surface_addr:#x}");
             }
@@ -2249,12 +2272,32 @@ fn warn_unhandled_texture_stage_state(dw_stage: u32, dw_state: u32, dw_value: u3
     }
 }
 
-/// Pack a [0,1] depth into a 16-bit z-buffer word.
-fn z_to_u16(z: f32) -> u16 {
-    (z.clamp(0.0, 1.0) * 65535.0) as u16
+/// Pack a [0,1] depth into the z-buffer's masked bit field; a zero mask
+/// means the depth value spans the whole element.
+fn depth_to_field(z: f32, mask: u32) -> u32 {
+    let mask = if mask == 0 { u32::MAX } else { mask };
+    let shift = mask.trailing_zeros();
+    let max = (mask >> shift) as f64;
+    ((((z.clamp(0.0, 1.0) as f64) * max) as u64) << shift) as u32
 }
 
-fn z_passes(zfunc: u32, new: u16, cur: u16) -> bool {
+/// Read a depth element of `bpp` bytes (1..=4) as a little-endian u32.
+fn depth_read(mem: &Memory, addr: u32, bpp: u32) -> u32 {
+    let mut v = 0u32;
+    for i in 0..bpp {
+        v |= (mem.read::<u8>(addr + i) as u32) << (i * 8);
+    }
+    v
+}
+
+/// Write the low `bpp` bytes (1..=4) of a depth element little-endian.
+fn depth_write(mem: &mut Memory, addr: u32, bpp: u32, v: u32) {
+    for i in 0..bpp {
+        mem.write::<u8>(addr + i, (v >> (i * 8)) as u8);
+    }
+}
+
+fn z_passes(zfunc: u32, new: u32, cur: u32) -> bool {
     match zfunc {
         1 => false,      // D3DCMP_NEVER
         2 => new < cur,  // D3DCMP_LESS
@@ -2514,6 +2557,8 @@ fn rasterize(
         zbuf_addr: u32,
         zbuf_width: u32,
         zbuf_height: u32,
+        zbuf_bpp: u32,
+        zbuf_mask: u32,
         cull: u32,
         zenable: u32,
         zwrite: u32,
@@ -2694,14 +2739,22 @@ fn rasterize(
         drop(rt);
         let rt_addr = rt_surf.borrow_mut().lock(&mut ctx.memory).unwrap_or(0);
         // The z-buffer keeps its own dimensions: its row pitch is the
-        // attached surface's width, not the render target's.
-        let (zbuf_addr, zbuf_width, zbuf_height) = zbuf_surf
+        // attached surface's width, not the render target's. The depth
+        // field mask comes from the surface's declared DDPF_ZBUFFER pixel
+        // format (dwZBitMask shares the dwGBitMask union member).
+        let (zbuf_addr, zbuf_width, zbuf_height, zbuf_bpp, zbuf_mask) = zbuf_surf
             .and_then(|z| {
                 let mut zb = z.borrow_mut();
-                let dims = (zb.width, zb.height);
-                zb.lock(&mut ctx.memory).map(|addr| (addr, dims.0, dims.1))
+                let mask = if zb.pixel_format.dwFlags & 0x400 != 0 {
+                    zb.pixel_format.dwGBitMask
+                } else {
+                    0
+                };
+                let dims = (zb.width, zb.height, zb.bytes_per_pixel, mask);
+                zb.lock(&mut ctx.memory)
+                    .map(|addr| (addr, dims.0, dims.1, dims.2, dims.3))
             })
-            .unwrap_or((0, 0, 0));
+            .unwrap_or((0, 0, 0, 0, 0));
 
         break 'targets Targets {
             rt_surface: rt_surface_key,
@@ -2720,6 +2773,8 @@ fn rasterize(
             zbuf_addr,
             zbuf_width,
             zbuf_height,
+            zbuf_bpp,
+            zbuf_mask,
             cull,
             zenable,
             zwrite,
@@ -2775,13 +2830,23 @@ fn rasterize(
         ))
     });
     let mut probe_hit = false;
-    // Z-testing is only meaningful when a z-buffer is actually attached.
-    let zbuf_addr = if t.zenable != 0 && std::env::var("THESEUS_NO_ZTEST").is_err() {
+    // Z-testing is only meaningful when a z-buffer is actually attached and
+    // its element width is one the depth path can address.
+    let zbuf_addr = if t.zenable != 0
+        && (1..=4).contains(&t.zbuf_bpp)
+        && std::env::var("THESEUS_NO_ZTEST").is_err()
+    {
         t.zbuf_addr
     } else {
         0
     };
-    let zstride = t.zbuf_width * 2;
+    // A z-buffer with no declared z mask is treated as full-width depth.
+    let zbuf_mask = if t.zbuf_mask != 0 {
+        t.zbuf_mask
+    } else {
+        u32::MAX >> ((4 - t.zbuf_bpp.min(4)) * 8)
+    };
+    let zstride = t.zbuf_width * t.zbuf_bpp;
 
     // Expand the draw into an index stream (or implicit vertex ordinals),
     // then decompose it into independent triangles per D3DPRIMITIVETYPE.
@@ -3095,21 +3160,23 @@ fn rasterize(
                 }
 
                 // An alpha-tested-out fragment leaves color and depth alone.
-                if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u16, t.alpha_ref as u16) {
+                if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u32, t.alpha_ref) {
                     continue;
                 }
 
                 // Depth is linear in screen space for pre-transformed verts.
                 // Pixels outside the attached z-buffer's own extent leave
-                // depth alone rather than striding into adjacent memory.
+                // depth alone rather than striding into adjacent memory, and
+                // non-depth bits (e.g. a D24S8 stencil byte) are preserved.
                 if zbuf_addr != 0 && (px as u32) < t.zbuf_width && (py as u32) < t.zbuf_height {
-                    let z = z_to_u16(alpha * a.z + beta * b.z + gamma * c.z);
-                    let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
-                    if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
+                    let z = depth_to_field(alpha * a.z + beta * b.z + gamma * c.z, zbuf_mask);
+                    let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * t.zbuf_bpp;
+                    let cur = depth_read(&ctx.memory, zaddr, t.zbuf_bpp);
+                    if !z_passes(t.zfunc, z, cur & zbuf_mask) {
                         continue;
                     }
                     if t.zwrite != 0 {
-                        ctx.memory.write::<u16>(zaddr, z);
+                        depth_write(&mut ctx.memory, zaddr, t.zbuf_bpp, (cur & !zbuf_mask) | z);
                     }
                 }
 
@@ -3312,18 +3379,19 @@ fn rasterize(
                 color = fog_565(color, t.fog_color, f);
             }
 
-            if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u16, t.alpha_ref as u16) {
+            if t.alpha_test != 0 && !z_passes(t.alpha_func, sa as u32, t.alpha_ref) {
                 continue;
             }
 
             if zbuf_addr != 0 && (px as u32) < t.zbuf_width && (py as u32) < t.zbuf_height {
-                let z = z_to_u16(one * a.z + ti * b.z);
-                let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * 2;
-                if !z_passes(t.zfunc, z, ctx.memory.read::<u16>(zaddr)) {
+                let z = depth_to_field(one * a.z + ti * b.z, zbuf_mask);
+                let zaddr = zbuf_addr + py as u32 * zstride + px as u32 * t.zbuf_bpp;
+                let cur = depth_read(&ctx.memory, zaddr, t.zbuf_bpp);
+                if !z_passes(t.zfunc, z, cur & zbuf_mask) {
                     continue;
                 }
                 if t.zwrite != 0 {
-                    ctx.memory.write::<u16>(zaddr, z);
+                    depth_write(&mut ctx.memory, zaddr, t.zbuf_bpp, (cur & !zbuf_mask) | z);
                 }
             }
 
@@ -3401,6 +3469,34 @@ mod tests {
             clip_segment_t(-10.0, -10.0, 30.0, 30.0, 19.0, 19.0),
             Some((0.25, 0.725))
         );
+    }
+
+    #[test]
+    fn depth_field_packs_into_the_declared_mask() {
+        // 16-bit and 32-bit full-width depth.
+        assert_eq!(depth_to_field(1.0, 0xFFFF), 0xFFFF);
+        assert_eq!(depth_to_field(0.0, 0xFFFF), 0);
+        assert_eq!(depth_to_field(0.5, 0xFFFF), 32767);
+        assert_eq!(depth_to_field(1.0, 0xFFFF_FFFF), 0xFFFF_FFFF);
+        // D24S8: depth lives in the high 24 bits; the stencil byte stays 0.
+        assert_eq!(depth_to_field(1.0, 0xFFFF_FF00), 0xFFFF_FF00);
+        assert_eq!(depth_to_field(0.5, 0xFFFF_FF00), 0x7FFF_FF00);
+        // Out-of-range clamps into the field.
+        assert_eq!(depth_to_field(2.0, 0xFFFF), 0xFFFF);
+        assert_eq!(depth_to_field(-1.0, 0xFFFF), 0);
+    }
+
+    #[test]
+    fn depth_elements_read_and_write_their_own_width() {
+        let mut memory = Memory::leak_new(0x1000);
+        depth_write(&mut memory, 0x100, 2, 0xABCD);
+        assert_eq!(depth_read(&memory, 0x100, 2), 0xABCD);
+        assert_eq!(memory.read::<u8>(0x102), 0); // byte past the element untouched
+        depth_write(&mut memory, 0x104, 4, 0xDEAD_BEEF);
+        assert_eq!(depth_read(&memory, 0x104, 4), 0xDEAD_BEEF);
+        depth_write(&mut memory, 0x108, 3, 0x12_3456);
+        assert_eq!(depth_read(&memory, 0x108, 3), 0x12_3456);
+        assert_eq!(memory.read::<u8>(0x10B), 0);
     }
 
     #[test]

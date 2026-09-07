@@ -112,10 +112,11 @@ impl DirectDraw {
         };
 
         // Keep the requested pixel format so the rasterizer can decode
-        // alpha-bearing textures (1555/4444) instead of assuming 565.
+        // alpha-bearing textures (1555/4444) instead of assuming 565, and
+        // so a depth surface keeps its declared z/stencil bit masks.
         let pixel_format = if desc.dwFlags.contains(DDSD::PIXELFORMAT)
-            && desc.ddpfPixelFormat.dwFlags & 0x40 != 0
-        // DDPF_RGB
+            && desc.ddpfPixelFormat.dwFlags & (0x40 | 0x400) != 0
+        // DDPF_RGB | DDPF_ZBUFFER
         {
             desc.ddpfPixelFormat.clone()
         } else {
