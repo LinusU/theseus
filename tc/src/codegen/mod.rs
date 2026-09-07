@@ -259,6 +259,7 @@ pub fn op_size(instr: &iced_x86::Instruction, n: u32) -> usize {
     match instr.op_kind(n) {
         Register => reg_size(instr.op_register(n)),
         k if is_memory_op(k) => mem_size(instr),
+        Immediate8 => 8,
         Immediate16 => 16,
         Immediate8to16 => 16,
         Immediate8to32 => 32,
@@ -686,6 +687,16 @@ mod tests {
         let instr = decoder.decode();
         assert_eq!(instr.memory_size(), iced_x86::MemorySize::Float80);
         assert_eq!(super::mem_size(&instr), 80);
+    }
+
+    #[test]
+    fn op_size_handles_immediate8() {
+        // `and al, 0x12` has an 8-bit immediate source.
+        let bytes = [0x24, 0x12];
+        let mut decoder = iced_x86::Decoder::with_ip(32, &bytes, 0, iced_x86::DecoderOptions::NONE);
+        let instr = decoder.decode();
+        assert_eq!(instr.op_kind(1), iced_x86::OpKind::Immediate8);
+        assert_eq!(super::op_size(&instr, 1), 8);
     }
 
     #[test]
@@ -3299,7 +3310,11 @@ mod tests {
                 &[0xff, 0x2d, 0x34, 0x12, 0x00, 0x00][..],
                 "ctx.indirect32(",
             ),
-            (32, &[0xff, 0x1d, 0x34, 0x12, 0x00, 0x00][..], "ctx.callf32("),
+            (
+                32,
+                &[0xff, 0x1d, 0x34, 0x12, 0x00, 0x00][..],
+                "ctx.callf32(",
+            ),
             // 16-bit near indirect JMP/CALL: read a 16-bit offset.
             (16, &[0xff, 0x26, 0x34, 0x12][..], "ctx.indirect16("),
             (16, &[0xff, 0x16, 0x34, 0x12][..], "ctx.call16("),
