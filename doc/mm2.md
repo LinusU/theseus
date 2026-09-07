@@ -167,7 +167,11 @@ installation and are not present in the checked-in `game/` tree. They cause
 warnings in the run log but are outside the scope of the shared port code:
 
 - A complete `aud\aud22\*` 22kHz sound bank for UI, vehicle, ambient,
-  creature, and surface audio.
+  creature, and surface audio. The `mm2aud.ar` archive ships the `.22k.wav`
+  source files, but the game expects pre-compiled `.22k` banks in
+  `aud\aud22\`; this installation has an empty `aud\aud22\` directory, so
+  `CreateBankManager` cannot build the banks and the game logs
+  `Could not create ... .22k for agesound` for every referenced sample.
 - DirectMusic content under the paths the game scans (`.dmusic`/`.wav`
   segments referenced by the `DMusicObject::ScanDirectory` path).
 - `.CHK` checksum caches next to the `.AR` archives, which the loader looks
