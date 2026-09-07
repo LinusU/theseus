@@ -19,6 +19,12 @@ pub struct MainThread {
     /// Mouse buttons currently held. Button events carry no mask of their own,
     /// so it is tracked as they arrive.
     buttons: std::cell::Cell<host::MouseButton>,
+    /// The one guest window's SDL handle; null in headless mode or before the
+    /// guest creates it. Input mapping and the fullscreen toggle need it.
+    window: std::cell::Cell<*mut sdl::video::SDL_Window>,
+    /// The guest's logical client size. The SDL window may be resized or made
+    /// fullscreen without changing it; the frame letterboxes to fit.
+    logical: std::cell::Cell<(u32, u32)>,
 }
 
 struct ClickInject {
@@ -188,7 +194,59 @@ fn key_from_sdl(event: &sdl::events::SDL_KeyboardEvent) -> Option<host::KeyMessa
     })
 }
 
+/// The centered, aspect-preserving rect that fits a `guest`-sized frame into
+/// an `out`-sized area, as (x, y, w, h) in `out` units. Present uses it in
+/// render-output pixels; input mapping uses it in window points.
+fn letterbox(out_w: f32, out_h: f32, guest_w: f32, guest_h: f32) -> (f32, f32, f32, f32) {
+    if out_w <= 0.0 || out_h <= 0.0 || guest_w <= 0.0 || guest_h <= 0.0 {
+        return (0.0, 0.0, out_w.max(0.0), out_h.max(0.0));
+    }
+    let scale = (out_w / guest_w).min(out_h / guest_h);
+    let w = guest_w * scale;
+    let h = guest_h * scale;
+    ((out_w - w) / 2.0, (out_h - h) / 2.0, w, h)
+}
+
+/// A mouse position in window points -> guest logical coordinates, inverting
+/// the letterbox that `render` applies. Positions in the bars clamp to the
+/// nearest frame edge because `MouseMessage` cannot express out-of-range
+/// coordinates.
+fn map_to_guest(win_w: i32, win_h: i32, guest_w: u32, guest_h: u32, x: f32, y: f32) -> (u32, u32) {
+    if win_w <= 0 || win_h <= 0 || guest_w == 0 || guest_h == 0 {
+        return (x.max(0.0) as u32, y.max(0.0) as u32);
+    }
+    let (rx, ry, rw, rh) = letterbox(win_w as f32, win_h as f32, guest_w as f32, guest_h as f32);
+    let gx = (x - rx) * guest_w as f32 / rw;
+    let gy = (y - ry) * guest_h as f32 / rh;
+    (
+        gx.clamp(0.0, guest_w as f32 - 1.0) as u32,
+        gy.clamp(0.0, guest_h as f32 - 1.0) as u32,
+    )
+}
+
 impl MainThread {
+    /// Window-point mouse position -> guest logical coordinates. Headless and
+    /// pre-window events pass through unchanged (they are already guest
+    /// coordinates, like the injected ones).
+    fn guest_point(&self, x: f32, y: f32) -> (u32, u32) {
+        let window = self.window.get();
+        if window.is_null() {
+            return (x.max(0.0) as u32, y.max(0.0) as u32);
+        }
+        let (mut w, mut h) = (0, 0);
+        unsafe {
+            if !sdl::video::SDL_GetWindowSize(window, &mut w, &mut h) {
+                log::warn!(
+                    "SDL_GetWindowSize failed ({}); using raw point",
+                    sdl_error()
+                );
+                return (x.max(0.0) as u32, y.max(0.0) as u32);
+            }
+        }
+        let (gw, gh) = self.logical.get();
+        map_to_guest(w, h, gw, gh, x, y)
+    }
+
     fn msg_from_event(&self, event: &sdl::events::SDL_Event) -> Option<host::Message> {
         unsafe {
             use sdl::events::SDL_EventType;
@@ -199,9 +257,10 @@ impl MainThread {
                     let event = &event.motion;
                     // Motion events do carry the mask, so resync from them.
                     self.buttons.set(mouse_buttons_from_sdl(event.state));
+                    let (x, y) = self.guest_point(event.x, event.y);
                     return Some(host::Message::MouseMove(host::MouseMessage {
-                        x: event.x as u32,
-                        y: event.y as u32,
+                        x,
+                        y,
                         button: host::MouseButton::empty(),
                         buttons: mouse_buttons_from_sdl(event.state),
                     }));
@@ -226,9 +285,10 @@ impl MainThread {
                         buttons.remove(button);
                     }
                     self.buttons.set(buttons);
+                    let (x, y) = self.guest_point(event.x, event.y);
                     let message = host::MouseMessage {
-                        x: event.x as u32,
-                        y: event.y as u32,
+                        x,
+                        y,
                         button,
                         buttons,
                     };
@@ -305,6 +365,8 @@ impl MainThread {
         Self {
             headless,
             buttons: Default::default(),
+            window: Default::default(),
+            logical: Default::default(),
         }
     }
 
@@ -448,6 +510,9 @@ impl Window {
         if self.window.is_null() {
             return;
         }
+        // The guest changed its logical client size (a display-mode change);
+        // the letterbox transform follows it.
+        crate::host().main_thread.get().logical.set((width, height));
         unsafe {
             if !sdl::video::SDL_SetWindowSize(self.window, width as i32, height as i32) {
                 log::warn!(
@@ -515,11 +580,36 @@ impl Window {
                 );
                 return;
             }
+            // The SDL window can outgrow the guest's logical size (user
+            // resize or fullscreen), so the frame letterboxes into the render
+            // output. Clear first so the bars are black, not stale pixels.
+            let (mut out_w, mut out_h) = (0, 0);
+            if !sdl::render::SDL_GetRenderOutputSize(self.renderer, &mut out_w, &mut out_h) {
+                log::warn!(
+                    "SDL_GetRenderOutputSize failed ({}); assuming surface size",
+                    sdl_error()
+                );
+                out_w = surface.width as i32;
+                out_h = surface.height as i32;
+            }
+            let (x, y, w, h) = letterbox(
+                out_w as f32,
+                out_h as f32,
+                surface.width as f32,
+                surface.height as f32,
+            );
+            let dst = sdl::rect::SDL_FRect { x, y, w, h };
+            if !sdl::render::SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255) {
+                log::warn!("SDL_SetRenderDrawColor failed ({}); ignoring", sdl_error());
+            }
+            if !sdl::render::SDL_RenderClear(self.renderer) {
+                log::warn!("SDL_RenderClear failed ({}); ignoring", sdl_error());
+            }
             if !sdl::render::SDL_RenderTexture(
                 self.renderer,
                 surface.texture,
                 std::ptr::null(),
-                std::ptr::null(),
+                &dst,
             ) {
                 log::warn!(
                     "SDL_RenderTexture failed ({}); skipping present",
@@ -536,6 +626,9 @@ impl Window {
 
 impl MainThread {
     pub fn create_window(&self, title: &str, width: u32, height: u32) -> Window {
+        // Track the guest's logical size so physical mouse coordinates can
+        // be mapped back through the letterbox `render` applies.
+        self.logical.set((width, height));
         if self.headless {
             return Window {
                 window: std::ptr::null_mut(),
@@ -546,22 +639,28 @@ impl MainThread {
             // The title comes from the guest; an interior NUL gets an
             // empty title rather than a host panic.
             let title = CString::new(title).unwrap_or_default();
+            // RESIZABLE lets the user pick any host-side size; the guest's
+            // logical coordinate system is unaffected because present
+            // letterboxes and input maps back through it.
             let window = sdl::video::SDL_CreateWindow(
                 title.as_ptr(),
                 width as i32,
                 height as i32,
-                sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY,
+                sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY
+                    | sdl::video::SDL_WindowFlags::RESIZABLE,
             );
             if window.is_null() {
                 log::warn!(
                     "SDL_CreateWindow({width}x{height}) failed ({}); continuing headless",
                     sdl_error()
                 );
+                self.window.set(std::ptr::null_mut());
                 return Window {
                     window: std::ptr::null_mut(),
                     renderer: std::ptr::null_mut(),
                 };
             }
+            self.window.set(window);
             // Raise the window so it takes keyboard focus: an unfocused
             // window gets no key events at all, so in-race driving keys
             // would stay dead until the user clicked into the window.
@@ -575,6 +674,7 @@ impl MainThread {
                     sdl_error()
                 );
                 sdl::video::SDL_DestroyWindow(window);
+                self.window.set(std::ptr::null_mut());
                 return Window {
                     window: std::ptr::null_mut(),
                     renderer: std::ptr::null_mut(),
@@ -587,6 +687,7 @@ impl MainThread {
                 );
                 sdl::render::SDL_DestroyRenderer(renderer);
                 sdl::video::SDL_DestroyWindow(window);
+                self.window.set(std::ptr::null_mut());
                 return Window {
                     window: std::ptr::null_mut(),
                     renderer: std::ptr::null_mut(),
@@ -602,6 +703,7 @@ impl MainThread {
                 );
                 sdl::render::SDL_DestroyRenderer(renderer);
                 sdl::video::SDL_DestroyWindow(window);
+                self.window.set(std::ptr::null_mut());
                 return Window {
                     window: std::ptr::null_mut(),
                     renderer: std::ptr::null_mut(),
@@ -937,6 +1039,8 @@ mod tests {
         MainThread {
             headless: true,
             buttons: Default::default(),
+            window: Default::default(),
+            logical: Default::default(),
         }
     }
 
@@ -1100,5 +1204,51 @@ mod tests {
             panic!("repeat key-down did not produce a key-down message")
         };
         assert!(msg.repeat);
+    }
+
+    /// A same-size output is the identity rect; wider outputs pillarbox and
+    /// taller outputs letterbox, always centered and aspect-preserving.
+    #[test]
+    fn letterbox_centers_the_frame() {
+        assert_eq!(
+            letterbox(640.0, 480.0, 640.0, 480.0),
+            (0.0, 0.0, 640.0, 480.0)
+        );
+        // 1920x1080 output, 640x480 guest: scale 2.25, pillarboxed.
+        assert_eq!(
+            letterbox(1920.0, 1080.0, 640.0, 480.0),
+            (240.0, 0.0, 1440.0, 1080.0)
+        );
+        // 640x1200 output, 640x480 guest: scale 1.0, letterboxed.
+        assert_eq!(
+            letterbox(640.0, 1200.0, 640.0, 480.0),
+            (0.0, 360.0, 640.0, 480.0)
+        );
+        // Degenerate inputs produce a degenerate rect, not a divide by zero.
+        assert_eq!(letterbox(0.0, 0.0, 640.0, 480.0), (0.0, 0.0, 0.0, 0.0));
+        assert_eq!(
+            letterbox(640.0, 480.0, 0.0, 480.0),
+            (0.0, 0.0, 640.0, 480.0)
+        );
+    }
+
+    /// The inverse mapping recovers guest coordinates anywhere in the frame
+    /// and clamps positions inside the bars to the nearest frame edge.
+    #[test]
+    fn map_to_guest_inverts_the_letterbox() {
+        // Identity when the window matches the guest size.
+        assert_eq!(map_to_guest(640, 480, 640, 480, 320.0, 240.0), (320, 240));
+        // 1920x1080 window, 640x480 guest: the frame occupies x in [240,1680).
+        assert_eq!(map_to_guest(1920, 1080, 640, 480, 240.0, 0.0), (0, 0));
+        assert_eq!(map_to_guest(1920, 1080, 640, 480, 960.0, 540.0), (320, 240));
+        assert_eq!(
+            map_to_guest(1920, 1080, 640, 480, 1919.0, 1079.0),
+            (639, 479)
+        );
+        // A point in the left bar clamps to the frame's left column.
+        assert_eq!(map_to_guest(1920, 1080, 640, 480, 100.0, 540.0), (0, 240));
+        // No window or no guest frame: the raw point passes through clamped.
+        assert_eq!(map_to_guest(0, 0, 640, 480, 12.0, 8.0), (12, 8));
+        assert_eq!(map_to_guest(640, 480, 0, 0, 12.0, 8.0), (12, 8));
     }
 }
