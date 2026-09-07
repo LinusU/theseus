@@ -478,4 +478,12 @@ mod tests {
         assert!(state.blocks.contains_key(&0x1104));
         assert!(!state.blocks.contains_key(&0x1102));
     }
+
+    #[test]
+    fn module_is_valid_instr_start_matches_gather_and_codegen() {
+        // Real code at 0x1000 and out-of-range / invalid addresses.
+        let state = gather_code(&[0xc3]);
+        assert!(state.module.is_valid_instr_start(&state.mem, 0x1000));
+        assert!(!state.module.is_valid_instr_start(&state.mem, 0x10000));
+    }
 }

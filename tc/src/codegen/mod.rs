@@ -379,20 +379,7 @@ impl<'a> CodeGen<'a> {
     // valid instruction; this is used to avoid warning on branches into data
     // that is only accidentally x86-shaped.
     fn is_valid_instr_start(&self, addr: u32) -> bool {
-        let Some(bytes) = self.mem.bytes.get(addr as usize..) else {
-            return false;
-        };
-        if bytes.is_empty() {
-            return false;
-        }
-        let mut decoder = iced_x86::Decoder::with_ip(
-            self.module.bitness(),
-            bytes,
-            addr as u64,
-            iced_x86::DecoderOptions::NONE,
-        );
-        let instr = decoder.decode();
-        !instr.is_invalid() && instr.len() != 0
+        self.module.is_valid_instr_start(self.mem, addr)
     }
 
     pub fn resolve_cont(&mut self, addr: u32, from: u32) -> String {

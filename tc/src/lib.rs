@@ -79,6 +79,26 @@ impl Module {
         self.is_dos()
     }
 
+    /// True if the bytes at `addr` form at least one non-empty, non-invalid
+    /// x86 instruction. Used to avoid treating data that happens to look like
+    /// a branch target as a real code address.
+    pub fn is_valid_instr_start(&self, mem: &Memory, addr: u32) -> bool {
+        let Some(bytes) = mem.bytes.get(addr as usize..) else {
+            return false;
+        };
+        if bytes.is_empty() {
+            return false;
+        }
+        let mut decoder = iced_x86::Decoder::with_ip(
+            self.bitness(),
+            bytes,
+            addr as u64,
+            iced_x86::DecoderOptions::NONE,
+        );
+        let instr = decoder.decode();
+        !instr.is_invalid() && instr.len() != 0
+    }
+
     pub fn local_addr(&self, addr: u32) -> IP {
         match self {
             Module::DOS(m) => IP::Seg((m.load_segment, addr as u16).into()),
