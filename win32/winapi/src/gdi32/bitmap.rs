@@ -368,7 +368,7 @@ pub type HBITMAP = HANDLE;
 
 #[cfg(test)]
 mod tests {
-    use super::{SetDIBitsToDevice, StretchBlt};
+    use super::{CreateCompatibleBitmap, SetDIBitsToDevice, StretchBlt};
     use crate::{Ptr, gdi32};
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -807,6 +807,39 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn set_di_bits_rejects_non_rgb_color_use() {
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(1, 1, 0x2000));
+        dib_info32(&mut ctx, 0x100);
+        assert_eq!(
+            SetDIBitsToDevice(
+                &mut ctx,
+                hdc,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+                0,
+                1,
+                Ptr::new(0x300),
+                Ptr::new(0x100),
+                1
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn create_compatible_bitmap_rejects_negative_and_huge_dims() {
+        let mut ctx = context();
+        assert!(CreateCompatibleBitmap(&mut ctx, gdi32::HDC::null(), -1, 1).is_null());
+        assert!(CreateCompatibleBitmap(&mut ctx, gdi32::HDC::null(), 1, -1).is_null());
+        assert!(CreateCompatibleBitmap(&mut ctx, gdi32::HDC::null(), i32::MAX, i32::MAX).is_null());
     }
 }
 
