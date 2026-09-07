@@ -1407,4 +1407,117 @@ mod tests {
         stereo.addr = 0xFFFF;
         assert_eq!(stereo.frame_at(&ctx.memory, 0), (0, 0));
     }
+
+    fn playing_buffer(handle: u32, addr: u32, size: u32, looping: bool) {
+        init();
+        lock().buffers.insert(
+            handle,
+            Buffer {
+                refs: 1,
+                addr,
+                size,
+                format: WaveFormat {
+                    channels: 1,
+                    bits: 8,
+                    // Half the host rate: two output frames per source frame.
+                    rate: super::HOST_RATE / 2,
+                },
+                primary: false,
+                caps_flags: DSBCAPS_FLAGS::default(),
+                playing: true,
+                looping,
+                cursor: 0.0,
+                volume: 0,
+                pan: 0,
+            },
+        );
+    }
+
+    /// The mixer consumes a playing buffer at its source rate and stops a
+    /// one-shot at the end rather than marching into trailing memory.
+    #[test]
+    fn mix_chunk_advances_playback_and_stops_one_shots() {
+        let mut ctx = context();
+        let looped = 0xabc3;
+        let one_shot = 0xabc4;
+        // 0x2000 frames at half rate: a chunk of 1024 host frames consumes
+        // 512 source frames — well short of the end.
+        playing_buffer(looped, 0x8000, 0x2000, true);
+        playing_buffer(one_shot, 0xc000, 0x40, false);
+        for i in 0..0x2000u32 {
+            ctx.memory.write::<u8>(0x8000 + i, 160);
+        }
+        for i in 0..0x40u32 {
+            ctx.memory.write::<u8>(0xc000 + i, 160);
+        }
+
+        {
+            let mut state = lock();
+            state.mix_chunk(&ctx.memory);
+            assert_eq!(state.buffers[&looped].cursor, 512.0);
+            let buffer = &state.buffers[&one_shot];
+            assert!(!buffer.playing);
+            assert_eq!(buffer.cursor, 0.0);
+        }
+        lock().buffers.remove(&looped);
+        lock().buffers.remove(&one_shot);
+    }
+
+    /// An output sample between two source frames blends them: halfway
+    /// between mono i16 frames 0 and 1000 the mix is 500.
+    #[test]
+    fn sample_interpolates_between_source_frames() {
+        let mut ctx = context();
+        ctx.memory.write::<i16>(0x8000, 0);
+        ctx.memory.write::<i16>(0x8002, 1000);
+        let buffer = Buffer {
+            refs: 1,
+            addr: 0x8000,
+            size: 4,
+            format: WaveFormat {
+                channels: 1,
+                bits: 16,
+                rate: 22050,
+            },
+            primary: false,
+            caps_flags: DSBCAPS_FLAGS::default(),
+            playing: true,
+            looping: false,
+            cursor: 0.5,
+            volume: 0,
+            pan: 0,
+        };
+        let (left, right) = buffer.sample(&ctx.memory);
+        assert_eq!(left, 500.0);
+        assert_eq!(right, 500.0);
+    }
+
+    /// Pan and volume attenuate in decibels: -2000 hundredths dB (-20dB) is
+    /// a tenth of the amplitude.
+    #[test]
+    fn gains_apply_volume_and_pan_in_decibels() {
+        let buffer = |volume, pan| Buffer {
+            refs: 1,
+            addr: 0x8000,
+            size: 0x10,
+            format: WaveFormat::default(),
+            primary: false,
+            caps_flags: DSBCAPS_FLAGS::default(),
+            playing: true,
+            looping: false,
+            cursor: 0.0,
+            volume,
+            pan,
+        };
+        let (left, right) = buffer(0, 0).gains();
+        assert_eq!((left, right), (1.0, 1.0));
+        let (left, right) = buffer(-2000, 0).gains();
+        assert!((left - 0.1).abs() < 1e-6 && (right - 0.1).abs() < 1e-6);
+        // Pan right attenuates the left channel only.
+        let (left, right) = buffer(0, 2000).gains();
+        assert!((left - 0.1).abs() < 1e-6 && right == 1.0);
+        // At the floor a buffer is silent.
+        let (left, right) = buffer(-10000, 0).gains();
+        assert_eq!((left, right), (0.0, 0.0));
+    }
 }
