@@ -114,9 +114,16 @@ to London (four Down presses), starts a Blitz race (Enter), clicks through
 `SELECT VEHICLE` and `GO DRIVE`, then holds the accelerator (Up arrow) from
 45s on. Without injection the game idles on the main menu.
 
+The SDL window is resizable: the guest keeps its logical client size while
+present letterboxes the frame into the window (or fullscreen) preserving
+aspect, and mouse coordinates map back to guest space. `THESEUS_FULLSCREEN=1`
+starts in native fullscreen and Alt+Enter toggles it at runtime; the chord is
+consumed by the host and never reaches the game.
+
 Debug environment knobs, all optional:
 
 - `THESEUS_HEADLESS=1` — run without an SDL window.
+- `THESEUS_FULLSCREEN=1` — start the SDL window in native fullscreen.
 - `THESEUS_FRAME_DUMP=<path>` — write the presented frame as a PPM on every
   flip; `THESEUS_FRAME_DUMP_EVERY=<n>` writes `path.NNNNN.ppm` every n frames
   instead.
