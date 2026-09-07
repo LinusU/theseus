@@ -244,4 +244,29 @@ mod tests {
             0x2234
         );
     }
+
+    #[test]
+    fn section_align_without_flag_returns_default() {
+        use crate::file::{IMAGE_SCN, IMAGE_SECTION_HEADER};
+
+        // No IMAGE_SCN_ALIGN_* bits means the default alignment; align() must
+        // not underflow on `1 << (value - 1)`.
+        let header = IMAGE_SECTION_HEADER::default();
+        assert_eq!(header.characteristics().unwrap().align(), 1);
+
+        // The encoded field counts from IMAGE_SCN_ALIGN_1BYTES = 1.
+        for (flag, want) in [
+            (0x0010_0000, 1),
+            (0x0020_0000, 2),
+            (0x0030_0000, 4),
+            (0x0040_0000, 8),
+        ] {
+            let header = IMAGE_SECTION_HEADER {
+                Characteristics: flag,
+                ..Default::default()
+            };
+            let scn: IMAGE_SCN = header.characteristics().unwrap();
+            assert_eq!(scn.align(), want, "flag {flag:#x}");
+        }
+    }
 }

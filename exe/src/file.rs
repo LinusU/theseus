@@ -222,6 +222,10 @@ bitflags! {
 impl IMAGE_SCN {
     pub fn align(&self) -> u32 {
         let value = (self.bits() & IMAGE_SCN::ALIGN.bits()) >> 20;
+        // No ALIGN bits means the default section alignment, not 1 << -1.
+        if value == 0 {
+            return 1;
+        }
         // IMG_SCN_ALIGN_1BYTES = 1
         // IMG_SCN_ALIGN_2BYTES = 2
         // IMG_SCN_ALIGN_4BYTES = 4
