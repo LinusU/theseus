@@ -1854,11 +1854,18 @@ pub mod IDirect3DDevice7 {
                 None,
             );
 
+            // Follow the next mip level on each chain; a non-MIPMAP
+            // attachment (e.g. a z-buffer) is not a sub-level.
             let next = {
-                let dst = dst_level.borrow();
-                let src = src_level.borrow();
-                match (dst.attachments.first(), src.attachments.first()) {
-                    (Some(d), Some(s)) => (d.clone(), s.clone()),
+                let next_mip = |s: &std::rc::Rc<RefCell<crate::ddraw::Surface>>| {
+                    s.borrow()
+                        .attachments
+                        .iter()
+                        .find(|a| a.borrow().caps.dwCaps.contains(DDSCAPS::MIPMAP))
+                        .cloned()
+                };
+                match (next_mip(&dst_level), next_mip(&src_level)) {
+                    (Some(d), Some(s)) => (d, s),
                     _ => break,
                 }
             };

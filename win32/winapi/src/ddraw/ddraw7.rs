@@ -821,6 +821,23 @@ fn surface_pixel_format(bpp: u32) -> DDPIXELFORMAT {
     }
 }
 
+/// Reachability over the attachment graph, given a child-lookup callback.
+/// A `true` result means `to` is already reachable from `from`, so adding
+/// a `this -> from` edge would close a cycle.
+fn attachment_reaches(children: &dyn Fn(u32) -> Vec<u32>, from: u32, to: u32) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![from];
+    while let Some(a) = stack.pop() {
+        if a == to {
+            return true;
+        }
+        if seen.insert(a) {
+            stack.extend(children(a));
+        }
+    }
+    false
+}
+
 pub mod IDirectDrawSurface7 {
     use super::*;
 
@@ -995,6 +1012,27 @@ pub mod IDirectDrawSurface7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let attached_addr = attached.borrow().addr;
+        // Attachment graphs are trees: an edge that lets `attached` already
+        // reach `this` would close a cycle and make chain walks like
+        // `IDirect3DDevice7::Load`'s mip cascade loop forever.
+        if attachment_reaches(
+            &|addr| {
+                surfaces
+                    .get(&addr)
+                    .map(|s| {
+                        s.borrow()
+                            .attachments
+                            .iter()
+                            .map(|c| c.borrow().addr)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            },
+            attached_addr,
+            this,
+        ) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let mut surface = surface.borrow_mut();
         if surface
             .attachments
@@ -1862,5 +1900,32 @@ pub mod IDirectDrawSurface7 {
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
         Some(addr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attachment_reaches;
+
+    #[test]
+    fn attachment_reaches_detects_would_be_cycles() {
+        // Chain 1 -> 2 -> 3: attaching 3 back to 1 or 2 closes a cycle.
+        let chain = |a: u32| match a {
+            1 => vec![2],
+            2 => vec![3],
+            _ => vec![],
+        };
+        assert!(attachment_reaches(&chain, 1, 3));
+        assert!(attachment_reaches(&chain, 1, 1));
+        assert!(!attachment_reaches(&chain, 3, 1));
+        assert!(!attachment_reaches(&chain, 1, 4));
+    }
+
+    #[test]
+    fn attachment_reaches_terminates_on_a_preexisting_cycle() {
+        // A graph that is already cyclic must not spin the walk.
+        let cyclic = |a: u32| if a == 2 { vec![2] } else { vec![1] };
+        assert!(attachment_reaches(&cyclic, 2, 2));
+        assert!(!attachment_reaches(&cyclic, 2, 4));
     }
 }
