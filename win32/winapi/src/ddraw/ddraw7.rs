@@ -371,7 +371,7 @@ pub mod IDirectDraw7 {
                     dwHeight: surface.height,
                     dwWidth: surface.width,
                     lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
-                    ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
+                    ddpfPixelFormat: surface.pixel_format.clone(),
                     ..Default::default()
                 }
             };
@@ -800,27 +800,6 @@ const IID_IDIRECTDRAWSURFACE7: GUID = GUID::new(
     [0xb9, 0x2f, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b],
 );
 
-/// The `DDPIXELFORMAT` matching a surface's byte depth. The 32-bit masks
-/// match `ddraw::get_pixel_format` — surface memory is RGBA byte order, so
-/// R sits in the low byte.
-fn surface_pixel_format(bpp: u32) -> DDPIXELFORMAT {
-    let (flags, count, r, g, b, a) = match bpp {
-        1 => (0x40 | 0x20, 8, 0, 0, 0, 0), // DDPF_RGB | DDPF_PALETTEINDEXED8
-        2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
-        _ => (0x40, 32, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
-    };
-    DDPIXELFORMAT {
-        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-        dwFlags: flags,
-        dwFourCC: 0,
-        dwRGBBitCount: count,
-        dwRBitMask: r,
-        dwGBitMask: g,
-        dwBBitMask: b,
-        dwRGBAlphaBitMask: a,
-    }
-}
-
 /// Reachability over the attachment graph, given a child-lookup callback.
 /// A `true` result means `to` is already reachable from `from`, so adding
 /// a `this -> from` edge would close a cycle.
@@ -1184,7 +1163,7 @@ pub mod IDirectDrawSurface7 {
                     dwHeight: surface.height,
                     dwWidth: surface.width,
                     lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
-                    ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
+                    ddpfPixelFormat: surface.pixel_format.clone(),
                     ..Default::default()
                 }
             };
@@ -1433,7 +1412,10 @@ pub mod IDirectDrawSurface7 {
         let Some(surface) = surfaces.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        let pixel_format = surface_pixel_format(surface.borrow().bytes_per_pixel);
+        // The surface records the declared format at creation (or a
+        // byte-depth fallback), so z-buffers and 1555/4444 textures report
+        // what they actually are rather than a synthesized RGB format.
+        let pixel_format = surface.borrow().pixel_format.clone();
         ctx.memory.write(lpDDPixelFormat, pixel_format);
         DD::OK
     }
@@ -1537,7 +1519,7 @@ pub mod IDirectDrawSurface7 {
                 dwHeight: surface.height,
                 lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
                 lpSurface: pixels,
-                ddpfPixelFormat: surface_pixel_format(surface.bytes_per_pixel),
+                ddpfPixelFormat: surface.pixel_format.clone(),
                 ..Default::default()
             },
         );

@@ -2,7 +2,7 @@ use runtime::Context;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    ddraw::{DD, GUID, get_pixel_format, state, types::*},
+    ddraw::{DD, GUID, state, types::*},
     gdi32::HDC,
     heap::Heap,
     kernel32,
@@ -311,21 +311,9 @@ pub mod IDirectDraw {
                     continue; // released by an earlier callback
                 };
                 let surface = surface.borrow();
-                let bpp = surface.bytes_per_pixel * 8;
-                let pixel_format = if bpp == 8 {
-                    DDPIXELFORMAT {
-                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                        dwFlags: 0x40 | 0x20, // DDPF_RGB | DDPF_PALETTEINDEXED8
-                        dwFourCC: 0,
-                        dwRGBBitCount: 8,
-                        dwRBitMask: 0,
-                        dwGBitMask: 0,
-                        dwBBitMask: 0,
-                        dwRGBAlphaBitMask: 0,
-                    }
-                } else {
-                    get_pixel_format()
-                };
+                // The surface records its declared format at creation (or a
+                // byte-depth fallback), which GetPixelFormat also reports.
+                let pixel_format = surface.pixel_format.clone();
                 DDSURFACEDESC {
                     dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
                     dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
@@ -766,21 +754,9 @@ pub mod IDirectDrawSurface {
                     continue;
                 };
                 let surface = surface.borrow();
-                let bpp = surface.bytes_per_pixel * 8;
-                let pixel_format = if bpp == 8 {
-                    DDPIXELFORMAT {
-                        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                        dwFlags: 0x40 | 0x20, // DDPF_RGB | DDPF_PALETTEINDEXED8
-                        dwFourCC: 0,
-                        dwRGBBitCount: 8,
-                        dwRBitMask: 0,
-                        dwGBitMask: 0,
-                        dwBBitMask: 0,
-                        dwRGBAlphaBitMask: 0,
-                    }
-                } else {
-                    get_pixel_format()
-                };
+                // The surface records its declared format at creation (or a
+                // byte-depth fallback), which GetPixelFormat also reports.
+                let pixel_format = surface.pixel_format.clone();
                 DDSURFACEDESC {
                     dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
                     dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
@@ -938,7 +914,7 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPixelFormat(ctx: &mut Context, _this: u32, lpDDPixelFormat: u32) -> DD {
+    pub fn GetPixelFormat(ctx: &mut Context, this: u32, lpDDPixelFormat: u32) -> DD {
         if !crate::ddraw::guest_range(
             ctx,
             lpDDPixelFormat,
@@ -946,7 +922,12 @@ pub mod IDirectDrawSurface {
         ) {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write(lpDDPixelFormat, get_pixel_format());
+        let surfaces = state().surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_INVALIDPARAMS;
+        };
+        ctx.memory
+            .write(lpDDPixelFormat, surface.borrow().pixel_format.clone());
         DD::OK
     }
 
@@ -958,21 +939,7 @@ pub mod IDirectDrawSurface {
                 return DD::ERR_INVALIDPARAMS;
             };
             let surface = surface.borrow();
-            let bpp = surface.bytes_per_pixel * 8;
-            let pixel_format = if bpp == 8 {
-                DDPIXELFORMAT {
-                    dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                    dwFlags: 0x40 | 0x20, // DDPF_RGB | DDPF_PALETTEINDEXED8
-                    dwFourCC: 0,
-                    dwRGBBitCount: 8,
-                    dwRBitMask: 0,
-                    dwGBitMask: 0,
-                    dwBBitMask: 0,
-                    dwRGBAlphaBitMask: 0,
-                }
-            } else {
-                get_pixel_format()
-            };
+            let pixel_format = surface.pixel_format.clone();
             DDSURFACEDESC {
                 dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
                 dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,

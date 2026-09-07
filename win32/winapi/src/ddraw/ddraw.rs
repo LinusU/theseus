@@ -120,17 +120,9 @@ impl DirectDraw {
         {
             desc.ddpfPixelFormat.clone()
         } else {
-            // Unspecified formats take the display format (565 here).
-            DDPIXELFORMAT {
-                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-                dwFlags: 0x40,
-                dwFourCC: 0,
-                dwRGBBitCount: bytes_per_pixel * 8,
-                dwRBitMask: 0xF800,
-                dwGBitMask: 0x07E0,
-                dwBBitMask: 0x001F,
-                dwRGBAlphaBitMask: 0,
-            }
+            // Unspecified formats take a format matching the surface's
+            // actual byte depth.
+            surface_pixel_format(bytes_per_pixel)
         };
 
         let surface = self.create_one_surface(
@@ -636,6 +628,28 @@ pub fn get_pixel_format() -> DDPIXELFORMAT {
         dwGBitMask: 0x0000_FF00,
         dwBBitMask: 0x00FF_0000,
         dwRGBAlphaBitMask: 0xFF00_0000,
+    }
+}
+
+/// The `DDPIXELFORMAT` matching a surface's byte depth, used when the
+/// guest did not declare a format. The 32-bit masks match
+/// `get_pixel_format` — surface memory is RGBA byte order, so R sits in
+/// the low byte.
+pub(crate) fn surface_pixel_format(bpp: u32) -> DDPIXELFORMAT {
+    let (flags, count, r, g, b, a) = match bpp {
+        1 => (0x40 | 0x20, 8, 0, 0, 0, 0), // DDPF_RGB | DDPF_PALETTEINDEXED8
+        2 => (0x40, 16, 0xF800, 0x07E0, 0x001F, 0),
+        _ => (0x40, 32, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
+    };
+    DDPIXELFORMAT {
+        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+        dwFlags: flags,
+        dwFourCC: 0,
+        dwRGBBitCount: count,
+        dwRBitMask: r,
+        dwGBitMask: g,
+        dwBBitMask: b,
+        dwRGBAlphaBitMask: a,
     }
 }
 
