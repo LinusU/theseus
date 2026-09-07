@@ -3284,6 +3284,69 @@ mod tests {
     }
 
     #[test]
+    fn codegen_control_flow_indirects_use_panic_not_todo() {
+        for (bitness, bytes, want) in [
+            // 32-bit near indirect JMP/CALL: read a 32-bit offset.
+            (
+                32,
+                &[0xff, 0x25, 0x34, 0x12, 0x00, 0x00][..],
+                "ctx.indirect32(",
+            ),
+            (32, &[0xff, 0x15, 0x34, 0x12, 0x00, 0x00][..], "ctx.call32("),
+            // 32-bit far indirect JMP/CALL: read a 32:16 seg:ptr.
+            (
+                32,
+                &[0xff, 0x2d, 0x34, 0x12, 0x00, 0x00][..],
+                "ctx.indirect32(",
+            ),
+            (32, &[0xff, 0x1d, 0x34, 0x12, 0x00, 0x00][..], "ctx.callf32("),
+            // 16-bit near indirect JMP/CALL: read a 16-bit offset.
+            (16, &[0xff, 0x26, 0x34, 0x12][..], "ctx.indirect16("),
+            (16, &[0xff, 0x16, 0x34, 0x12][..], "ctx.call16("),
+            // 16-bit far indirect JMP/CALL: read a 16:16 seg:ptr.
+            (16, &[0xff, 0x2e, 0x34, 0x12][..], "ctx.indirect16("),
+            (16, &[0xff, 0x1e, 0x34, 0x12][..], "ctx.callf16("),
+        ] {
+            let state = crate::State {
+                module: if bitness == 32 {
+                    crate::Module::Windows(crate::WindowsModule::default())
+                } else {
+                    crate::Module::DOS(crate::DOSModule::default())
+                },
+                ..Default::default()
+            };
+            let mut codegen = super::CodeGen::new(&state, false);
+            let mut decoder = iced_x86::Decoder::with_ip(
+                bitness as u32,
+                bytes,
+                0,
+                iced_x86::DecoderOptions::NONE,
+            );
+            let instr = crate::Instr {
+                ip: if bitness == 32 {
+                    crate::IP::Flat(0)
+                } else {
+                    crate::IP::Seg((0, 0).into())
+                },
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                !codegen.buf.contains("todo!"),
+                "{bitness}-bit indirect control-flow at {bytes:x?} emitted todo! in {:?}",
+                codegen.buf
+            );
+            assert!(
+                codegen.buf.contains(want),
+                "{bitness}-bit indirect control-flow at {bytes:x?} did not emit {want:?} in {:?}",
+                codegen.buf
+            );
+        }
+    }
+
+    #[test]
     fn codegen_handles_bswap() {
         let state = crate::State {
             module: crate::Module::Windows(crate::WindowsModule::default()),

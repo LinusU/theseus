@@ -75,7 +75,7 @@ impl<'a> CodeGen<'a> {
                         seg = Some("seg".into());
                         cont = "ctx.indirect32(addr)".into();
                     }
-                    s => cont = format!("todo!(\"{:?}\")", s),
+                    s => cont = format!("panic!(\"unhandled control-flow memory size: {:?}\")", s),
                 }
             }
             iced_x86::OpKind::Register => {
@@ -91,7 +91,7 @@ impl<'a> CodeGen<'a> {
                     cont = format!("ctx.indirect({expr} as u32)");
                 }
             }
-            k => todo!("{:?}", k),
+            k => panic!("unhandled control-flow operand kind: {:?}", k),
         }
         (extra, seg, cont)
     }
