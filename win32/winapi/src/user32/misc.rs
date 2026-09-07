@@ -431,13 +431,13 @@ pub fn SetTimer(
     if lpTimerFunc.addr != 0 && lpTimerFunc.addr < 0x1000 {
         return 0;
     }
-    state().message_queue.borrow_mut().set_timer(
-        hWnd,
-        nIDEvent,
-        uElapse,
-        lpTimerFunc.addr,
-        host::host().time(),
-    )
+    // host() can initialize SDL on first use; do not let that happen while
+    // the shared queue's RefCell is borrowed.
+    let now = host::host().time();
+    state()
+        .message_queue
+        .borrow_mut()
+        .set_timer(hWnd, nIDEvent, uElapse, lpTimerFunc.addr, now)
 }
 
 /// Read one u32 off the guest stack without panicking on a bad stack
@@ -741,6 +741,8 @@ mod tests {
 
     #[test]
     fn get_system_metrics_rejects_out_of_range_indices() {
+        // A concurrently-installed test window would change the defaults.
+        let _guard = crate::user32::WINDOW_STATE_LOCK.lock().unwrap();
         let mut ctx = context();
         assert_eq!(GetSystemMetrics(&mut ctx, 0), 640); // SM_CXSCREEN
         assert_eq!(GetSystemMetrics(&mut ctx, 1), 480); // SM_CYSCREEN
@@ -751,6 +753,7 @@ mod tests {
 
     #[test]
     fn system_metrics_track_the_current_display_mode() {
+        let _guard = crate::user32::WINDOW_STATE_LOCK.lock().unwrap();
         // Insert the emulated window directly: CreateWindowExA would touch
         // SDL's main-thread-only window APIs.
         let mut ctx = context();
