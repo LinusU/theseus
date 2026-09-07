@@ -149,6 +149,21 @@ Debug environment knobs, all optional:
   hold keys for gameplay input.
 - `THESEUS_MISSING_ADDRS=<path>` — append dynamically reached but
   untranslated addresses for the next `--entry-points-file` pass.
+- `THESEUS_PROBE=x,y[,w,h]` — log every rasterized draw that writes the
+  given render-target pixel (or rectangle) plus the draw's render state,
+  texture, and vertex data; each distinct bound texture is dumped once to
+  `/tmp/probe_tex_<addr>.ppm`.
+- `THESEUS_NO_CLEAR_SKIP=1` — disable the optimization that skips a
+  mid-scene `Clear` once geometry has already landed on the render target.
+- `THESEUS_DSOUND_WAV=<path>` — write the DirectSound mixer's 44.1 kHz
+  stereo output as a WAV file for offline inspection.
+- `THESEUS_AUD_CACHE=<dir>` — redirect guest file access under `aud\` (or
+  `aud22\`) to a writable host directory, for titles that generate
+  on-demand audio caches (`.22k`/`.dls`) without touching the read-only
+  game install.
+- `THESEUS_TRACE=<rules>` — trace winapi calls whose generated name
+  contains each comma-separated key; prefix a key with `-` to disable or
+  `+` to re-enable it, and the last matching rule wins.
 - `RUST_LOG` — env-filter-style logging: a bare level (`warn`, `debug`) or
   comma-separated `target=level` directives (`warn,winapi=debug`); the
   draw-call and rasterizer diagnostics live at `debug`, honest problems at
