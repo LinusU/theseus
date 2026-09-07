@@ -378,12 +378,16 @@ impl<'a> CodeGen<'a> {
         if let Some(block) = self.blocks.get(&addr) {
             format!("Cont({})", block.name())
         } else {
-            if self.module.code_memory().contains(&addr) {
-                log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
-            } else {
-                log::debug!("{from:08x} -> static jmp to out-of-module block {addr:08x}");
+            // Only log the first reference to a given unknown address; this keeps
+            // the translation output readable when multiple branches target the
+            // same never-discovered block.
+            if self.unknown.insert(addr) {
+                if self.module.code_memory().contains(&addr) {
+                    log::warn!("{from:08x} -> static jmp to unknown block {addr:08x}");
+                } else {
+                    log::debug!("{from:08x} -> static jmp to out-of-module block {addr:08x}");
+                }
             }
-            self.unknown.insert(addr);
             format!("Cont(unk_{addr:x})")
         }
     }
