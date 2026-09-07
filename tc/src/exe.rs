@@ -31,8 +31,12 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> Result<DOSModule> {
     Ok(DOSModule {
         is_com: false,
         psp_segment,
-        load_segment: psp_segment + 0x10 + dos.header.e_cs,
-        stack_segment: load_segment + dos.header.e_ss,
+        // Header segment fields are guest-controlled u16s: a malformed exe
+        // can make loadseg+e_cs/e_ss exceed 0xffff. Real 16-bit paragraph
+        // arithmetic wraps, so do the same rather than panicking in debug
+        // builds or miscomputing the wrap in release.
+        load_segment: load_segment.wrapping_add(dos.header.e_cs),
+        stack_segment: load_segment.wrapping_add(dos.header.e_ss),
         stack_pointer: dos.header.e_sp,
         entry_point: dos.header.e_ip,
         code_memory: (load_addr..load_addr + data.len() as u32),
@@ -230,5 +234,23 @@ mod tests {
 
         let module = load_pe(&mut mem, &buf, pe).unwrap();
         assert_eq!(module.image_base, image_base);
+    }
+
+    #[test]
+    fn load_dos_wraps_out_of_range_header_segments() {
+        // A malformed header can place the code or stack segment past
+        // 0xffff; 16-bit paragraph arithmetic must wrap, not panic.
+        // MZ header layout: e_ss at 0x0e, e_cs at 0x16.
+        let mut buf = vec![0u8; 0x200];
+        buf[0..2].copy_from_slice(b"MZ");
+        buf[0x0e..0x10].copy_from_slice(&0xf800u16.to_le_bytes());
+        buf[0x16..0x18].copy_from_slice(&0xf000u16.to_le_bytes());
+        let dos = exe::DOS::parse(&buf).unwrap();
+        let mut mem = Memory::default();
+
+        let module = load_dos(&mut mem, &buf, dos).unwrap();
+
+        assert_eq!(module.load_segment, (0x823u16).wrapping_add(0xf000));
+        assert_eq!(module.stack_segment, (0x823u16).wrapping_add(0xf800));
     }
 }
