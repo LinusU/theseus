@@ -63,6 +63,14 @@ pub struct KeyMessage {
 pub enum Message {
     #[cfg(not(target_family = "wasm"))] // no "quit" menu on web
     Quit,
+    /// The window manager asked to close the window (the OS close button).
+    /// Delivered as WM_CLOSE so the app's own close path runs.
+    #[cfg(not(target_family = "wasm"))]
+    Close,
+    /// The window lost keyboard focus. Held keys and buttons are released so
+    /// a press whose release happened while unfocused cannot stick down.
+    #[cfg(not(target_family = "wasm"))]
+    FocusLost,
     #[cfg(not(target_family = "wasm"))] // no paint on web, browser does painting
     Paint,
     MouseDown(MouseMessage),

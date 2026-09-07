@@ -249,6 +249,12 @@ impl MainThread {
                 SDL_EventType::QUIT => {
                     return Some(host::Message::Quit);
                 }
+                SDL_EventType::WINDOW_CLOSE_REQUESTED => {
+                    return Some(host::Message::Close);
+                }
+                SDL_EventType::WINDOW_FOCUS_LOST => {
+                    return Some(host::Message::FocusLost);
+                }
                 _ => {}
             }
             //log::warn!("todo: handle sdl event: {:#x?}", typ);

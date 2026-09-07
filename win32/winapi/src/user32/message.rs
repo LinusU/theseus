@@ -434,6 +434,8 @@ impl MessageQueue {
                 host::Message::MouseDown(mouse)
                 | host::Message::MouseUp(mouse)
                 | host::Message::MouseMove(mouse) => input.on_mouse(mouse),
+                #[cfg(not(target_family = "wasm"))]
+                host::Message::FocusLost => input.on_focus_lost(),
                 _ => {}
             }
         }
@@ -527,6 +529,26 @@ impl MessageQueue {
             MouseMove(mouse) => mouse_msg(WM::MOUSEMOVE, hwnd, &mouse),
             KeyDown(key) => key_msg(hwnd, &key, true),
             KeyUp(key) => key_msg(hwnd, &key, false),
+            #[cfg(not(target_family = "wasm"))]
+            Close => MSG {
+                hwnd,
+                message: WM::CLOSE as u32,
+                wParam: 0,
+                lParam: 0,
+                time: host::host().time(),
+                pt: POINT::default(),
+            },
+            #[cfg(not(target_family = "wasm"))]
+            // lParam is unused; wParam is the window gaining focus, which is
+            // outside the single-window model.
+            FocusLost => MSG {
+                hwnd,
+                message: WM::KILLFOCUS as u32,
+                wParam: 0,
+                lParam: 0,
+                time: host::host().time(),
+                pt: POINT::default(),
+            },
             #[cfg(not(target_family = "wasm"))]
             // Paint is translated into a dirty flag in enqueue_message and
             // Quit is a thread message handled above; a stray event here is

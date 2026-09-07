@@ -314,6 +314,44 @@ impl Input {
         }
     }
 
+    /// The window lost keyboard focus. Keys or buttons still reported down are
+    /// released — their release events can never arrive because they happened
+    /// while another window had focus. Without this a key released while
+    /// unfocused would stay stuck down forever after focus returns.
+    pub fn on_focus_lost(&mut self) {
+        for state in &mut self.keys {
+            *state &= !KEY_DOWN;
+        }
+        for dik in 0..self.dik.len() {
+            if self.dik[dik] == 0 {
+                continue;
+            }
+            self.dik[dik] = 0;
+            let sequence = self.next_sequence();
+            self.keyboard_buffer.push(DeviceEvent {
+                ofs: dik as u32,
+                data: 0,
+                time: host::host().time(),
+                sequence,
+            });
+        }
+        // DIMOUSESTATE orders buttons left, right, middle; the `keys` loop
+        // above already cleared their VK_LBUTTON/RBUTTON/MBUTTON state.
+        for index in 0..MOUSE_BUTTONS {
+            if self.mouse.buttons[index] == 0 {
+                continue;
+            }
+            self.mouse.buttons[index] = 0;
+            let sequence = self.next_sequence();
+            self.mouse_buffer.push(DeviceEvent {
+                ofs: MOUSE_BUTTON_0 + index as u32,
+                data: 0,
+                time: host::host().time(),
+                sequence,
+            });
+        }
+    }
+
     pub fn buffer_size(&self, keyboard: bool) -> usize {
         if keyboard {
             self.keyboard_buffer.size
@@ -644,5 +682,43 @@ mod tests {
         };
         input.on_mouse(&up);
         assert_eq!(input.key_state(0x01), 0);
+    }
+
+    /// A key or button released while the window is unfocused never produces
+    /// an event, so focus loss must release them or they read as held forever.
+    #[test]
+    fn focus_lost_releases_held_keys_and_buttons() {
+        let mut input = Input::default();
+        input.set_buffer_size(true, 8);
+        input.set_buffer_size(false, 8);
+        input.on_key(&key(0x26, false), true); // VK_UP held
+        input.on_mouse(&host::MouseMessage {
+            x: 0,
+            y: 0,
+            button: host::MouseButton::Left,
+            buttons: host::MouseButton::Left,
+        });
+        assert!(input.key_down(0x26));
+        assert_eq!(input.key_state(0x01), KEY_DOWN); // VK_LBUTTON
+
+        input.on_focus_lost();
+        assert!(!input.key_down(0x26));
+        assert_eq!(input.key_state(0x01), 0);
+        assert_eq!(input.dik_state()[0x48 | 0x80], 0); // extended scan released
+        assert_eq!(input.mouse.buttons[0], 0);
+
+        // Buffered DirectInput consumers see the releases as edges, not a
+        // silently stuck device state.
+        let (keys, _) = input.take_events(true, 16, false);
+        assert!(
+            keys.iter()
+                .any(|e| e.ofs == (0x48 | 0x80) as u32 && e.data == 0)
+        );
+        let (mouse, _) = input.take_events(false, 16, false);
+        assert!(
+            mouse
+                .iter()
+                .any(|e| e.ofs == super::MOUSE_BUTTON_0 && e.data == 0)
+        );
     }
 }
