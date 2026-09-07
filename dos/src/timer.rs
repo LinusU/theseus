@@ -83,6 +83,12 @@ impl PIT {
         log::info!("PIT divisor set to {divisor:#x}");
     }
 
+    #[cfg(test)]
+    pub fn fire_next(&mut self) {
+        self.divisor = 1;
+        self.next_interrupt = Some(0);
+    }
+
     /// Count how many timer interrupts are due as of `now_ms` and advance
     /// the schedule past them. Splitting the count from the handler calls
     /// lets the caller run the (guest-code) handler without holding a

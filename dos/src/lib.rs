@@ -352,3 +352,48 @@ fn check_interrupts(ctx: &mut Context) {
 pub fn exit(_ctx: &mut Context) -> runtime::Cont {
     std::process::exit(0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Cont, Context, Memory};
+
+    fn timer_handler(ctx: &mut Context) -> Cont {
+        // The fix being guarded: check_interrupts must not hold the State
+        // RefCell borrow while the timer handler runs guest code. If it did,
+        // this reentrant state() call would panic.
+        let _ = state().pit;
+        ctx.iret16()
+    }
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 1,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[(0x1100, timer_handler)],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    #[test]
+    fn check_interrupts_runs_timer_handler_that_touches_state() {
+        host::init();
+
+        let mut ctx = context();
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.esp = 0x3000;
+        ctx.cpu.regs.cs = 0x100;
+
+        let ivt = ivt(&mut ctx.memory);
+        ivt[8] = IVTEntry::from((0x100, 0x100));
+
+        state().pit.fire_next();
+
+        // This panicked before the RefCell borrow was narrowed: the handler
+        // itself calls state(), which would nest with check_interrupts' borrow.
+        check_interrupts(&mut ctx);
+    }
+}
