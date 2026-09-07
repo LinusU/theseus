@@ -174,7 +174,18 @@ impl Context {
 
     pub fn cpu_loop(&mut self, mut f: Cont, target_esp: u32) {
         let mut i = 0;
+        // The stack grows down, so a callee's frame always sits below the
+        // target; an esp that climbs above it means the return already
+        // consumed the frame (a corrupt or convention-mismatched return)
+        // and `!=` would spin on a value that can never match.
         while self.cpu.regs.esp != target_esp {
+            if (self.cpu.regs.esp.wrapping_sub(target_esp)) as i32 > 0 {
+                log::error!(
+                    "cpu_loop: esp {:#x} ran past return target {target_esp:#x}; aborting",
+                    self.cpu.regs.esp
+                );
+                return;
+            }
             self.recent[i] = f.0;
             i = (i + 1) % self.recent.len();
             f = f.0(self);
@@ -201,7 +212,50 @@ pub const fn segofs32(seg: u16, off: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{cpuid, xgetbv};
+    use super::{BlockCache, CPU, Cont, Context, Memory, cpuid, xgetbv};
+
+    #[test]
+    fn cpu_loop_bails_when_esp_overshoots_the_return_target() {
+        // A callee whose return pops more than was pushed lands above the
+        // target; the loop must stop rather than spin on a never-match.
+        fn overshoot(ctx: &mut Context) -> Cont {
+            ctx.cpu.regs.esp += 0x10;
+            Cont(overshoot)
+        }
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        ctx.cpu.regs.esp = 0x1000;
+        ctx.cpu_loop(Cont(overshoot), 0x1008);
+        // One step ran (esp 0x1000 -> 0x1010), then the loop bailed.
+        assert_eq!(ctx.cpu.regs.esp, 0x1010);
+    }
+
+    #[test]
+    fn cpu_loop_returns_on_an_exact_target_match() {
+        fn arrive(ctx: &mut Context) -> Cont {
+            ctx.cpu.regs.esp += 4;
+            Cont(arrive)
+        }
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        ctx.cpu.regs.esp = 0x1000;
+        ctx.cpu_loop(Cont(arrive), 0x1008);
+        assert_eq!(ctx.cpu.regs.esp, 0x1008);
+    }
 
     #[test]
     fn cpuid_reports_the_supported_basic_leaves() {
