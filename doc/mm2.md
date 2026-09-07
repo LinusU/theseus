@@ -109,10 +109,16 @@ THESEUS_INJECT_HOLD=0x26@45000 \
 timeout 150 ./target/fast/mm2 game
 ```
 
-This sequence reaches `SELECT DRIVER` (Enter, Enter), switches the city list
-to London (four Down presses), starts a Blitz race (Enter), clicks through
-`SELECT VEHICLE` and `GO DRIVE`, then holds the accelerator (Up arrow) from
-45s on. Without injection the game idles on the main menu.
+The sequence above still reaches a London race, but the observed focus
+model is a button panel, not a list: the main screen shows `SELECT DRIVER`
+on the left (CREATE NEW DRIVER / DELETE THIS DRIVER / DRIVER'S STATS /
+RACE RECORDS) and a right column of CRASH COURSE, RACES, MULTIPLAYER,
+QUICK RACE. Down-arrow taps move focus down that column and Enter
+activates it: `0x0d` picks CRASH COURSE, `0x28,0x0d` RACES,
+`0x28,0x28,0x0d` MULTIPLAYER, and `0x28,0x28,0x28,0x0d` QUICK RACE. The
+click sequence then goes through `SELECT VEHICLE` and `GO DRIVE`, and the
+hold is the accelerator (Up arrow) from 45s on. Without injection the game
+idles on the main menu.
 
 The SDL window is resizable: the guest keeps its logical client size while
 present letterboxes the frame into the window (or fullscreen) preserving
