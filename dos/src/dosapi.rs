@@ -1,5 +1,7 @@
 //! The system API exposed by DOS, e.g. opening files.
 
+use std::{cell::RefCell, rc::Rc};
+
 use runtime::{Context, segofs};
 
 use crate::{IVTEntry, ivt, state};
@@ -31,9 +33,14 @@ impl File {
     }
 }
 
+/// An open file table entry. The Rc is shared by handles created through
+/// int 21h AH=45h (dup), matching DOS where duplicated handles share the
+/// file position.
+pub type OpenFile = Rc<RefCell<File>>;
+
 /// Handles index the file table directly. A `None` slot was closed and is
 /// handed out again by the next open, matching DOS's lowest-free rule.
-fn alloc_file_handle(files: &mut Vec<Option<File>>) -> Option<usize> {
+fn alloc_file_handle(files: &mut Vec<Option<OpenFile>>) -> Option<usize> {
     if let Some(slot) = files.iter().position(Option::is_none) {
         return Some(slot);
     }
@@ -44,6 +51,16 @@ fn alloc_file_handle(files: &mut Vec<Option<File>>) -> Option<usize> {
     }
     files.push(None);
     Some(files.len() - 1)
+}
+
+/// int 21h AH=45h: duplicate `handle` into the lowest free slot so both
+/// handles share the file position. `None` on an invalid handle or a full
+/// table.
+fn dup_file_handle(files: &mut Vec<Option<OpenFile>>, handle: u16) -> Option<usize> {
+    let file = files.get(handle as usize)?.clone()?;
+    let slot = alloc_file_handle(files)?;
+    files[slot] = Some(file);
+    Some(slot)
 }
 
 macro_rules! trace {
@@ -130,7 +147,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             };
-            state.files[handle] = Some(File { buf, ofs: 0 });
+            state.files[handle] = Some(Rc::new(RefCell::new(File { buf, ofs: 0 })));
             ctx.cpu.regs.set_ax(handle as u16);
             ctx.cpu.flags.remove(runtime::Flags::CF);
         }
@@ -161,17 +178,21 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             let len = ctx.cpu.regs.get_cx();
             let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_dx());
             trace!("handle_read", handle, len, addr);
-            let mut state = state();
+            let state = state();
             let Some(file) = state
                 .files
-                .get_mut(handle as usize)
-                .and_then(Option::as_mut)
+                .get(handle as usize)
+                .and_then(Option::as_ref)
+                .cloned()
             else {
                 ctx.cpu.regs.set_ax(6); // invalid handle
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             };
-            let Some(n) = file.read_into(&mut ctx.memory, addr, len as u32) else {
+            let Some(n) = file
+                .borrow_mut()
+                .read_into(&mut ctx.memory, addr, len as u32)
+            else {
                 ctx.cpu.regs.set_ax(5); // access denied
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
@@ -202,6 +223,19 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             ctx.cpu.regs.set_ax(len); // bytes written
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
         }
+        // delete file
+        0x41 => {
+            let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_dx());
+            let name = ctx.memory.read_str(addr);
+            trace!("file_delete", name);
+            // The emulated file store is read-only: absent files report
+            // not-found, and files the read backend can produce report
+            // access denied rather than pretending to delete them.
+            let exists = state().read_file(name).is_some();
+            ctx.cpu.regs.set_ax(if exists { 5 } else { 2 });
+            ctx.cpu.flags.insert(runtime::Flags::CF);
+            return None;
+        }
         // set file's access point
         0x42 => {
             let origin = ctx.cpu.regs.get_al();
@@ -210,16 +244,13 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 (((ctx.cpu.regs.get_cx() as u32) << 16) | (ctx.cpu.regs.get_dx() as u32)) as i32;
             trace!("handle_seek", handle, origin, offset);
 
-            let mut state = state();
-            let Some(file) = state
-                .files
-                .get_mut(handle as usize)
-                .and_then(Option::as_mut)
-            else {
+            let state = state();
+            let Some(file) = state.files.get(handle as usize).and_then(Option::as_ref) else {
                 ctx.cpu.regs.set_ax(6); // invalid handle
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             };
+            let mut file = file.borrow_mut();
             let offset = match origin {
                 0 => offset,
                 1 => (file.ofs as i32).wrapping_add(offset),
@@ -235,6 +266,42 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
             ctx.cpu.regs.set_dx((offset >> 16) as u16);
             ctx.cpu.regs.set_ax(offset as u16);
+        }
+        // duplicate an access handle
+        0x45 => {
+            let handle = ctx.cpu.regs.get_bx();
+            trace!("handle_dup", handle);
+            let mut state = state();
+            if state.files.get(handle as usize).is_none_or(Option::is_none) {
+                ctx.cpu.regs.set_ax(6); // invalid handle
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            }
+            let Some(new) = dup_file_handle(&mut state.files, handle) else {
+                ctx.cpu.regs.set_ax(4); // too many open files
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            };
+            ctx.cpu.regs.set_ax(new as u16);
+            ctx.cpu.flags.remove(runtime::Flags::CF);
+        }
+        // get current directory
+        0x47 => {
+            let drive = ctx.cpu.regs.get_dl();
+            let addr = segofs(ctx.cpu.regs.get_ds(), ctx.cpu.regs.get_si());
+            trace!("get_cwd", drive, addr);
+            // The emulated file store has one drive: 0 (current) or 3 ("C:").
+            if drive != 0 && drive != 3 {
+                ctx.cpu.regs.set_ax(0x0f); // invalid drive
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            }
+            // The emulated cwd is the drive root, which DOS reports as an
+            // empty ASCIIZ string.
+            if let Some(b) = ctx.memory.bytes.get_mut(addr as usize) {
+                *b = 0;
+            }
+            ctx.cpu.flags.remove(runtime::Flags::CF); // no error
         }
         // file i/o
         0x44 => {
@@ -359,6 +426,14 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("exit", code);
             std::process::exit(code as i32);
         }
+        // set psp segment
+        0x50 => {
+            let seg = ctx.cpu.regs.get_bx();
+            trace!("set_psp", seg);
+            // The DOS kernel uses this to track the current process; it
+            // never fails.
+            state().psp_segment = seg;
+        }
         // get psp segment
         0x51 => {
             trace!("get_psp");
@@ -412,20 +487,41 @@ mod tests {
 
     #[test]
     fn alloc_file_handle_reuses_the_lowest_free_slot() {
-        let mut files: Vec<Option<File>> = vec![];
-        files.resize_with(5, || Some(File::default()));
+        let mut files: Vec<Option<OpenFile>> = vec![];
+        files.resize_with(5, || Some(Default::default()));
 
         // The first open gets the lowest slot past the std handles.
         assert_eq!(alloc_file_handle(&mut files), Some(5));
-        files[5] = Some(File::default());
+        files[5] = Some(Default::default());
 
         // A closed slot is handed out again before the table grows.
         files[2] = None;
         assert_eq!(alloc_file_handle(&mut files), Some(2));
 
         // A full table refuses new handles.
-        let mut full: Vec<Option<File>> = vec![];
-        full.resize_with(0xff, || Some(File::default()));
+        let mut full: Vec<Option<OpenFile>> = vec![];
+        full.resize_with(0xff, || Some(Default::default()));
         assert_eq!(alloc_file_handle(&mut full), None);
+    }
+
+    #[test]
+    fn dup_file_handle_shares_the_file_position() {
+        let mut files: Vec<Option<OpenFile>> = vec![];
+        files.resize_with(5, || Some(Default::default()));
+        files.push(Some(Rc::new(RefCell::new(File {
+            buf: b"abc".to_vec(),
+            ofs: 0,
+        }))));
+
+        // An invalid handle fails; a valid one dups into the lowest free
+        // slot.
+        assert_eq!(dup_file_handle(&mut files, 9), None);
+        assert_eq!(dup_file_handle(&mut files, 5), Some(6));
+
+        // Both handles track the same position.
+        let orig = files[5].clone().unwrap();
+        let dup = files[6].clone().unwrap();
+        orig.borrow_mut().ofs = 2;
+        assert_eq!(dup.borrow().ofs, 2);
     }
 }

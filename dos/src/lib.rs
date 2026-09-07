@@ -6,6 +6,7 @@ mod vga;
 
 use std::{
     cell::{RefCell, RefMut},
+    rc::Rc,
     sync::LazyLock,
 };
 
@@ -204,15 +205,15 @@ pub struct State {
     pit: PIT,
     vga: Option<VGA>,
     pub read_file: Option<ReadFileFn>,
-    files: Vec<Option<dosapi::File>>,
+    files: Vec<Option<dosapi::OpenFile>>,
 }
 
 impl State {
     fn new() -> Self {
-        let mut files: Vec<Option<dosapi::File>> = vec![];
+        let mut files: Vec<Option<dosapi::OpenFile>> = vec![];
         // Initial files: stdin, stdout, stderr, stdaux, stdprn; file handles are indexes into this vector
         // TODO: the JFT belongs in the PSP I guess.
-        files.resize_with(5, || Some(Default::default()));
+        files.resize_with(5, || Some(Rc::new(RefCell::new(dosapi::File::default()))));
         State {
             psp_segment: 0,
             pit: PIT::default(),
