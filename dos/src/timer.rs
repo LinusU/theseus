@@ -135,9 +135,9 @@ pub fn call_timer(ctx: &mut Context, handler: (u16, u16)) {
     ctx.push16(ctx.cpu.regs.cs);
     ctx.push16(ofs);
 
-    let mut f = ctx.indirect16((seg, ofs).into());
-    while ctx.cpu.regs.esp != esp {
-        // don't check interrupts while running interrupt handler
-        f = f.0(ctx);
-    }
+    let f = ctx.indirect16((seg, ofs).into());
+    // Interrupts are not checked while running the interrupt handler.
+    // cpu_loop also bails if a mismatched iret lands esp above the frame,
+    // where a plain `esp != target` loop would spin on a never-match.
+    ctx.cpu_loop(f, esp);
 }

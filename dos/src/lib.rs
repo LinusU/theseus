@@ -397,4 +397,34 @@ mod tests {
         // itself calls state(), which would nest with check_interrupts' borrow.
         check_interrupts(&mut ctx);
     }
+
+    #[test]
+    fn call_timer_bails_when_the_handler_frame_overshoots() {
+        fn overshooting(ctx: &mut Context) -> Cont {
+            // Consume two bytes more than the pushed interrupt frame: a
+            // mismatched return leaves esp above the target, where the old
+            // `esp != target` loop spun on a value that could never match.
+            for _ in 0..4 {
+                ctx.pop16();
+            }
+            Cont(overshooting)
+        }
+
+        let mut ctx = Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 1,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[(0x1100, overshooting)],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        };
+        ctx.cpu.real_mode = true;
+        ctx.cpu.regs.esp = 0x3000;
+        ctx.cpu.regs.cs = 0x100;
+
+        // Returns only because cpu_loop bails on the esp overshoot.
+        timer::call_timer(&mut ctx, (0x100, 0x100));
+        assert_eq!(ctx.cpu.regs.esp, 0x3002);
+    }
 }
