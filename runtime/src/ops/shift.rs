@@ -210,17 +210,30 @@ pub fn rcl<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
     let result = I::from(x >> 1).unwrap();
 
     flags.set(Flags::CF, (x & 1) != 0);
-    // Note: OF only defined for 1-bit rotates.
-    flags.set(
-        Flags::OF,
-        flags.contains(Flags::CF) ^ result.high_bit().is_one(),
-    );
+    // OF is defined only for a 1-bit rotate, where it receives
+    // MSB(result) XOR CF; the masked count, not the mod-width+1 count,
+    // decides (an rcl by 10 on a byte rotates once but leaves OF alone).
+    if y == 1 {
+        flags.set(
+            Flags::OF,
+            flags.contains(Flags::CF) ^ result.high_bit().is_one(),
+        );
+    }
     result
 }
 
 pub fn rcr<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
     assert!(I::bits() < 64);
     let y = y % 32;
+    // For RCR the SDM evaluates OF before the rotate runs: it is
+    // MSB(original operand) XOR the pre-rotate CF, and only for a masked
+    // count of 1. (At count 1 this happens to equal MSB(result) XOR
+    // bit MSB-1 of the result, but computing it up front keeps the rule.)
+    let of = if y == 1 {
+        Some(x.high_bit().is_one() ^ flags.contains(Flags::CF))
+    } else {
+        None
+    };
     let count = y as usize % (I::bits() + 1);
     if count == 0 {
         return x;
@@ -235,11 +248,9 @@ pub fn rcr<I: Int>(x: I, y: u8, flags: &mut Flags) -> I {
     let result = I::from(x & result_mask).unwrap();
 
     flags.set(Flags::CF, ((x >> bits) & 1) != 0);
-    // Note: OF only defined for 1-bit rotates.
-    flags.set(
-        Flags::OF,
-        result.high_bit().is_one() ^ ((result >> (bits - 2)) & I::one()).is_one(),
-    );
+    if let Some(of) = of {
+        flags.set(Flags::OF, of);
+    }
     result
 }
 
@@ -309,6 +320,20 @@ mod tests {
     }
 
     #[test]
+    fn rcl_rcr_multi_bit_counts_leave_of_undefined() {
+        // The OF flag is defined only for 1-bit rotates; for larger masked
+        // counts the SDM leaves it undefined, so the emulator preserves it
+        // (matching the rol/ror convention in this file).
+        let mut flags = Flags::CF | Flags::OF;
+        assert_eq!(super::rcl(0x1234_5678u32, 4, &mut flags), 0x2345_6788);
+        assert_eq!("CF OF", flags.to_string());
+
+        let mut flags = Flags::CF | Flags::OF;
+        assert_eq!(super::rcr(0x1234_5678u32, 4, &mut flags), 0x1123_4567);
+        assert_eq!("CF OF", flags.to_string());
+    }
+
+    #[test]
     fn rcl() {
         let mut flags = Flags::CF;
         assert_eq!(super::rcl(0b1000_0000u8, 1, &mut flags), 0b0000_0001);
@@ -316,7 +341,7 @@ mod tests {
 
         let mut flags = Flags::default();
         assert_eq!(super::rcl(0b1010_0001u8, 3, &mut flags), 0b0000_1010);
-        assert_eq!("CF OF", flags.to_string());
+        assert_eq!("CF", flags.to_string());
 
         let mut flags = Flags::CF | Flags::OF;
         assert_eq!(super::rcl(0x1234_5678u32, 32, &mut flags), 0x1234_5678);
@@ -393,7 +418,7 @@ mod tests {
 
         let mut flags = Flags::default();
         assert_eq!(super::rcr(0b1000_0101u8, 3, &mut flags), 0b0101_0000);
-        assert_eq!("CF OF", flags.to_string());
+        assert_eq!("CF", flags.to_string());
 
         let mut flags = Flags::CF | Flags::OF;
         assert_eq!(super::rcr(0x1234_5678u32, 32, &mut flags), 0x1234_5678);
