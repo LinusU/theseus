@@ -36,7 +36,7 @@ impl<'a> CodeGen<'a> {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 4]".into(), addr)
             }
-            k => todo!("{k:?}"),
+            k => panic!("unhandled 128-bit XMM source operand kind: {k:?}"),
         }
     }
 
@@ -48,7 +48,7 @@ impl<'a> CodeGen<'a> {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 2]".into(), addr)
             }
-            k => todo!("{k:?}"),
+            k => panic!("unhandled 64-bit XMM source operand kind: {k:?}"),
         }
     }
 
@@ -67,7 +67,7 @@ impl<'a> CodeGen<'a> {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("u32".into(), addr)
             }
-            k => todo!("{k:?}"),
+            k => panic!("unhandled 32-bit XMM source operand kind: {k:?}"),
         }
     }
 
@@ -82,7 +82,7 @@ impl<'a> CodeGen<'a> {
                 let addr = self.gen_addr(instr);
                 codegen::get_mem("[u32; 2]".into(), addr)
             }
-            k => todo!("{k:?}"),
+            k => panic!("unhandled XMM packed-shift source operand kind: {k:?}"),
         }
     }
 

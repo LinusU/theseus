@@ -11,7 +11,7 @@ fn reg_to_index(register: iced_x86::Register) -> usize {
         ST5 => 5,
         ST6 => 6,
         ST7 => 7,
-        r => todo!("{r:?}"),
+        r => panic!("unhandled FPU register in reg_to_index: {r:?}"),
     }
 }
 
@@ -73,7 +73,7 @@ impl<'a> CodeGen<'a> {
         } else if kind == Register {
             self.fpu_get_reg(reg_to_index(instr.op_register(n)))
         } else {
-            todo!("{kind:?}")
+            panic!("unhandled FPU source operand kind: {kind:?}")
         }
     }
 
@@ -91,7 +91,7 @@ impl<'a> CodeGen<'a> {
         } else if kind == Register {
             self.fpu_set_reg(reg_to_index(instr.op_register(n)), expr)
         } else {
-            todo!("{kind:?}")
+            panic!("unhandled FPU destination operand kind: {kind:?}")
         }
     }
 

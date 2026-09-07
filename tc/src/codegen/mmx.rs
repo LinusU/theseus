@@ -31,7 +31,7 @@ impl<'a> CodeGen<'a> {
                 codegen::get_mem(codegen::type_for_size(size), addr)
             }
             Immediate8 => format!("{:#x}u64", instr.immediate8()),
-            k => todo!("{k:?}"),
+            k => panic!("unhandled MMX source operand kind: {k:?}"),
         }
     }
 

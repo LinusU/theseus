@@ -149,7 +149,7 @@ impl<'a> CodeGen<'a> {
                         assert!(instr.iced.op0_kind() == iced_x86::OpKind::Immediate16);
                         instr.iced.immediate16()
                     }
-                    _ => todo!(),
+                    _ => panic!("ret with unexpected operand count"),
                 };
                 // The operand-size prefix selects a 16-bit return even in a
                 // 32-bit module, and vice versa in a 16-bit module.

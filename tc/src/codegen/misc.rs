@@ -494,14 +494,14 @@ impl<'a> CodeGen<'a> {
                             iced_x86::Register::EBP | iced_x86::Register::BP => "set_bp",
                             iced_x86::Register::ESI | iced_x86::Register::SI => "set_si",
                             iced_x86::Register::EDI | iced_x86::Register::DI => "set_di",
-                            r => todo!("{r:?}"),
+                            r => panic!("unhandled ARPL destination register: {r:?}"),
                         };
                         format!("ctx.cpu.regs.{set}(res);")
                     }
                     k if is_memory_op(k) => {
                         format!("ctx.memory.write::<u16>({}, res);", self.gen_addr(instr))
                     }
-                    k => todo!("{k:?}"),
+                    k => panic!("unhandled ARPL destination operand kind: {k:?}"),
                 };
                 self.line(format!(
                     "if let Some(res) = arpl(arpl_dst, ({}) as u16, &mut ctx.cpu.flags) {{ {write} }}",
