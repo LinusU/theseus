@@ -562,6 +562,12 @@ impl MainThread {
                     renderer: std::ptr::null_mut(),
                 };
             }
+            // Raise the window so it takes keyboard focus: an unfocused
+            // window gets no key events at all, so in-race driving keys
+            // would stay dead until the user clicked into the window.
+            if !sdl::video::SDL_RaiseWindow(window) {
+                log::warn!("SDL_RaiseWindow failed ({}); continuing", sdl_error());
+            }
             let renderer = sdl::render::SDL_CreateRenderer(window, std::ptr::null());
             if renderer.is_null() {
                 log::warn!(
@@ -1048,5 +1054,51 @@ mod tests {
             panic!("button-down did not produce a mouse-down message")
         };
         assert_eq!(msg.buttons, host::MouseButton::Left);
+    }
+
+    fn key(scancode: sdl::scancode::SDL_Scancode, repeat: bool) -> sdl::events::SDL_Event {
+        let mut event = sdl::events::SDL_Event::default();
+        event.key = sdl::events::SDL_KeyboardEvent {
+            r#type: sdl::events::SDL_EventType::KEY_DOWN,
+            scancode,
+            repeat,
+            ..Default::default()
+        };
+        event
+    }
+
+    /// The driving keys are extended PC keys: each must map to its set-1
+    /// scancode, VK_*, and the extended flag DirectInput's DIK_* codes need.
+    #[test]
+    fn arrow_keys_translate_to_extended_set1_scancodes() {
+        let main = main_thread();
+        for (sc, want_scan, want_vk) in [
+            (sdl::scancode::SDL_Scancode::UP, 0x48u8, 0x26u8),
+            (sdl::scancode::SDL_Scancode::DOWN, 0x50, 0x28),
+            (sdl::scancode::SDL_Scancode::LEFT, 0x4b, 0x25),
+            (sdl::scancode::SDL_Scancode::RIGHT, 0x4d, 0x27),
+        ] {
+            let Some(host::Message::KeyDown(msg)) = main.msg_from_event(&key(sc, false)) else {
+                panic!("arrow key {sc:?} did not produce a key-down message")
+            };
+            assert_eq!(
+                (msg.scancode, msg.vkey, msg.extended),
+                (want_scan, want_vk, true),
+                "arrow key {sc:?} mapped wrong"
+            );
+        }
+    }
+
+    /// Held keys arrive as auto-repeat KEY_DOWNs; the repeat flag must reach
+    /// the message so the game does not treat repeats as fresh presses.
+    #[test]
+    fn key_repeat_flag_is_preserved() {
+        let main = main_thread();
+        let Some(host::Message::KeyDown(msg)) =
+            main.msg_from_event(&key(sdl::scancode::SDL_Scancode::UP, true))
+        else {
+            panic!("repeat key-down did not produce a key-down message")
+        };
+        assert!(msg.repeat);
     }
 }
