@@ -91,7 +91,15 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 ctx.cpu.flags.insert(runtime::Flags::CF);
                 return None;
             };
-            let handle = state.files.len() as u8;
+            if state.files.len() >= 0xff {
+                // Handles index `files` directly; once 255 are live a new
+                // open must fail rather than wrap the index onto an
+                // already-open file.
+                ctx.cpu.regs.set_ax(/* too many open files */ 4);
+                ctx.cpu.flags.insert(runtime::Flags::CF);
+                return None;
+            }
+            let handle = state.files.len();
             state.files.push(File { buf, ofs: 0 });
             ctx.cpu.regs.set_ax(handle as u16);
             ctx.cpu.flags.remove(runtime::Flags::CF);
@@ -149,14 +157,15 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             };
             let offset = match origin {
                 0 => offset,
-                1 => file.ofs as i32 + offset,
-                2 => file.buf.len() as i32 + offset,
+                1 => (file.ofs as i32).wrapping_add(offset),
+                2 => (file.buf.len() as i32).wrapping_add(offset),
                 _ => {
                     ctx.cpu.regs.set_ax(1); // invalid function
                     ctx.cpu.flags.insert(runtime::Flags::CF);
                     return None;
                 }
             } as u32;
+            file.ofs = offset;
 
             ctx.cpu.flags.remove(runtime::Flags::CF); // no error
             ctx.cpu.regs.set_dx((offset >> 16) as u16);
