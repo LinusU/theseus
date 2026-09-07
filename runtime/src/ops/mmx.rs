@@ -197,6 +197,11 @@ pub fn paddd(x: u64, y: u64) -> u64 {
     [x[0].wrapping_add(y[0]), x[1].wrapping_add(y[1])].pack()
 }
 
+/// PADDQ wraps the whole qword; the MMX form is the SSE2-era `0F D4 /r`.
+pub fn paddq(x: u64, y: u64) -> u64 {
+    x.wrapping_add(y)
+}
+
 pub fn paddusb(x: u64, y: u64) -> u64 {
     let x: [u8; 8] = x.unpack();
     let y: [u8; 8] = y.unpack();
@@ -209,6 +214,19 @@ pub fn paddusb(x: u64, y: u64) -> u64 {
         x[5].saturating_add(y[5]),
         x[6].saturating_add(y[6]),
         x[7].saturating_add(y[7]),
+    ]
+    .pack()
+}
+
+/// PADDUSW saturates each unsigned word lane on addition.
+pub fn paddusw(x: u64, y: u64) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    let y: [u16; 4] = y.unpack();
+    [
+        x[0].saturating_add(y[0]),
+        x[1].saturating_add(y[1]),
+        x[2].saturating_add(y[2]),
+        x[3].saturating_add(y[3]),
     ]
     .pack()
 }
@@ -1045,6 +1063,24 @@ pub fn psubd(x: u64, y: u64) -> u64 {
     let x: [u32; 2] = x.unpack();
     let y: [u32; 2] = y.unpack();
     [x[0].wrapping_sub(y[0]), x[1].wrapping_sub(y[1])].pack()
+}
+
+/// PSUBQ wraps the whole qword; the MMX form is the SSE2-era `0F FB /r`.
+pub fn psubq(x: u64, y: u64) -> u64 {
+    x.wrapping_sub(y)
+}
+
+/// PSUBUSW saturates each unsigned word lane on subtraction.
+pub fn psubusw(x: u64, y: u64) -> u64 {
+    let x: [u16; 4] = x.unpack();
+    let y: [u16; 4] = y.unpack();
+    [
+        x[0].saturating_sub(y[0]),
+        x[1].saturating_sub(y[1]),
+        x[2].saturating_sub(y[2]),
+        x[3].saturating_sub(y[3]),
+    ]
+    .pack()
 }
 
 pub fn psubsb(x: u64, y: u64) -> u64 {
