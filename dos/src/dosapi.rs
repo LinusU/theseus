@@ -439,7 +439,13 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
             trace!("get_psp");
             ctx.cpu.regs.set_bx(state().psp_segment);
         }
-        _ => log::error!("TODO: dos int 21h ({func:02x})"),
+        // Unhandled functions fail with the DOS "invalid function" error
+        // rather than returning to the guest with carry and AX unchanged.
+        _ => {
+            log::error!("TODO: dos int 21h ({func:02x})");
+            ctx.cpu.regs.set_ax(1); // invalid function
+            ctx.cpu.flags.insert(runtime::Flags::CF);
+        }
     }
     None
 }
