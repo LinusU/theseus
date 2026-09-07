@@ -203,8 +203,22 @@ impl<'a> CodeGen<'a> {
             Salc => self.line(
                 "ctx.cpu.regs.set_al(if ctx.cpu.flags.contains(Flags::CF) { 0xff } else { 0 });",
             ),
-            Int1 => self.line(format!("unhandled_interrupt(0x1, {:#x});", instr.ip32())),
-            Int3 => self.line(format!("unhandled_interrupt(0x3, {:#x});", instr.ip32())),
+            // INT1/INT3 (the F1 and CC one-byte forms) dispatch through the
+            // real-mode IVT like `int N`; flat code has no IDT to call.
+            Int1 | Int3 => {
+                let vector = if instr.mnemonic() == Int1 { 0x1 } else { 0x3 };
+                if self.module.is_dos() {
+                    self.line(format!(
+                        "return dos::int(ctx, {:#x}, {vector:#x});",
+                        instr.next_ip16()
+                    ));
+                } else {
+                    self.line(format!(
+                        "unhandled_interrupt({vector:#x}, {:#x});",
+                        instr.ip32()
+                    ));
+                }
+            }
             Pushf => self.line("ctx.push16(ctx.cpu.flags.bits() as u16 | 2);"),
             Popf => {
                 self.line("ctx.cpu.flags = Flags::from_bits_truncate(ctx.pop16() as u32 & !2);")

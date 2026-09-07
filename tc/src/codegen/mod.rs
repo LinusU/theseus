@@ -331,10 +331,6 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn todo(&mut self, msg: String) {
-        self.line(format!("todo!({msg:?});"));
-    }
-
     fn gen_block(&mut self, block: &Block) {
         match &block.ty {
             BlockType::Instrs(instrs) => {
@@ -1422,6 +1418,37 @@ mod tests {
             "got {:?}",
             codegen.buf
         );
+    }
+
+    #[test]
+    fn codegen_dispatches_dos_int1_int3() {
+        let state = crate::State {
+            module: crate::Module::DOS(crate::DOSModule::default()),
+            ..Default::default()
+        };
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // int1 (F1) and int3 (CC) at 0x20 dispatch through the DOS interrupt
+        // vector, pushing the following instruction's offset (0x21).
+        for (bytes, vector) in [(&[0xf1u8][..], 0x1), (&[0xccu8][..], 0x3)] {
+            codegen.buf.clear();
+            let mut decoder =
+                iced_x86::Decoder::with_ip(16, bytes, 0x20, iced_x86::DecoderOptions::NONE);
+            let instr = crate::Instr {
+                ip: crate::IP::Seg((0x100, 0x20).into()),
+                iced: decoder.decode(),
+                hint: None,
+            };
+
+            codegen.gen_instr(&instr).unwrap();
+            assert!(
+                codegen
+                    .buf
+                    .contains(&format!("return dos::int(ctx, 0x21, {vector:#x});")),
+                "got {:?}",
+                codegen.buf
+            );
+        }
     }
 
     #[test]
