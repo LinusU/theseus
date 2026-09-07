@@ -79,9 +79,10 @@ impl PSP {
     }
 
     fn set_args(&mut self, args: &str) {
-        assert!(args.len() <= 0x7e);
+        // The PSP command tail is 127 bytes; DOS truncates a longer tail.
+        let args = &args.as_bytes()[..args.len().min(0x7e)];
         self.args_len = args.len() as u8;
-        self.args[..args.len()].copy_from_slice(args.as_bytes());
+        self.args[..args.len()].copy_from_slice(args);
         self.args[args.len()] = b'\r';
     }
 }
