@@ -315,7 +315,7 @@ impl FPU {
             }
             bytes[9] = if sign { 0x80 } else { 0x00 };
         }
-        let _ = memory.try_write(addr, bytes);
+        memory.write_bytes(addr, &bytes);
         self.pop();
     }
 
@@ -792,6 +792,19 @@ mod tests {
         let mut expected = [0u8; 10];
         expected[0] = 0x42;
         assert_eq!(&memory.bytes[0x30..0x3a], &expected);
+    }
+
+    #[test]
+    fn bstp_out_of_bounds_does_not_panic() {
+        let mut memory = crate::Memory::leak_new(0x100);
+        let mut fpu = FPU::default();
+
+        // An out-of-bounds store logs and returns without touching the
+        // dummy sink; the FPU still pops, matching the instruction's
+        // side-effect behavior for masked/unlogged addresses.
+        fpu.push(42.0);
+        fpu.bstp(&mut memory, 0x1000);
+        assert_eq!(fpu.st_top, 8);
     }
 
     #[test]
