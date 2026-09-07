@@ -5,11 +5,12 @@ struct Logger {
 }
 
 impl Logger {
-    /// env_logger-style filtering: a comma-separated list of `level` or
-    /// `target=level` directives. A bare `level` sets the global default;
-    /// `target=level` applies to records whose target starts with that path.
-    /// The longest matching target prefix wins, and a target matched by no
-    /// directive is silenced.
+    /// env_logger-style filtering: a comma-separated list of `level`,
+    /// `target`, or `target=level` directives. A bare `level` sets the
+    /// global default; a bare `target` enables every level for that target;
+    /// `target=level` applies to records whose target starts with that
+    /// path. The longest matching target prefix wins, and a target matched
+    /// by no directive is silenced.
     fn enabled_level(&self, metadata: &log::Metadata) -> Option<log::LevelFilter> {
         let filters = self.filters.get()?;
         let mut best: Option<&(String, log::LevelFilter)> = None;
@@ -71,6 +72,25 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
+/// Parse one `RUST_LOG` directive into a (target prefix, level) pair.
+/// Returns `None` for a malformed `target=level` directive.
+fn parse_directive(part: &str) -> Option<(String, log::LevelFilter)> {
+    match part.split_once('=') {
+        Some((target, level)) => level
+            .trim()
+            .parse::<log::LevelFilter>()
+            .ok()
+            .map(|level| (target.trim().to_string(), level)),
+        None => match part.parse::<log::LevelFilter>() {
+            // A bare level is the global default.
+            Ok(level) => Some((String::new(), level)),
+            // env_logger-style: a bare target name enables that target at
+            // the most verbose level.
+            Err(_) => Some((part.to_string(), log::LevelFilter::Trace)),
+        },
+    }
+}
+
 static LOGGER: Logger = Logger {
     filters: std::sync::OnceLock::new(),
 };
@@ -83,13 +103,9 @@ pub fn init() {
             if part.is_empty() {
                 continue;
             }
-            let (target, level_str) = match part.split_once('=') {
-                Some((target, level)) => (target.trim(), level.trim()),
-                None => ("", part),
-            };
-            match level_str.parse::<log::LevelFilter>() {
-                Ok(level) => filters.push((target.to_string(), level)),
-                Err(_) => eprintln!("logger: ignoring bad RUST_LOG directive {part:?}"),
+            match parse_directive(part) {
+                Some(filter) => filters.push(filter),
+                None => eprintln!("logger: ignoring bad RUST_LOG directive {part:?}"),
             }
         }
     }
@@ -107,4 +123,86 @@ pub fn init() {
     let _ = LOGGER.filters.set(filters);
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(max);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Logger, parse_directive};
+    use log::{Level, LevelFilter, Log, Metadata};
+
+    fn logger(directives: &[(&str, LevelFilter)]) -> Logger {
+        let logger = Logger {
+            filters: std::sync::OnceLock::new(),
+        };
+        logger
+            .filters
+            .set(
+                directives
+                    .iter()
+                    .map(|(target, level)| (target.to_string(), *level))
+                    .collect(),
+            )
+            .unwrap();
+        logger
+    }
+
+    fn meta(target: &'static str, level: Level) -> Metadata<'static> {
+        Metadata::builder().target(target).level(level).build()
+    }
+
+    #[test]
+    fn bare_target_enables_all_levels_for_that_target() {
+        // env_logger treats `RUST_LOG=winapi` as `winapi=trace`.
+        assert_eq!(
+            parse_directive("winapi"),
+            Some(("winapi".to_string(), LevelFilter::Trace))
+        );
+        assert_eq!(
+            parse_directive("warn"),
+            Some((String::new(), LevelFilter::Warn))
+        );
+        assert_eq!(parse_directive("winapi=bogus"), None);
+
+        let logger = logger(&[("winapi", LevelFilter::Trace)]);
+        assert_eq!(
+            logger.enabled_level(&meta("winapi::dsound", Level::Trace)),
+            Some(LevelFilter::Trace)
+        );
+        // A target matched by no directive is silenced.
+        assert_eq!(logger.enabled_level(&meta("host::sdl", Level::Error)), None);
+    }
+
+    #[test]
+    fn longest_matching_prefix_wins() {
+        let logger = logger(&[
+            ("", LevelFilter::Warn),
+            ("winapi", LevelFilter::Error),
+            ("winapi::dsound", LevelFilter::Trace),
+        ]);
+        assert_eq!(
+            logger.enabled_level(&meta("winapi::dsound", Level::Trace)),
+            Some(LevelFilter::Trace)
+        );
+        assert_eq!(
+            logger.enabled_level(&meta("winapi::kernel32", Level::Warn)),
+            Some(LevelFilter::Error)
+        );
+        assert_eq!(
+            logger.enabled_level(&meta("host", Level::Warn)),
+            Some(LevelFilter::Warn)
+        );
+    }
+
+    #[test]
+    fn off_directive_silences_everything() {
+        let logger = logger(&[("", LevelFilter::Off)]);
+        // The filter matches (so enabled_level reports it), but no record
+        // passes the `enabled` comparison against Off.
+        assert_eq!(
+            logger.enabled_level(&meta("x", Level::Error)),
+            Some(LevelFilter::Off)
+        );
+        assert!(!logger.enabled(&meta("x", Level::Error)));
+        assert!(!logger.enabled(&meta("x", Level::Trace)));
+    }
 }
