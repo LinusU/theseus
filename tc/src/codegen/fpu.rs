@@ -280,6 +280,11 @@ impl<'a> CodeGen<'a> {
                 self.line("ctx.cpu.fpu.push(fsincos_t.cos());");
             }
             Fnop => {}
+            // FENI/FDISI/FSETPM only did anything on the 8087/80287; on the
+            // 80387 and later they decode as no-ops. iced gives the wait-
+            // prefixed forms (9B DB Ex) separate mnemonics from the bare
+            // DB Ex encodings.
+            Feni | Fdisi | Fsetpm | Fneni | Fndisi | Fnsetpm => {}
             Fdecstp => self.line("ctx.cpu.fpu.dec_top();"),
             Fincstp => self.line("ctx.cpu.fpu.inc_top();"),
             Ffree | Ffreep => {

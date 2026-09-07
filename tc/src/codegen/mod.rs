@@ -1672,6 +1672,10 @@ mod tests {
             (&[0xd9, 0xf5], "ctx.cpu.fpu.prem(true);"),                   // fprem1
             (&[0xd9, 0xf8], "ctx.cpu.fpu.prem(false);"),                  // fprem
             (&[0xd9, 0xd0], ""), // fnop (no output beyond the comment)
+            // feni/fdisi/fsetpm: 8087/287-era controls, no-ops on 387+
+            (&[0xdb, 0xe0], ""),
+            (&[0xdb, 0xe1], ""),
+            (&[0xdb, 0xe4], ""),
             (&[0xd9, 0xf6], "ctx.cpu.fpu.dec_top();"), // fdecstp
             (&[0xd9, 0xf7], "ctx.cpu.fpu.inc_top();"), // fincstp
             // fisubr dword ptr [eax]: int - st0

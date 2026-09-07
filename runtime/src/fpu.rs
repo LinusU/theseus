@@ -342,7 +342,10 @@ impl FPU {
     }
 
     pub fn examine(&mut self) {
-        if self.st_top == 8 {
+        // FXAM reports the class of ST(0) from its tag: a register freed by
+        // FFREE or vacated by a pop is Empty even while the stack as a whole
+        // is non-empty.
+        if self.st_top == 8 || !self.tags[self.st_offset(0)] {
             self.condition = (Status::C0 | Status::C3).bits();
             return;
         }
@@ -619,6 +622,21 @@ mod tests {
         let mut fpu = FPU::default();
         fpu.examine();
 
+        assert_eq!(
+            fpu.status() & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits(),
+            (Status::C0 | Status::C3).bits()
+        );
+    }
+
+    #[test]
+    fn fxam_reports_an_empty_tag_on_a_nonempty_stack() {
+        let mut fpu = FPU::default();
+        fpu.push(1.0);
+        fpu.push(2.0);
+
+        // FFREE ST(0): the stack still holds ST(1), but ST(0)'s tag is empty.
+        fpu.ffree(0);
+        fpu.examine();
         assert_eq!(
             fpu.status() & (Status::C0 | Status::C1 | Status::C2 | Status::C3).bits(),
             (Status::C0 | Status::C3).bits()
