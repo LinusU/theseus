@@ -354,8 +354,10 @@ impl Surface {
     fn dump(&self, path: &str) {
         use std::io::Write;
         let need = self.height.saturating_mul(self.last_stride) as usize;
-        if self.last_stride == 0 || self.last.len() < need {
-            return; // nothing presented yet
+        if self.last_stride < self.width.saturating_mul(4) || self.last.len() < need {
+            // Rows are 4-byte pixels; a narrower stride (or nothing
+            // presented yet) cannot produce a valid dump.
+            return;
         }
         let mut out = Vec::with_capacity(self.width as usize * self.height as usize * 3);
         out.extend_from_slice(format!("P6\n{} {}\n255\n", self.width, self.height).as_bytes());
