@@ -301,8 +301,9 @@ pub struct DDSURFACEDESC2 {
     pub ddckCKSrcOverlay: DDCOLORKEY,
     pub ddckCKSrcBlt: DDCOLORKEY,
 
+    /// Union with `dwFVF` (vertex-buffer descriptors set DDSD::FVF and read
+    /// the first dword of this field as the FVF code).
     pub ddpfPixelFormat: DDPIXELFORMAT,
-    // TODO: dwFVF
     pub ddsCaps: DDSCAPS2,
     pub dwTextureStage: u32,
 }
@@ -354,6 +355,10 @@ impl std::fmt::Debug for DDSURFACEDESC2 {
         }
         if self.dwFlags.contains(DDSD::PIXELFORMAT) {
             st.field("ddpfPixelFormat", &self.ddpfPixelFormat);
+        }
+        if self.dwFlags.contains(DDSD::FVF) {
+            // dwFVF unions with ddpfPixelFormat's first dword.
+            st.field("dwFVF", &self.ddpfPixelFormat.dwSize);
         }
         if self.dwFlags.contains(DDSD::CAPS) {
             st.field("ddsCaps", &self.ddsCaps);

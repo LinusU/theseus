@@ -19,6 +19,8 @@ const WAVERR_STILLPLAYING: u32 = 33;
 const WAVERR_UNPREPARED: u32 = 34;
 /// uDeviceID that asks for any capable device rather than a numbered one.
 const WAVE_MAPPER: u32 = 0xFFFF_FFFF;
+/// The one HWAVEOUT the emulated device vends.
+const WAVE_HANDLE: u32 = 1;
 
 /// Whether `addr..addr + bytes` is a guest range the waveOut API may touch:
 /// outside the null page and fully inside emulated memory.
@@ -190,7 +192,10 @@ fn reset(
             log::error!("waveOut: unreadable WAVEHDR at {addr:#x}");
         }
         if let Some(f) = callback {
-            ctx.call32_x86(f, vec![1, MM_WOM::DONE as u32, callback_data, addr, 0]);
+            ctx.call32_x86(
+                f,
+                vec![WAVE_HANDLE, MM_WOM::DONE as u32, callback_data, addr, 0],
+            );
         }
     }
     pending.store(0, Ordering::SeqCst);
@@ -294,10 +299,9 @@ fn thread_proc(
                 }
 
                 if let Some(f) = callback {
-                    let hwo = 1u32; // XXX
                     let uMsg = MM_WOM::DONE as u32;
                     // waveOutProc, WOM_DONE message
-                    ctx.call32_x86(f, vec![hwo, uMsg, callback_data, addr, 0]);
+                    ctx.call32_x86(f, vec![WAVE_HANDLE, uMsg, callback_data, addr, 0]);
                 }
             }
         }
@@ -398,20 +402,20 @@ pub fn waveOutOpen(
         thread_proc(ctx, stream, receiver, dwCallback, dwInstance, pending)
     });
 
-    ctx.memory.write::<u32>(phwo, 1);
+    ctx.memory.write::<u32>(phwo, WAVE_HANDLE);
 
     MMSYSERR_NOERROR
 }
 
 /// The one emulated output handle waveOutOpen vends.
 fn open_wave(hwo: u32) -> bool {
-    hwo == 1 && state().wave.is_some()
+    hwo == WAVE_HANDLE && state().wave.is_some()
 }
 
 #[win32_derive::dllexport]
 pub fn waveOutReset(_ctx: &mut Context, hwo: u32) -> u32 {
     let state = state();
-    if hwo != 1 {
+    if hwo != WAVE_HANDLE {
         return MMSYSERR_INVALHANDLE;
     }
     let Some(wave) = state.wave.as_ref() else {
@@ -425,7 +429,7 @@ pub fn waveOutReset(_ctx: &mut Context, hwo: u32) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn waveOutClose(_ctx: &mut Context, hwo: u32) -> u32 {
-    if hwo != 1 {
+    if hwo != WAVE_HANDLE {
         return MMSYSERR_INVALHANDLE;
     }
     let mut state = state();
@@ -510,7 +514,7 @@ pub fn waveOutWrite(ctx: &mut Context, hwo: u32, pwh: u32, cbwh: u32) -> u32 {
         return WAVERR_UNPREPARED;
     }
     let mut state = state();
-    if hwo != 1 {
+    if hwo != WAVE_HANDLE {
         return MMSYSERR_INVALHANDLE;
     }
     let Some(wave) = state.wave.as_mut() else {
