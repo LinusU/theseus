@@ -6269,4 +6269,37 @@ mod tests {
             codegen.buf
         );
     }
+
+    #[test]
+    fn resolve_cont_dedups_unknown_jump_targets() {
+        let mut state = crate::State {
+            module: crate::Module::Windows(crate::WindowsModule {
+                code_memory: 0x400000..0x500000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.blocks.insert(
+            0x401000,
+            crate::Block {
+                name: Some("xknown".into()),
+                ty: crate::BlockType::Instrs(vec![]),
+            },
+        );
+        let mut codegen = super::CodeGen::new(&state, false);
+
+        // Known targets keep using the block name.
+        assert_eq!(codegen.resolve_cont(0x401000, 0x401005), "Cont(xknown)");
+
+        // Unknown in-module targets fall back to a stub and are tracked.
+        assert_eq!(codegen.resolve_cont(0x402000, 0x401006), "Cont(unk_402000)");
+        assert_eq!(codegen.resolve_cont(0x402000, 0x401007), "Cont(unk_402000)");
+        assert_eq!(codegen.unknown.len(), 1);
+        assert!(codegen.unknown.contains(&0x402000));
+
+        // Unknown out-of-module targets are also deduped.
+        assert_eq!(codegen.resolve_cont(0x600000, 0x401008), "Cont(unk_600000)");
+        assert_eq!(codegen.resolve_cont(0x600000, 0x401009), "Cont(unk_600000)");
+        assert_eq!(codegen.unknown.len(), 2);
+    }
 }
