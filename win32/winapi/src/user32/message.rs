@@ -263,17 +263,37 @@ pub fn post_message(hwnd: HWND, message: u32, wParam: WPARAM, lParam: LPARAM) {
     });
 }
 
+/// Block for one host event — or poll briefly when a timer could expire
+/// during the wait — and enqueue it. Host calls run outside the queue
+/// borrow: the first `host()` call initializes SDL and `wait()` blocks
+/// indefinitely, neither of which belongs inside the shared RefCell.
+fn wait_for_host_input(has_timers: bool) {
+    let message = if has_timers {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        host::host().poll()
+    } else {
+        Some(host::host().wait())
+    };
+    if let Some(message) = message {
+        state().message_queue.borrow_mut().enqueue_message(message);
+    }
+}
+
 #[win32_derive::dllexport]
 pub fn WaitMessage(_ctx: &mut Context) -> bool {
-    let mut queue = state().message_queue.borrow_mut();
     // WaitMessage blocks until the queue actually holds a message: a host
     // event that produces none (dropped input, a not-yet-due timer) must
     // keep waiting rather than return with an empty queue.
     loop {
-        if queue.peek(host::host().time()).is_some() {
-            return true;
-        }
-        queue.wait_or_poll();
+        let now = host::host().time();
+        let has_timers = {
+            let mut queue = state().message_queue.borrow_mut();
+            if queue.peek(now).is_some() {
+                return true;
+            }
+            !queue.timers.is_empty()
+        };
+        wait_for_host_input(has_timers);
     }
 }
 
@@ -369,45 +389,6 @@ impl MessageQueue {
         }
     }
 
-    /// Pop one message matching the filter, waiting for a new one if
-    /// necessary.
-    fn read(&mut self, filter: &MsgFilter) -> MSG {
-        loop {
-            if let Some(msg) = self.pop_filtered(host::host().time(), filter) {
-                return msg;
-            }
-            self.wait_or_poll();
-        }
-    }
-
-    /// Block for a host event, or poll briefly when a timer could expire
-    /// during the wait — timers synthesize their own messages and must wake
-    /// the loop without a host event.
-    fn wait_or_poll(&mut self) {
-        if self.timers.is_empty() {
-            self.wait_host();
-        } else {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            self.poll_host();
-        }
-    }
-
-    /// Read one pending host message, if any available.
-    fn poll_host(&mut self) {
-        let Some(message) = host::host().poll() else {
-            return;
-        };
-        self.enqueue_message(message);
-    }
-
-    /// Read every pending host message. DirectInput calls this to refresh
-    /// input state without going through the window message queue.
-    pub fn poll_host_all(&mut self) {
-        while let Some(message) = host::host().poll() {
-            self.enqueue_message(message);
-        }
-    }
-
     /// Enqueue host messages that were already polled; `pump_host_input`
     /// uses this so the host poll — which can initialize SDL on first use —
     /// does not run while the shared queue is borrowed.
@@ -415,12 +396,6 @@ impl MessageQueue {
         for message in messages {
             self.enqueue_message(message);
         }
-    }
-
-    /// Wait for a new message to arrive.
-    fn wait_host(&mut self) {
-        let message = host::host().wait();
-        self.enqueue_message(message);
     }
 
     fn enqueue_message(&mut self, msg: host::Message) {
@@ -651,9 +626,14 @@ pub fn PeekMessageA(
     crate::dsound::pump(ctx);
 
     let filter = MsgFilter::new(hWnd, wMsgFilterMin, wMsgFilterMax);
-    let mut queue = state().message_queue.borrow_mut();
-    queue.poll_host();
+    // Fold one freshly arrived host event into the queue before peeking.
+    // The poll runs outside the borrow: host() can initialize SDL on first
+    // use, which must not happen while the shared queue is borrowed.
+    if let Some(message) = host::host().poll() {
+        state().message_queue.borrow_mut().enqueue_message(message);
+    }
     let now = host::host().time();
+    let mut queue = state().message_queue.borrow_mut();
     let Some(msg) = queue.peek_filtered(now, &filter) else {
         return false;
     };
@@ -702,7 +682,17 @@ pub fn GetMessageW(
     if filter.is_invalid_window() {
         return -1;
     }
-    let msg = state().message_queue.borrow_mut().read(&filter);
+    let msg = loop {
+        let now = host::host().time();
+        let (found, has_timers) = {
+            let mut queue = state().message_queue.borrow_mut();
+            (queue.pop_filtered(now, &filter), !queue.timers.is_empty())
+        };
+        if let Some(msg) = found {
+            break msg;
+        }
+        wait_for_host_input(has_timers);
+    };
     if lpMsg.write(&mut ctx.memory, msg).is_none() {
         return -1; // error
     }
