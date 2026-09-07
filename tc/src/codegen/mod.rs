@@ -88,15 +88,17 @@ pub fn is_memory_op(kind: iced_x86::OpKind) -> bool {
 /// Some `iced` memory op kinds encode the base register in the variant rather
 /// than in `Instruction::memory_base()`. Return the flat address expression for
 /// the special string-op-style kinds, or `None` for ordinary `Memory`.
+/// The `MemorySeg*` kinds carry an explicit base register, while `MemoryES*`
+/// are the ES:DI/EDI/RDI destinations of `stos`/`scas`/`ins`-style stores.
 pub fn memory_kind_base(kind: iced_x86::OpKind) -> Option<String> {
     use iced_x86::OpKind::*;
     let reg = match kind {
-        MemorySegSI | MemoryESDI => iced_x86::Register::SI,
-        MemorySegESI | MemoryESEDI => iced_x86::Register::ESI,
-        MemorySegRSI | MemoryESRDI => iced_x86::Register::RSI,
-        MemorySegDI => iced_x86::Register::DI,
-        MemorySegEDI => iced_x86::Register::EDI,
-        MemorySegRDI => iced_x86::Register::RDI,
+        MemorySegSI => iced_x86::Register::SI,
+        MemorySegESI => iced_x86::Register::ESI,
+        MemorySegRSI => iced_x86::Register::RSI,
+        MemorySegDI | MemoryESDI => iced_x86::Register::DI,
+        MemorySegEDI | MemoryESEDI => iced_x86::Register::EDI,
+        MemorySegRDI | MemoryESRDI => iced_x86::Register::RDI,
         _ => return None,
     };
     Some(get_reg(reg))
@@ -872,6 +874,22 @@ mod tests {
             codegen.gen_instr(&instr).unwrap();
             assert!(codegen.buf.contains(want));
         }
+    }
+
+    #[test]
+    fn memory_kind_base_maps_implicit_registers() {
+        use iced_x86::OpKind::*;
+        // The ES:DI/EDI/RDI kinds are string-op destinations, so they map to
+        // the DI register family, not SI.
+        for (kind, want) in [
+            (MemorySegESI, "ctx.cpu.regs.esi"),
+            (MemoryESDI, "ctx.cpu.regs.get_di()"),
+            (MemoryESEDI, "ctx.cpu.regs.edi"),
+            (MemorySegEDI, "ctx.cpu.regs.edi"),
+        ] {
+            assert_eq!(super::memory_kind_base(kind).as_deref(), Some(want));
+        }
+        assert_eq!(super::memory_kind_base(Memory), None);
     }
 
     #[test]
