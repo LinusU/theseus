@@ -136,7 +136,7 @@ fn run() -> anyhow::Result<()> {
         }
     }
     for range in args.jump_table {
-        let mut src = range.start; // TODO
+        let mut src = range.start;
         while src <= range.end {
             let next: IP;
             let dst = if state.module.segment_addressed() {
