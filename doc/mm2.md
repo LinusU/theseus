@@ -175,7 +175,12 @@ warnings in the run log but are outside the scope of the shared port code:
 - Medium and low LOD meshes for many vehicle and prop models; only the
   highest LOD is present in the local installation.
 - Description bitmaps for several UI nodes (`ulock_amvpcab`, `vpcab_desc`,
-  `ama_rank_desc`), which the game requests through `nodeGetBitmap()`.
+  `ama_rank_desc`), which the game requests through `nodeGetBitmap()`. The
+  current `mm2tex.ar` does ship `texture/*_DESC.tga` for some vehicles
+  (`VPBUG`, `VPBULLET`, `VPBUS`, `VPCADDIE`, `VPCOP`, `VPFORD`, `VPMUSTANG99`,
+  `VPPANOZGT`, `VPPANOZG`, `VPPANOZ`, `VPSEMI`) but not for others, so the
+  SELECT VEHICLE description panel works for e.g. the Mustang but cannot render
+  labels that depend on the missing `*_DESC` assets.
 
 The missing `nodeGetBitmap` assets are the direct cause of the translucent
 overlay panels not showing their text labels, and the absent audio/DirectMusic
