@@ -23,4 +23,10 @@ impl<T> SingleThreader<T> {
         assert_eq!(std::thread::current().id(), self.id);
         &self.data
     }
+
+    /// Like `get`, but returns `None` off the owning thread instead of
+    /// panicking — for `Drop` impls, which cannot panic.
+    pub fn try_get(&self) -> Option<&T> {
+        (std::thread::current().id() == self.id).then_some(&self.data)
+    }
 }

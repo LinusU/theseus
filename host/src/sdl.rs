@@ -485,11 +485,41 @@ impl Surface {
     }
 }
 
+impl Drop for Surface {
+    fn drop(&mut self) {
+        if !self.texture.is_null() {
+            unsafe { sdl::render::SDL_DestroyTexture(self.texture) };
+        }
+    }
+}
+
 pub struct Window {
     /// null when running in headless mode
     window: *mut sdl::video::SDL_Window,
     /// null when running in headless mode
     renderer: *mut sdl::render::SDL_Renderer,
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        if self.window.is_null() {
+            return;
+        }
+        unsafe {
+            // The renderer references the window; destroy it first.
+            if !self.renderer.is_null() {
+                sdl::render::SDL_DestroyRenderer(self.renderer);
+            }
+            sdl::video::SDL_DestroyWindow(self.window);
+        }
+        // Input mapping and the fullscreen chord keep this window's handle;
+        // clear it so neither queries a destroyed window.
+        if let Some(main) = crate::host().main_thread.try_get()
+            && main.window.get() == self.window
+        {
+            main.window.set(std::ptr::null_mut());
+        }
+    }
 }
 
 impl Window {
