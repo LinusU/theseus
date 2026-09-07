@@ -127,10 +127,14 @@ Debug environment knobs, all optional:
 - `THESEUS_TEX_DUMP=<dir>` — write each bound 16bpp texture once as a PPM.
 - `THESEUS_NO_ZTEST=1` — disable the z-test for depth debugging.
 - `THESEUS_INJECT_VKEY` / `THESEUS_INJECT_AT_MS` — comma-separated hex VK
-  codes tapped 300ms apart starting at the given millisecond.
+  codes tapped 300ms apart starting at the given millisecond. The harness
+  maps the usual menu keys plus letters A–Z and digits 0–9 to PC set-1
+  scancodes, so scripted text entry works (letters arrive lowercase, no
+  shift state).
 - `THESEUS_INJECT_CLICK` / `THESEUS_INJECT_CLICK_MS` /
   `THESEUS_INJECT_CLICK_GAP` — `;`-separated `x,y` left-clicks (move, down,
-  up 50ms apart) with a configurable gap.
+  up 50ms apart) with a configurable gap. An `x,y@ms` suffix overrides the
+  `CLICK_MS + i*GAP` schedule with an absolute time for that click.
 - `THESEUS_INJECT_HOLD` — `;`-separated `vkey@down_ms[+up_ms]` entries that
   hold keys for gameplay input.
 - `THESEUS_MISSING_ADDRS=<path>` — append dynamically reached but
