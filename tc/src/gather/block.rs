@@ -174,7 +174,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 if self.traverse.module.code_memory().contains(&imm) {
                     log::info!("{ip} {instr}  ; {imm:x} looks like a code pointer");
                     assert!(!self.traverse.module.segment_addressed());
-                    self.traverse.queue.add_candidate(imm);
+                    self.traverse
+                        .queue
+                        .add_candidate(self.traverse.module.local_addr(imm));
                 }
             }
         }
@@ -349,7 +351,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                     anyhow::bail!("jmp to invalid address");
                 };
                 if self.traverse.module.code_memory().contains(&target) {
-                    self.traverse.queue.add_candidate(target);
+                    self.traverse
+                        .queue
+                        .add_candidate(self.traverse.module.local_addr(target));
                 }
                 log::warn!("{ip} {instr}  ; indirect via memory");
             }

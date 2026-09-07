@@ -46,8 +46,7 @@ struct IPQueue {
     queue: VecDeque<IP>,
 
     /// Lower-confidence code addresses (from scans); validated before decoding.
-    /// TODO: switch from u32 to IP, share more code.
-    candidates: VecDeque<u32>,
+    candidates: VecDeque<IP>,
 
     /// Addresses we've visited already and decided don't contain code.
     /// (Addresses that did contain code are inserted in Traverse.blocks.)
@@ -86,17 +85,17 @@ impl IPQueue {
         None
     }
 
-    fn add_candidate(&mut self, addr: u32) {
-        self.candidates.push_back(addr);
+    fn add_candidate(&mut self, ip: IP) {
+        self.candidates.push_back(ip);
     }
 
-    /// TODO: switch from u32 to IP, share more code.
-    pub fn pop_candidate(&mut self, blocks: &BTreeMap<u32, Block>) -> Option<u32> {
-        while let Some(addr) = self.candidates.pop_front() {
+    pub fn pop_candidate(&mut self, blocks: &BTreeMap<u32, Block>) -> Option<IP> {
+        while let Some(ip) = self.candidates.pop_front() {
+            let addr = ip.to_addr();
             if blocks.contains_key(&addr) || self.invalid.contains(&addr) {
                 continue;
             }
-            return Some(addr);
+            return Some(ip);
         }
         None
     }
@@ -242,9 +241,10 @@ impl<'a> Traverse<'a> {
                 self.process(ip);
             }
 
-            let Some(addr) = self.queue.pop_candidate(&self.blocks) else {
+            let Some(ip) = self.queue.pop_candidate(&self.blocks) else {
                 break;
             };
+            let addr = ip.to_addr();
             // Never split an existing block based on a mere scan hit; direct
             // control flow that reaches the address will do that instead.
             if self.find_containing_block(addr).is_some() {
@@ -255,7 +255,7 @@ impl<'a> Traverse<'a> {
             }
             // enqueue() clears low_confidence as a side effect of any real
             // edge reaching the address, so mark the candidate after it.
-            self.queue.enqueue(self.module.local_addr(addr));
+            self.queue.enqueue(ip);
             self.queue.low_confidence.insert(addr);
         }
     }
@@ -435,7 +435,7 @@ impl<'a> Traverse<'a> {
             }
         }
         for value in found {
-            self.queue.add_candidate(value);
+            self.queue.add_candidate(self.module.local_addr(value));
         }
     }
 
@@ -456,7 +456,7 @@ impl<'a> Traverse<'a> {
                 );
                 if prologue {
                     let addr = gap.start + i as u32;
-                    self.queue.add_candidate(addr);
+                    self.queue.add_candidate(self.module.local_addr(addr));
                 }
             }
         }
@@ -514,7 +514,7 @@ mod tests {
         let mut traverse = Traverse::new(&mut state, &gather);
         traverse.scan_for_pointers();
         assert_eq!(traverse.queue.candidates.len(), 2);
-        assert!(traverse.queue.candidates.contains(&0x1234));
-        assert!(traverse.queue.candidates.contains(&0x1238));
+        assert!(traverse.queue.candidates.contains(&IP::Flat(0x1234)));
+        assert!(traverse.queue.candidates.contains(&IP::Flat(0x1238)));
     }
 }

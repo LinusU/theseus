@@ -60,7 +60,7 @@ impl<'a> Traverse<'a> {
                     // Backwards we may be reading the code that precedes a
                     // normal table, so treat these as candidates: they get
                     // dropped if they'd land inside a block we already know.
-                    self.queue.add_candidate(target);
+                    self.queue.add_candidate(self.module.local_addr(target));
                 }
                 found += 1;
             }
