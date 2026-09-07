@@ -259,7 +259,14 @@ impl MainThread {
             use sdl::events::SDL_EventType;
             let typ: sdl::events::SDL_EventType = std::mem::transmute(event.r#type);
             match typ {
-                SDL_EventType::WINDOW_EXPOSED => return Some(host::Message::Paint),
+                SDL_EventType::WINDOW_EXPOSED
+                | SDL_EventType::WINDOW_RESIZED
+                | SDL_EventType::WINDOW_PIXEL_SIZE_CHANGED => {
+                    // A resize changes the letterbox area; ask for a repaint
+                    // so a guest that is not presenting every frame does not
+                    // leave stale content under the new window shape.
+                    return Some(host::Message::Paint);
+                }
                 SDL_EventType::MOUSE_MOTION => {
                     let event = &event.motion;
                     // Motion events do carry the mask, so resync from them.
@@ -1296,6 +1303,28 @@ mod tests {
             letterbox(640.0, 480.0, 0.0, 480.0),
             (0.0, 0.0, 640.0, 480.0)
         );
+    }
+
+    /// Window resize and expose events request a repaint so a rescaled or
+    /// letterboxed frame does not stay stale under the new window shape.
+    #[test]
+    fn window_resize_requests_a_repaint() {
+        let main = main_thread();
+        for typ in [
+            sdl::events::SDL_EventType::WINDOW_RESIZED,
+            sdl::events::SDL_EventType::WINDOW_PIXEL_SIZE_CHANGED,
+            sdl::events::SDL_EventType::WINDOW_EXPOSED,
+        ] {
+            let mut event = sdl::events::SDL_Event::default();
+            event.window = sdl::events::SDL_WindowEvent {
+                r#type: typ,
+                ..Default::default()
+            };
+            assert!(matches!(
+                main.msg_from_event(&event),
+                Some(host::Message::Paint)
+            ));
+        }
     }
 
     /// The fullscreen chord is Return with an Alt modifier; plain Return and
