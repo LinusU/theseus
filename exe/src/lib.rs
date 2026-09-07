@@ -134,6 +134,25 @@ mod tests {
     }
 
     #[test]
+    fn iat_iter_stops_at_the_address_space_edge() {
+        // A FirstThunk near u32::MAX must not overflow `addr + i * 4` (a
+        // debug-build panic, or a silently wrapped low IAT address).
+        let mut import_dir = vec![0u8; 20];
+        import_dir[0..4].copy_from_slice(&4u32.to_le_bytes()); // OriginalFirstThunk -> RVA 4
+        import_dir[12..16].copy_from_slice(&100u32.to_le_bytes()); // Name
+        import_dir[16..20].copy_from_slice(&0xFFFF_FFFCu32.to_le_bytes()); // FirstThunk
+
+        // All-nonzero image: every 4-byte ILT slot at RVA 0 is a valid entry,
+        // so only the address arithmetic bounds the walk.
+        let image = vec![0xAAu8; 64];
+        let mut iter = crate::read_imports(&import_dir);
+        let imp = iter.next().unwrap();
+        let pairs: Vec<_> = imp.iat_iter(&image).collect();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, 0xFFFF_FFFC);
+    }
+
+    #[test]
     fn data_directory_slice_rejects_overflow_and_out_of_range() {
         use crate::file::IMAGE_DATA_DIRECTORY;
 

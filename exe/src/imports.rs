@@ -63,7 +63,10 @@ impl IMAGE_IMPORT_DESCRIPTOR {
     /// Caller should update IAT address with the address of the function referred to in the entry.
     pub fn iat_iter(&self, image: &[u8]) -> impl Iterator<Item = (u32, ILTEntry)> {
         let iat_addr = self.FirstThunk;
-        let iat_iter = (0..).map(move |i| iat_addr + (i * 4));
+        // A malformed FirstThunk near u32::MAX must end the walk rather than
+        // wrap to a bogus low address (or panic in debug builds).
+        let iat_iter =
+            (0u32..).map_while(move |i| i.checked_mul(4).and_then(|ofs| iat_addr.checked_add(ofs)));
         iat_iter.zip(self.ilt(image))
     }
 }
