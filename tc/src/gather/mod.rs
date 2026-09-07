@@ -128,6 +128,26 @@ impl<'a> Traverse<'a> {
         }
     }
 
+    // True when `addr` points at a non-empty, non-invalid x86 instruction.
+    // Used before enqueuing branch targets so we do not create blocks from
+    // data that happens to look like a conditional jump.
+    fn is_valid_instr_start(&self, addr: u32) -> bool {
+        let Some(bytes) = self.mem.bytes.get(addr as usize..) else {
+            return false;
+        };
+        if bytes.is_empty() {
+            return false;
+        }
+        let mut decoder = iced_x86::Decoder::with_ip(
+            self.module.bitness(),
+            bytes,
+            addr as u64,
+            iced_x86::DecoderOptions::NONE,
+        );
+        let instr = decoder.decode();
+        !instr.is_invalid() && instr.len() != 0
+    }
+
     fn run(&mut self) {
         if let Module::Windows(module) = self.module {
             for import in &module.imports {

@@ -285,11 +285,11 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
         match instr.op0_kind() {
             iced_x86::OpKind::NearBranch16 => {
                 let ip = self.block_ip.with_local(instr.near_branch16() as u32);
-                self.traverse.queue.enqueue(ip)
+                self.enqueue_if_valid(ip)?;
             }
             iced_x86::OpKind::NearBranch32 => {
                 let ip = self.block_ip.with_local(instr.near_branch32());
-                self.traverse.queue.enqueue(ip)
+                self.enqueue_if_valid(ip)?;
             }
             iced_x86::OpKind::FarBranch16 => {
                 // In a flat module the selector is a code-segment selector
@@ -300,7 +300,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 } else {
                     IP::Flat(instr.far_branch16() as u32)
                 };
-                self.traverse.queue.enqueue(ip);
+                self.enqueue_if_valid(ip)?;
             }
             iced_x86::OpKind::FarBranch32 => {
                 let ip = if self.traverse.module.segment_addressed() {
@@ -308,7 +308,7 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
                 } else {
                     IP::Flat(instr.far_branch32())
                 };
-                self.traverse.queue.enqueue(ip);
+                self.enqueue_if_valid(ip)?;
             }
             iced_x86::OpKind::Memory => self.control_flow_indirect(ip, new_instr)?,
             iced_x86::OpKind::Register => {
@@ -318,6 +318,14 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             d => anyhow::bail!("unhandled jmp {d:?}"),
         }
 
+        Ok(())
+    }
+
+    fn enqueue_if_valid(&mut self, ip: IP) -> anyhow::Result<()> {
+        if !self.traverse.is_valid_instr_start(ip.to_addr()) {
+            anyhow::bail!("{ip} is not a valid instruction start");
+        }
+        self.traverse.queue.enqueue(ip);
         Ok(())
     }
 
