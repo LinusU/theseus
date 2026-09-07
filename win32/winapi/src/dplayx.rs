@@ -199,13 +199,13 @@ pub mod IDirectPlayLobby3A {
         }
         if riid == 0 {
             ctx.memory.write::<u32>(ppv, 0);
-            return E_NOINTERFACE;
+            return E_POINTER;
         }
         let iid = match read_guid(ctx, riid) {
             Some(iid) => iid,
             None => {
                 ctx.memory.write::<u32>(ppv, 0);
-                return E_NOINTERFACE;
+                return E_POINTER;
             }
         };
         if iid == IID_IUnknown
@@ -234,13 +234,13 @@ pub mod IDirectPlayLobby3A {
         }
         if riid == 0 {
             ctx.memory.write::<u32>(ppv, 0);
-            return E_NOINTERFACE;
+            return E_POINTER;
         }
         let iid = match read_guid(ctx, riid) {
             Some(iid) => iid,
             None => {
                 ctx.memory.write::<u32>(ppv, 0);
-                return E_NOINTERFACE;
+                return E_POINTER;
             }
         };
         if iid == IID_IUnknown
@@ -570,12 +570,16 @@ pub mod directplay {
                         ret = E_POINTER;
                     }
                 }
-                _ => {
+                Some(_) => {
                     if ppv.write(&mut ctx.memory, 0).is_none() {
                         ret = E_POINTER;
                     } else {
                         ret = E_NOINTERFACE;
                     }
+                }
+                None => {
+                    let _ = ppv.write(&mut ctx.memory, 0);
+                    ret = E_POINTER;
                 }
             }
         }

@@ -366,12 +366,16 @@ macro_rules! query_interface {
                             ret = E_POINTER;
                         }
                     }
-                    _ => {
+                    Some(_) => {
                         if ppv.write(&mut ctx.memory, 0).is_none() {
                             ret = E_POINTER;
                         } else {
                             ret = E_NOINTERFACE;
                         }
+                    }
+                    None => {
+                        let _ = ppv.write(&mut ctx.memory, 0);
+                        ret = E_POINTER;
                     }
                 }
             }
@@ -865,14 +869,8 @@ pub mod music_object {
                 }
             }
         } else {
-            if crate::Ptr::<u32>::new(ppv)
-                .write(&mut ctx.memory, 0)
-                .is_none()
-            {
-                ret = E_POINTER;
-            } else {
-                ret = E_NOINTERFACE;
-            }
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            ret = E_POINTER;
         }
         ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
@@ -1080,14 +1078,8 @@ pub mod persist_stream {
                 }
             }
         } else {
-            if crate::Ptr::<u32>::new(ppv)
-                .write(&mut ctx.memory, 0)
-                .is_none()
-            {
-                ret = E_POINTER;
-            } else {
-                ret = E_NOINTERFACE;
-            }
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            ret = E_POINTER;
         }
         ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
@@ -1191,14 +1183,8 @@ pub mod segment {
                 }
             }
         } else {
-            if crate::Ptr::<u32>::new(ppv)
-                .write(&mut ctx.memory, 0)
-                .is_none()
-            {
-                ret = E_POINTER;
-            } else {
-                ret = E_NOINTERFACE;
-            }
+            let _ = crate::Ptr::<u32>::new(ppv).write(&mut ctx.memory, 0);
+            ret = E_POINTER;
         }
         ctx.cpu.regs.eax = ret;
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
