@@ -237,17 +237,30 @@ fn reg_query_value(
     let room = if lpcb_data == 0 {
         0
     } else {
-        crate::Ptr::<u32>::new(lpcb_data)
-            .read(&ctx.memory)
-            .unwrap_or(0) as usize
+        let Some(room) = crate::Ptr::<u32>::new(lpcb_data).read(&ctx.memory) else {
+            return ERROR_INVALID_PARAMETER;
+        };
+        room as usize
     };
     if lp_data == 0 {
         // A size query reports the needed byte count.
-        write_out(ctx, lpcb_data, data.len() as u32);
+        if lpcb_data != 0
+            && crate::Ptr::<u32>::new(lpcb_data)
+                .write(&mut ctx.memory, data.len() as u32)
+                .is_none()
+        {
+            return ERROR_INVALID_PARAMETER;
+        }
         return ERROR_SUCCESS;
     }
     if room < data.len() {
-        write_out(ctx, lpcb_data, data.len() as u32);
+        if lpcb_data != 0
+            && crate::Ptr::<u32>::new(lpcb_data)
+                .write(&mut ctx.memory, data.len() as u32)
+                .is_none()
+        {
+            return ERROR_INVALID_PARAMETER;
+        }
         return ERROR_MORE_DATA;
     }
     let Some(dst) = ctx
@@ -258,7 +271,13 @@ fn reg_query_value(
         return ERROR_INVALID_PARAMETER;
     };
     dst.copy_from_slice(data);
-    write_out(ctx, lpcb_data, data.len() as u32);
+    if lpcb_data != 0
+        && crate::Ptr::<u32>::new(lpcb_data)
+            .write(&mut ctx.memory, data.len() as u32)
+            .is_none()
+    {
+        return ERROR_INVALID_PARAMETER;
+    }
     ERROR_SUCCESS
 }
 
@@ -446,6 +465,18 @@ mod tests {
         );
         assert_eq!(
             RegCreateKeyExW(&mut ctx, HKCR, 0x3000, 0, 0, 0, 0, 0, 0x500, 0),
+            ERROR_INVALID_PARAMETER
+        );
+
+        // An out-of-range lpcbData pointer is rejected rather than being
+        // treated as a buffer size of 0.
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0, 0, 0, 0x3000, 0xffff_fff0),
+            ERROR_INVALID_PARAMETER
+        );
+        // A size query with a bad lpcbData pointer also fails.
+        assert_eq!(
+            RegQueryValueExW(&mut ctx, HKCR, 0, 0, 0, 0, 0xffff_fff0),
             ERROR_INVALID_PARAMETER
         );
     }
