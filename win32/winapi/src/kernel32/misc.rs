@@ -34,13 +34,6 @@ pub struct SYSTEM_INFO {
 
 #[win32_derive::dllexport]
 pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
-    if !crate::ddraw::guest_range(
-        ctx,
-        lpSystemInfo.addr,
-        std::mem::size_of::<SYSTEM_INFO>() as u32,
-    ) {
-        return;
-    }
     let info = SYSTEM_INFO {
         dwPageSize: 0x1000,
         lpMinimumApplicationAddress: 0x10000,
@@ -52,7 +45,12 @@ pub fn GetSystemInfo(ctx: &mut Context, lpSystemInfo: Ptr<SYSTEM_INFO>) {
         wProcessorLevel: 6,
         ..Default::default()
     };
-    lpSystemInfo.write(&mut ctx.memory, info);
+    if lpSystemInfo.write(&mut ctx.memory, info).is_none() {
+        log::error!(
+            "GetSystemInfo: invalid output pointer {:#x}",
+            lpSystemInfo.addr
+        );
+    }
 }
 
 fn processor_feature_present(feature: u32) -> bool {
@@ -158,13 +156,6 @@ pub fn CreateProcessA(
 
 #[win32_derive::dllexport]
 pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
-    if !crate::ddraw::guest_range(
-        ctx,
-        lpStartupInfo.addr,
-        std::mem::size_of::<STARTUPINFOA>() as u32,
-    ) {
-        return;
-    }
     let Some(size) = crate::Ptr::<u32>::new(lpStartupInfo.addr).read(&ctx.memory) else {
         return;
     };
@@ -177,7 +168,12 @@ pub fn GetStartupInfoA(ctx: &mut Context, lpStartupInfo: Ptr<STARTUPINFOA>) {
         cb: std::mem::size_of::<STARTUPINFOA>() as u32,
         ..Default::default()
     };
-    lpStartupInfo.write(&mut ctx.memory, info);
+    if lpStartupInfo.write(&mut ctx.memory, info).is_none() {
+        log::error!(
+            "GetStartupInfoA: invalid output pointer {:#x}",
+            lpStartupInfo.addr
+        );
+    }
 }
 
 #[win32_derive::dllexport]
@@ -201,13 +197,6 @@ pub struct MEMORYSTATUS {
 
 #[win32_derive::dllexport]
 pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
-    if !crate::ddraw::guest_range(
-        ctx,
-        lpBuffer.addr,
-        std::mem::size_of::<MEMORYSTATUS>() as u32,
-    ) {
-        return;
-    }
     let capacity = ctx.memory.bytes.len() as u32;
     let status = MEMORYSTATUS {
         dwLength: std::mem::size_of::<MEMORYSTATUS>() as u32,
@@ -219,7 +208,12 @@ pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
         dwAvailVirtual: capacity,
         ..Default::default()
     };
-    lpBuffer.write(&mut ctx.memory, status);
+    if lpBuffer.write(&mut ctx.memory, status).is_none() {
+        log::error!(
+            "GlobalMemoryStatus: invalid output pointer {:#x}",
+            lpBuffer.addr
+        );
+    }
 }
 
 #[win32_derive::dllexport]
@@ -497,6 +491,11 @@ mod tests {
         // A valid pointer writes the page size at offset 4.
         GetSystemInfo(&mut ctx, Ptr::new(0x1000));
         assert_eq!(ctx.memory.read::<u32>(0x1000 + 4), 0x1000);
+        // A non-null but too-small tail buffer is left untouched.
+        let tail = 0x4000 - 4;
+        ctx.memory.bytes[tail as usize..].fill(0xab);
+        GetSystemInfo(&mut ctx, Ptr::new(tail));
+        assert_eq!(ctx.memory.bytes[tail as usize], 0xab);
     }
 
     #[test]
@@ -513,6 +512,11 @@ mod tests {
             ctx.memory.read::<u32>(0x1000 + 8),
             ctx.memory.bytes.len() as u32
         );
+        // A non-null but too-small tail buffer is left untouched.
+        let tail = 0x4000 - 4;
+        ctx.memory.bytes[tail as usize..].fill(0xab);
+        GlobalMemoryStatus(&mut ctx, Ptr::new(tail));
+        assert_eq!(ctx.memory.bytes[tail as usize], 0xab);
     }
 
     #[test]
@@ -526,6 +530,13 @@ mod tests {
         ctx.memory.write::<u32>(0x1000, size);
         GetStartupInfoA(&mut ctx, Ptr::new(0x1000));
         assert_eq!(ctx.memory.read::<u32>(0x1000), size);
+        // A non-null but too-small tail buffer is left untouched.
+        let tail = 0x4000 - 8;
+        ctx.memory.bytes[tail as usize..].fill(0xab);
+        ctx.memory.write::<u32>(tail, size);
+        GetStartupInfoA(&mut ctx, Ptr::new(tail));
+        assert_eq!(ctx.memory.read::<u32>(tail), size);
+        assert_eq!(ctx.memory.read::<u32>(tail + 4), 0xabab_abab);
     }
 
     #[test]
