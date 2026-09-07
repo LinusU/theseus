@@ -9,7 +9,9 @@ pub struct Mapping {
 
 impl Mapping {
     pub fn range(&self) -> std::ops::Range<u32> {
-        self.addr..self.addr + self.size
+        // The end saturates rather than wrapping so a mapping whose size
+        // overflows u32 still reports the largest representable range.
+        self.addr..self.addr.saturating_add(self.size)
     }
     pub fn contains(&self, addr: u32) -> bool {
         self.range().contains(&addr)
@@ -103,30 +105,40 @@ impl Mappings {
         } else {
             None
         };
-        let mut prev_end = 0;
+        // The running end is a u64 so an entry ending past u32::MAX (only
+        // possible through Mappings::from, which takes the caller's list
+        // verbatim) cannot wrap the gap and overlap checks below.
+        let mut prev_end = 0u64;
         for (i, mapping) in self.mappings.iter().enumerate() {
             if let Some(new_end) = new_end {
                 if new_end <= mapping.addr {
-                    if new_mapping.addr < prev_end {
+                    if (new_mapping.addr as u64) < prev_end {
                         return Err("overlaps a previous mapping");
                     }
                     return Ok(i);
                 }
             } else {
-                let space = mapping.addr - prev_end;
-                if space >= new_mapping.size {
-                    new_mapping.addr = prev_end;
+                // An unsorted or overlapping list leaves no usable gap.
+                let space = (mapping.addr as u64).saturating_sub(prev_end);
+                if space >= new_mapping.size as u64 {
+                    new_mapping.addr =
+                        u32::try_from(prev_end).map_err(|_| "no space for mapping")?;
                     return Ok(i);
                 }
             }
-            prev_end = mapping.addr + mapping.size;
+            prev_end = prev_end.max(mapping.addr as u64 + mapping.size as u64);
         }
         if new_mapping.addr != 0 {
-            if new_mapping.addr < prev_end {
+            if (new_mapping.addr as u64) < prev_end {
                 return Err("overlaps a previous mapping");
             }
         } else {
-            new_mapping.addr = prev_end;
+            // The tail placement must still end inside the address space;
+            // when it does, prev_end itself necessarily fits in a u32.
+            if prev_end + new_mapping.size as u64 > u32::MAX as u64 {
+                return Err("no space for mapping");
+            }
+            new_mapping.addr = prev_end as u32;
         }
         Ok(self.mappings.len())
     }
@@ -285,5 +297,33 @@ mod tests {
         assert!(!mappings.free(0x5000)); // no mapping starts there
         assert!(mappings.free(0x9000));
         assert_eq!(mappings.vec().len(), 1);
+    }
+
+    #[test]
+    fn reserve_auto_in_unsorted_from_list_does_not_underflow() {
+        // `Mappings::from` takes the caller's order; a later mapping that
+        // starts before the previous one's end must not underflow the gap
+        // computation.
+        let mut mappings = Mappings::from(vec![mapping(0x3000, 0x1000), mapping(0x1000, 0x1000)]);
+        assert_eq!(mappings.try_reserve(mapping(0x0, 0x4000)), Ok(0x4000));
+    }
+
+    #[test]
+    fn reserve_auto_past_an_end_overflowing_mapping_fails() {
+        // A `from` list can hold a mapping whose end exceeds u32::MAX; the
+        // running end and the tail assignment must not wrap. The request is
+        // larger than the gap before the overflowing mapping so the scan
+        // reaches it.
+        let mut mappings = Mappings::from(vec![mapping(0xffff_f000, 0x1000)]);
+        assert!(mappings.try_reserve(mapping(0x0, 0xffff_f001)).is_err());
+        assert_eq!(mappings.vec().len(), 1);
+    }
+
+    #[test]
+    fn range_saturates_an_end_overflowing_mapping() {
+        let m = mapping(0xffff_f000, 0x1000);
+        assert_eq!(m.range(), 0xffff_f000..u32::MAX);
+        assert!(m.contains(0xffff_f000));
+        assert!(!m.contains(u32::MAX));
     }
 }
