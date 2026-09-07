@@ -22,7 +22,9 @@ pub struct MainThread {
 }
 
 struct ClickInject {
-    clicks: Vec<(u32, u32)>,
+    /// (x, y, absolute-time override): when the override is set the click
+    /// fires at that millisecond instead of the MS + i*GAP schedule.
+    clicks: Vec<(u32, u32, Option<u32>)>,
     at_ms: u32,
     gap: u32,
 }
@@ -744,21 +746,29 @@ impl Host {
         }
 
         // Debug aid: synthesize one or more left mouse clicks for headless/
-        // scripted runs. THESEUS_INJECT_CLICK is a ';'-separated list of "x,y"
-        // positions, THESEUS_INJECT_CLICK_MS is the delay before the first move,
-        // and THESEUS_INJECT_CLICK_GAP (default 500ms) is the pause between clicks.
-        // For each click the host emits move, left down, and left up 50ms apart.
+        // scripted runs. THESEUS_INJECT_CLICK is a ';'-separated list of
+        // "x,y" positions with an optional "@ms" absolute-time suffix,
+        // THESEUS_INJECT_CLICK_MS is the delay before the first move, and
+        // THESEUS_INJECT_CLICK_GAP (default 500ms) is the pause between clicks.
+        // A "@ms" suffix overrides the MS + i*GAP schedule for that click,
+        // which is how a script reaches a dialog that appears only after a
+        // long wait. For each click the host emits move, left down, and left
+        // up 50ms apart.
         static CLICK_INJECT: std::sync::OnceLock<Option<ClickInject>> = std::sync::OnceLock::new();
         static CLICK_PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
         if let Some(ClickInject { clicks, at_ms, gap }) = CLICK_INJECT.get_or_init(|| {
             let s = std::env::var("THESEUS_INJECT_CLICK").ok()?;
-            let clicks: Vec<(u32, u32)> = s
+            let clicks: Vec<(u32, u32, Option<u32>)> = s
                 .split(';')
                 .map(|part| {
-                    let (x, y) = part.trim().split_once(',')?;
+                    let (pos, at) = match part.trim().split_once('@') {
+                        Some((pos, at)) => (pos, Some(at.trim().parse().ok()?)),
+                        None => (part.trim(), None),
+                    };
+                    let (x, y) = pos.split_once(',')?;
                     let x = x.trim().parse().ok()?;
                     let y = y.trim().parse().ok()?;
-                    Some((x, y))
+                    Some((x, y, at))
                 })
                 .collect::<Option<Vec<_>>>()?;
             if clicks.is_empty() {
@@ -780,11 +790,13 @@ impl Host {
             if phase < total {
                 let click = phase / 3;
                 let sub = phase % 3;
-                let click_start = at_ms + click * (150 + gap);
+                let click_start = clicks[click as usize]
+                    .2
+                    .unwrap_or_else(|| at_ms + click * (150 + gap));
                 let at = click_start + sub * 50;
                 if self.time() >= at {
                     CLICK_PHASE.store((phase + 1) as u16, Relaxed);
-                    let (x, y) = clicks[click as usize];
+                    let (x, y, _) = clicks[click as usize];
                     let (button, buttons) = match sub {
                         1 => (host::MouseButton::Left, host::MouseButton::Left),
                         2 => (host::MouseButton::Left, host::MouseButton::empty()),
