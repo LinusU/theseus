@@ -52,6 +52,12 @@ struct IPQueue {
     /// Addresses we've visited already and decided don't contain code.
     /// (Addresses that did contain code are inserted in Traverse.blocks.)
     invalid: HashSet<u32>,
+
+    /// Addresses promoted from low-confidence scans. A block discovered only
+    /// by a scan whose start is later covered mid-instruction by another
+    /// decode is a stale guess and is evicted; a real control-flow edge to
+    /// the same address upgrades its provenance so it can never be evicted.
+    low_confidence: HashSet<u32>,
 }
 
 impl IPQueue {
@@ -61,6 +67,7 @@ impl IPQueue {
         // if ofs > 0x8000 {
         //     panic!();
         // }
+        self.low_confidence.remove(&ip.to_addr());
         self.queue.push_back(ip);
     }
 
@@ -109,11 +116,6 @@ struct Traverse<'a> {
     seen_tables: HashSet<u32>,
     /// Ranges within code sections that are known to be data (e.g. jump tables).
     data_ranges: Vec<std::ops::Range<u32>>,
-    /// Addresses promoted from low-confidence scans. A block discovered only
-    /// by a scan whose start is later covered mid-instruction by another
-    /// decode is a stale guess and is evicted, which also removes the false
-    /// branch targets its instructions would have produced.
-    low_confidence: HashSet<u32>,
     blocks: BTreeMap<u32, Block>,
 }
 
@@ -129,7 +131,6 @@ impl<'a> Traverse<'a> {
             queue: IPQueue::default(),
             seen_tables: HashSet::new(),
             data_ranges: Vec::new(),
-            low_confidence: HashSet::new(),
             blocks: Default::default(),
         }
     }
@@ -261,8 +262,10 @@ impl<'a> Traverse<'a> {
             if !self.looks_like_code(addr) {
                 continue;
             }
-            self.low_confidence.insert(addr);
+            // enqueue() clears low_confidence as a side effect of any real
+            // edge reaching the address, so mark the candidate after it.
             self.queue.enqueue(self.module.local_addr(addr));
+            self.queue.low_confidence.insert(addr);
         }
     }
 
@@ -299,7 +302,7 @@ impl<'a> Traverse<'a> {
     /// a genuine jump into the middle of a block keeps the existing split
     /// behavior in `process`.
     fn evict_stale_candidates(&mut self, block: &Block) {
-        if self.low_confidence.is_empty() {
+        if self.queue.low_confidence.is_empty() {
             return;
         }
         let BlockType::Instrs(instrs) = &block.ty else {
@@ -316,7 +319,7 @@ impl<'a> Traverse<'a> {
             .blocks
             .range(first..end)
             .map(|(&addr, _)| addr)
-            .filter(|addr| self.low_confidence.contains(addr))
+            .filter(|addr| self.queue.low_confidence.contains(addr))
             .collect();
         for addr in stale {
             log::info!("evicting mid-instruction scan guess {addr:08x}");
