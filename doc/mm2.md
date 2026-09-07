@@ -135,8 +135,10 @@ Debug environment knobs, all optional:
   hold keys for gameplay input.
 - `THESEUS_MISSING_ADDRS=<path>` — append dynamically reached but
   untranslated addresses for the next `--entry-points-file` pass.
-- `RUST_LOG` — standard env-filter logging; the draw-call and rasterizer
-  diagnostics live at `debug`, honest problems at `warn`/`error`.
+- `RUST_LOG` — env-filter-style logging: a bare level (`warn`, `debug`) or
+  comma-separated `target=level` directives (`warn,winapi=debug`); the
+  draw-call and rasterizer diagnostics live at `debug`, honest problems at
+  `warn`/`error`.
 
 Known non-blocking noise: missing `.CHK` checksum caches (including the
 game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced), absent
