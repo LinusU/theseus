@@ -12,6 +12,7 @@ args=(
     --exe "$input"
     --out out/mm2
     --scan-memory --scan-immediates --scan-prologues
+    --extern 8000=safedisc_8000
 )
 if [[ -f out/mm2/missing.txt ]]; then
     args+=(--entry-points-file out/mm2/missing.txt)
