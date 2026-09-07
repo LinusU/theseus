@@ -365,6 +365,9 @@ impl Surface {
                 out.extend_from_slice(&px[..3]);
             }
         }
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Err(e) = std::fs::File::create(path).and_then(|mut f| f.write_all(&out)) {
             log::warn!("frame dump to {path} failed: {e}");
         }
