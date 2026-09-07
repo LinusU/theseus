@@ -670,8 +670,15 @@ impl Drop for AudioStream {
 }
 
 /// Windows VK_* code -> (PC set-1 scan code, extended flag) for the keys a
-/// menu needs: escape, enter, space, backspace, tab, and the arrows.
+/// menu or text field needs: escape, enter, space, backspace, tab, the
+/// arrows, letters, and digits.
 fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
+    // PC set-1 scancodes for A-Z and the top-row digits 0-9.
+    const LETTER_SCAN: [u8; 26] = [
+        0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18,
+        0x19, 0x10, 0x13, 0x1f, 0x14, 0x16, 0x2f, 0x11, 0x2d, 0x15, 0x2c,
+    ];
+    const DIGIT_SCAN: [u8; 10] = [0x0b, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a];
     let (scancode, extended) = match vkey {
         0x1b => (0x01, false), // VK_ESCAPE
         0x0d => (0x1c, false), // VK_RETURN
@@ -682,10 +689,8 @@ fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
         0x28 => (0x50, true),  // VK_DOWN
         0x25 => (0x4b, true),  // VK_LEFT
         0x27 => (0x4d, true),  // VK_RIGHT
-        0x57 => (0x11, false), // 'W'
-        0x41 => (0x1e, false), // 'A'
-        0x53 => (0x1f, false), // 'S'
-        0x44 => (0x20, false), // 'D'
+        b'A'..=b'Z' => (LETTER_SCAN[(vkey - b'A') as usize], false),
+        b'0'..=b'9' => (DIGIT_SCAN[(vkey - b'0') as usize], false),
         _ => return None,
     };
     Some(host::KeyMessage {
