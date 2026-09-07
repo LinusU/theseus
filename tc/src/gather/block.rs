@@ -88,6 +88,20 @@ fn is_index_bound(instr: &iced_x86::Instruction) -> Option<(iced_x86::Register, 
     Some((reg.full_register(), count))
 }
 
+/// Whether this instruction rewrites the register a recorded switch-index
+/// bound applies to. A bound only holds while the register keeps its bounded
+/// value; any write — `mov`, `pop`, `setcc`, an `and` with a non-contiguous
+/// mask — invalidates it. Dropping a bound is safe: the table scan falls back
+/// to stopping at the first entry that does not look like code. Instructions
+/// whose op0 is not a register (or that only read it) leave the bound intact.
+fn clears_index_bound(instr: &iced_x86::Instruction) -> bool {
+    use iced_x86::Mnemonic::*;
+    if instr.op0_kind() != iced_x86::OpKind::Register {
+        return false;
+    }
+    !matches!(instr.mnemonic(), Cmp | Test | Push | Bt | Bts | Btr | Btc)
+}
+
 /// Data gathered while decoding one block.
 pub struct BlockDecoder<'a, 'b> {
     traverse: &'a mut Traverse<'b>,
@@ -187,6 +201,9 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
 
             if let Some((reg, count)) = is_index_bound(&instr) {
                 self.index_bounds.insert(reg, count);
+            } else if clears_index_bound(&instr) {
+                self.index_bounds
+                    .remove(&instr.op0_register().full_register());
             }
 
             instrs.push(Instr {
@@ -325,5 +342,54 @@ impl<'a, 'b> BlockDecoder<'a, 'b> {
             log::warn!("{ip} {instr}  ; indirect via memory");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Gather, Module, State, WindowsModule};
+
+    /// Gather a switch built as `cmp eax, 7` / <between> / `jmp [eax*4+table]`.
+    /// The table holds three valid code entries, two invalid entries, then
+    /// another valid one: a stale 8-entry bound reaches index 5 while a
+    /// stop-at-first-invalid scan never does.
+    fn gather_switch(between: &[u8]) -> State {
+        let mut state = State::default();
+        state.mem.reserve("code".into(), 0x1000, 0x1000);
+        let mut code = vec![0x83, 0xf8, 0x07]; // cmp eax, 7
+        code.extend_from_slice(between);
+        code.extend_from_slice(&[0xff, 0x24, 0x85, 0x00, 0x18, 0x00, 0x00]);
+        state.mem.write_bytes(0x1000, &code);
+        state.mem.write(0x1100, 0xc3u8); // ret
+        state.mem.write(0x1200, 0xc3u8); // ret
+        for (i, target) in [
+            0x1100, 0x1100, 0x1100, 0x1500, 0x1500, 0x1200, 0x1500, 0x1500,
+        ]
+        .iter()
+        .enumerate()
+        {
+            state.mem.write(0x1800 + 4 * i as u32, *target);
+        }
+        state.module = Module::Windows(WindowsModule {
+            entry_point: 0x1000,
+            code_memory: 0x1000..0x2000,
+            ..Default::default()
+        });
+        state.gather(Gather::default());
+        state
+    }
+
+    #[test]
+    fn index_bound_survives_to_the_switch_dispatch() {
+        let state = gather_switch(&[0x90]); // nop keeps the bound
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(state.blocks.contains_key(&0x1200));
+    }
+
+    #[test]
+    fn index_bound_is_dropped_when_the_register_is_rewritten() {
+        let state = gather_switch(&[0x8b, 0x03]); // mov eax, [ebx]
+        assert!(state.blocks.contains_key(&0x1100));
+        assert!(!state.blocks.contains_key(&0x1200));
     }
 }
