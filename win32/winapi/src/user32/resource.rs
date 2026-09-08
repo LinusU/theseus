@@ -153,3 +153,36 @@ pub fn LoadStringW(
     out[..buf.len()].copy_from_slice(&buf);
     buf.len() as i32 / 2
 }
+
+#[win32_derive::dllexport]
+pub fn LoadStringA(
+    ctx: &mut Context,
+    _hInstance: HINSTANCE,
+    uID: u32,
+    lpBuffer: Ptr<u8>,
+    cchBufferMax: i32,
+) -> i32 {
+    if cchBufferMax <= 0 {
+        return 0;
+    }
+    // Frameworks like MFC probe for many optional strings, so a missing one
+    // is an ordinary outcome here, unlike in LoadStringW.
+    let Some(bytes) = find_string(ctx, uID) else {
+        return 0;
+    };
+    let wide: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let narrow: Vec<u8> = wide
+        .iter()
+        .map(|&c| if c < 0x100 { c as u8 } else { b'?' })
+        .collect();
+    crate::kernel32::write_cstr(ctx, lpBuffer, cchBufferMax as u32, &narrow) as i32
+}
+
+#[win32_derive::dllexport]
+pub fn LoadBitmapA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpBitmapName: Ptr<u8>) -> u32 {
+    log::warn!("LoadBitmapA: bitmap resources not supported");
+    0
+}

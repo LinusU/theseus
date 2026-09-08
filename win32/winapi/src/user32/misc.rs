@@ -250,3 +250,123 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     ctx.memory.write::<u8>(dst + out.len() as u32, 0);
     out.len() as i32
 }
+
+#[win32_derive::dllexport]
+pub fn CharUpperA(ctx: &mut Context, lpsz: u32) -> u32 {
+    if lpsz < 0x10000 {
+        // A single character, passed in the low word.
+        return (lpsz as u8).to_ascii_uppercase() as u32;
+    }
+    let len = ctx.memory.read_str(lpsz).len();
+    ctx.memory[lpsz..][..len].make_ascii_uppercase();
+    lpsz
+}
+
+#[win32_derive::dllexport]
+pub fn DrawTextA(
+    ctx: &mut Context,
+    _hDC: u32,
+    lpchText: Ptr<u8>,
+    cchText: i32,
+    _lprc: Ptr<crate::RECT>,
+    _format: u32,
+) -> i32 {
+    let text = if cchText < 0 {
+        ctx.memory.read_str(lpchText.addr).to_string()
+    } else {
+        String::from_utf8_lossy(&ctx.memory[lpchText.addr..][..cchText as usize]).to_string()
+    };
+    log::warn!("DrawTextA({text:?}): text not drawn");
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn TabbedTextOutA(
+    _ctx: &mut Context,
+    _hdc: u32,
+    _x: i32,
+    _y: i32,
+    _lpString: Ptr<u8>,
+    _chCount: i32,
+    _nTabPositions: i32,
+    _lpnTabStopPositions: Ptr<i32>,
+    _nTabOrigin: i32,
+) -> u32 {
+    stub!(0)
+}
+
+#[win32_derive::dllexport]
+pub fn GrayStringA(
+    _ctx: &mut Context,
+    _hDC: u32,
+    _hBrush: u32,
+    _lpOutputFunc: u32,
+    _lpData: u32,
+    _nCount: i32,
+    _X: i32,
+    _Y: i32,
+    _nWidth: i32,
+    _nHeight: i32,
+) -> bool {
+    stub!(false)
+}
+
+#[win32_derive::dllexport]
+pub fn IsDialogMessageA(_ctx: &mut Context, _hDlg: HWND, _lpMsg: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn CreateDialogIndirectParamA(
+    _ctx: &mut Context,
+    _hInstance: u32,
+    _lpTemplate: u32,
+    _hWndParent: HWND,
+    _lpDialogFunc: u32,
+    _dwInitParam: u32,
+) -> HWND {
+    log::warn!("CreateDialogIndirectParamA: dialogs not supported");
+    HWND::null()
+}
+
+#[win32_derive::dllexport]
+pub fn GetNextDlgTabItem(_ctx: &mut Context, _hDlg: HWND, _hCtl: HWND, _bPrevious: bool) -> HWND {
+    HWND::null()
+}
+
+#[win32_derive::dllexport]
+pub fn SystemParametersInfoA(
+    _ctx: &mut Context,
+    uiAction: u32,
+    _uiParam: u32,
+    _pvParam: u32,
+    _fWinIni: u32,
+) -> bool {
+    log::warn!("SystemParametersInfoA({uiAction:#x}): unsupported");
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn WinHelpA(_ctx: &mut Context, _hWndMain: HWND, _lpszHelp: Ptr<u8>, _uCommand: u32, _dwData: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn GetDlgCtrlID(_ctx: &mut Context, _hWnd: HWND) -> i32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn GetCursor(_ctx: &mut Context) -> u32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn GetCapture(_ctx: &mut Context) -> HWND {
+    HWND::null()
+}
+
+#[win32_derive::dllexport]
+pub fn UnregisterClassA(_ctx: &mut Context, _lpClassName: Ptr<u8>, _hInstance: u32) -> bool {
+    true
+}
