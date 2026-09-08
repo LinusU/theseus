@@ -4,8 +4,11 @@
 
 pub mod advapi32;
 pub mod bitmap_format;
+pub mod comctl32;
+pub mod comdlg32;
 pub mod ddraw;
 pub mod dinput;
+pub mod dplayx;
 mod dllexport;
 pub mod dsound;
 pub mod gdi32;
@@ -23,6 +26,7 @@ pub mod shell32;
 pub mod trace;
 pub mod user32;
 pub mod winmm;
+pub mod winspool;
 
 /// Functions a program may resolve at runtime with LoadLibrary/GetProcAddress
 /// instead of importing statically. The translator reserves a callable address
