@@ -34,6 +34,10 @@ pub struct Window {
 }
 
 impl Window {
+    /// The guest destroyed this window; the page owns the canvas, so there
+    /// is nothing to hide here.
+    pub fn close(&mut self) {}
+
     pub fn new(title: &str, width: u32, height: u32) -> Self {
         let id = host::host()
             .chan

@@ -542,6 +542,21 @@ impl Drop for Window {
 }
 
 impl Window {
+    /// The guest destroyed this window. Hide it rather than free it: a
+    /// DirectDraw object bound to it may still hold surfaces on its
+    /// renderer, but a hidden window can no longer take focus or clicks
+    /// away from the window the guest creates next.
+    pub fn close(&mut self) {
+        if self.window.is_null() {
+            return;
+        }
+        unsafe {
+            if !sdl::video::SDL_HideWindow(self.window) {
+                log::warn!("SDL_HideWindow failed ({}); continuing", sdl_error());
+            }
+        }
+    }
+
     pub fn create_surface(&mut self, width: u32, height: u32) -> Surface {
         if self.window.is_null() {
             return Surface {

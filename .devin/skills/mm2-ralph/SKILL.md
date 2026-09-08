@@ -9,7 +9,7 @@ triggers:
 
 You are a long-running work session on the Theseus Midtown Madness 2 target. Work through several commit-sized milestones in this invocation, not just one blocker. If `RALPH_AGENT_PASSES` is available, use it as the pass budget; otherwise use 8 milestones.
 
-Read `AGENTS.md`, `doc/mm2.md`, and `doc/mm2-progress.md` first. Treat `game/` as a user-owned, ignored game installation: inspect it only as needed, and never modify, stage, copy, or delete anything under it.
+Read `AGENTS.md`, `doc/mm2.md`, and `doc/mm2-progress.md` first; the user-requested priority backlog in the progress log outranks the audit backlog. Physical-input, focus, fullscreen, and window-size items are only verifiable through `out/mm2/probe-input.sh` on a machine with a display, never through `THESEUS_INJECT_*` or headless runs; without a display, record that and leave the item open. Treat `game/` as a user-owned, ignored game installation: inspect it only as needed, and never modify, stage, copy, or delete anything under it.
 
 At the start of each milestone, reread `doc/mm2-progress.md`, choose the next smallest actionable blocker, reproduce it, make the smallest correct implementation change, and add or update a focused test when the code has test infrastructure. Run the narrowest relevant formatter, check, test, or target build. A failing build or test is diagnostic information, not a reason to stop. Record the command, result, error count or next missing symbol, and next blocker in `doc/mm2-progress.md`.
 

@@ -353,8 +353,14 @@ pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
     if state.focused.get() == hWnd {
         state.focused.set(HWND::null());
     }
-    state.window.borrow_mut().take();
+    let window = state.window.borrow_mut().take();
     state.message_queue.borrow_mut().window = None;
+    // A DirectDraw object bound to this window keeps the Rc alive (Release
+    // is a stub), so the host window would otherwise stay on screen next to
+    // the one the guest creates afterwards, competing with it for focus.
+    if let Some(window) = window {
+        window.borrow_mut().host.close();
+    }
     true
 }
 
@@ -589,11 +595,7 @@ pub fn DefWindowProcW(
             let Some(end) = (pixels as u64).checked_add(pixel_bytes) else {
                 return 0;
             };
-            let Some(buf) = ctx
-                .memory
-                .bytes
-                .get_mut(pixels as usize..end as usize)
-            else {
+            let Some(buf) = ctx.memory.bytes.get_mut(pixels as usize..end as usize) else {
                 return 0;
             };
             use zerocopy::FromBytes;

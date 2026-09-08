@@ -134,6 +134,13 @@ all, while clicks still reach the window through the click-through hint. Focus
 changes are delivered as the Win32 activation sequence (`WM_ACTIVATEAPP`,
 `WM_ACTIVATE`, `WM_SETFOCUS`/`WM_KILLFOCUS`) on both edges.
 
+Physical input can only be checked with a real window. `out/mm2/probe-input.sh
+[seconds]` runs the windowed build, samples which application is frontmost and
+which windows the game owns, and summarizes the focus and key messages the
+guest received; click the window and press keys while it runs. Injected input
+(`THESEUS_INJECT_*`) enters after SDL and cannot show whether macOS delivers
+keys at all.
+
 Debug environment knobs, all optional:
 
 - `THESEUS_HEADLESS=1` — run without an SDL window.
