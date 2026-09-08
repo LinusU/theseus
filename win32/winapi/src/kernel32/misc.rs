@@ -172,17 +172,6 @@ pub fn OutputDebugStringA(_ctx: &mut Context, _lpOutputString: Ptr<u8>) {
 }
 
 #[win32_derive::dllexport]
-pub fn RtlUnwind(
-    _ctx: &mut Context,
-    _TargetFrame: Ptr<()>,
-    _TargetIp: Ptr<()>,
-    _ExceptionRecord: Ptr<()>,
-    _ReturnValue: Ptr<()>,
-) {
-    todo!()
-}
-
-#[win32_derive::dllexport]
 pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> u32 /* WSTR */ {
     let buf = &ctx.memory[lpString2.addr..];
     let len = buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap();
@@ -268,19 +257,6 @@ pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, _lpTopLevelExceptionFilte
 #[win32_derive::dllexport]
 pub fn SetConsoleCtrlHandler(_ctx: &mut Context, _HandlerRoutine: u32, _Add: bool) -> bool {
     true
-}
-
-#[win32_derive::dllexport]
-pub fn RaiseException(
-    _ctx: &mut Context,
-    dwExceptionCode: u32,
-    _dwExceptionFlags: u32,
-    _nNumberOfArguments: u32,
-    _lpArguments: u32,
-) {
-    // Structured exception handling (including C++ throw, which the Microsoft
-    // runtime implements with this) isn't modelled; we can't unwind x86 frames.
-    panic!("RaiseException({dwExceptionCode:#x}): unhandled exception");
 }
 
 #[win32_derive::dllexport]
