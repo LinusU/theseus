@@ -474,10 +474,10 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
             BLACK => 0,
             WHITE => 0x00ff_ffff,
             NOT => !d,
-            _ => match pen.map(|p| p.as_win32()) {
+            _ => {
                 // A NULL pen draws nothing for pen-dependent operations.
-                None => return None,
-                Some(p) => match dc.rop2 {
+                let p = pen.map(|p| p.as_win32())?;
+                match dc.rop2 {
                     NOTMERGEPEN => !(d | p),
                     MASKNOTPEN => d & !p,
                     NOTCOPYPEN => !p,
@@ -491,8 +491,8 @@ pub fn LineTo(ctx: &mut Context, hdc: HDC, x: i32, y: i32) -> bool {
                     MERGEPENNOT => p | !d,
                     MERGEPEN => d | p,
                     _ => return None,
-                },
-            },
+                }
+            }
         })
     };
 
