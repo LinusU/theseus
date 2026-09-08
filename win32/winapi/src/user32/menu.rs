@@ -80,7 +80,12 @@ pub fn DestroyMenu(_ctx: &mut Context, _hMenu: HMENU) -> bool {
 }
 
 #[win32_derive::dllexport]
-pub fn EnableMenuItem(_ctx: &mut Context, _hMenu: HMENU, _uIDEnableItem: u32, _uEnable: u32) -> u32 {
+pub fn EnableMenuItem(
+    _ctx: &mut Context,
+    _hMenu: HMENU,
+    _uIDEnableItem: u32,
+    _uEnable: u32,
+) -> u32 {
     0xffff_ffff // item does not exist
 }
 

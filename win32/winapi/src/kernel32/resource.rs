@@ -58,7 +58,12 @@ pub fn LockResource(_ctx: &mut Context, hResData: HGLOBAL) -> u32 {
 }
 
 #[win32_derive::dllexport]
-pub fn FindResourceA(ctx: &mut Context, _hModule: HMODULE, lpName: Ptr<u8>, lpType: Ptr<u8>) -> HRSRC {
+pub fn FindResourceA(
+    ctx: &mut Context,
+    _hModule: HMODULE,
+    lpName: Ptr<u8>,
+    lpType: Ptr<u8>,
+) -> HRSRC {
     let name_str;
     let name = if is_intresource(lpName.addr) {
         exe::ResourceName::Id(lpName.addr)

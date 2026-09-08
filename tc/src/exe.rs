@@ -108,7 +108,9 @@ fn read_imports(pe_file: &exe::PE, mem: &Memory) -> Vec<Import> {
             .to_lowercase();
         // The module name doubles as a Rust module path, so drop the extension
         // (.dll, or .drv for winspool).
-        let name = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem);
+        let name = name
+            .rsplit_once('.')
+            .map_or(name.as_str(), |(stem, _)| stem);
         for (addr, entry) in imp.iat_iter(image) {
             let func = match entry.as_import_symbol(image) {
                 exe::ImportSymbol::Name(name) => std::str::from_utf8(name).unwrap().to_string(),

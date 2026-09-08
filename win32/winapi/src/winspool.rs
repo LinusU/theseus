@@ -3,7 +3,12 @@
 use runtime::Context;
 
 #[win32_derive::dllexport]
-pub fn OpenPrinterA(_ctx: &mut Context, _pPrinterName: u32, _phPrinter: u32, _pDefault: u32) -> bool {
+pub fn OpenPrinterA(
+    _ctx: &mut Context,
+    _pPrinterName: u32,
+    _phPrinter: u32,
+    _pDefault: u32,
+) -> bool {
     false
 }
 

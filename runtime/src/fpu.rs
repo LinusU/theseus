@@ -186,7 +186,11 @@ pub fn f64_to_f80(val: f64) -> [u8; 10] {
     let frac = bits & ((1 << 52) - 1);
     let (mant, exp80): (u64, u16) = if exp == 0x7ff {
         // inf or nan
-        let mant = if frac == 0 { 1 << 63 } else { 0xc000_0000_0000_0000 };
+        let mant = if frac == 0 {
+            1 << 63
+        } else {
+            0xc000_0000_0000_0000
+        };
         (mant, 0x7fff)
     } else if exp == 0 {
         if frac == 0 {

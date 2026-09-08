@@ -358,7 +358,13 @@ pub fn SystemParametersInfoA(
 }
 
 #[win32_derive::dllexport]
-pub fn WinHelpA(_ctx: &mut Context, _hWndMain: HWND, _lpszHelp: Ptr<u8>, _uCommand: u32, _dwData: u32) -> bool {
+pub fn WinHelpA(
+    _ctx: &mut Context,
+    _hWndMain: HWND,
+    _lpszHelp: Ptr<u8>,
+    _uCommand: u32,
+    _dwData: u32,
+) -> bool {
     false
 }
 

@@ -85,7 +85,8 @@ fn free(ctx: &mut Context, addr: u32) {
 /// (magic, object, ThrowInfo). Follows the MSVC RTTI structures, which on x86
 /// hold absolute pointers.
 fn cpp_exception_type(ctx: &Context, record: u32) -> Option<String> {
-    let read = |addr: u32| -> Option<u32> { (addr >= 0x1000).then(|| ctx.memory.read::<u32>(addr)) };
+    let read =
+        |addr: u32| -> Option<u32> { (addr >= 0x1000).then(|| ctx.memory.read::<u32>(addr)) };
     let throw_info = read(record + 0x14 + 8)?; // ExceptionInformation[2]
     let catchable_types = read(throw_info + 12)?; // ThrowInfo.pCatchableTypeArray
     let first = read(catchable_types + 4)?; // CatchableTypeArray.arrayOfCatchableTypes[0]
@@ -123,7 +124,10 @@ fn caller(ctx: &Context) -> u32 {
 /// context, dispatcher)`, cdecl.
 fn call_handler(ctx: &mut Context, handler: u32, record: u32, frame: u32, context: u32) -> u32 {
     let handler = ctx.indirect(handler);
-    ctx.call32_x86(handler, vec![record, frame, context, context + CONTEXT_SIZE]);
+    ctx.call32_x86(
+        handler,
+        vec![record, frame, context, context + CONTEXT_SIZE],
+    );
     ctx.cpu.regs.esp += 16; // cdecl: the caller pops
     ctx.cpu.regs.eax
 }
@@ -156,7 +160,10 @@ pub fn RaiseException(
     }
     let esp = ctx.cpu.regs.esp + 20; // as after RaiseException returns
     write_context(ctx, context, return_addr, esp);
-    log::info!("RaiseException({dwExceptionCode:#x}): {}", describe(ctx, record));
+    log::info!(
+        "RaiseException({dwExceptionCode:#x}): {}",
+        describe(ctx, record)
+    );
 
     let mut frame = exception_list(ctx);
     while frame != CHAIN_END && frame != 0 {

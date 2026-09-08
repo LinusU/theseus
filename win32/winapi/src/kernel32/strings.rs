@@ -144,7 +144,12 @@ pub fn lstrcmpiA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i
 }
 
 #[win32_derive::dllexport]
-pub fn lstrcpynA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>, iMaxLength: i32) -> u32 {
+pub fn lstrcpynA(
+    ctx: &mut Context,
+    lpString1: Ptr<u8>,
+    lpString2: Ptr<u8>,
+    iMaxLength: i32,
+) -> u32 {
     if iMaxLength <= 0 {
         return lpString1.addr;
     }
