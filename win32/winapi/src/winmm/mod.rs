@@ -10,6 +10,10 @@ mod misc;
 pub use misc::*;
 mod mmio;
 pub use mmio::*;
+mod joystick;
+pub use joystick::*;
+mod mixer;
+pub use mixer::*;
 
 #[derive(Default)]
 pub struct State {

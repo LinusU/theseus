@@ -11,3 +11,8 @@ pub fn PlaySoundW(
 ) -> bool {
     todo!()
 }
+
+#[win32_derive::dllexport]
+pub fn mciGetErrorStringA(_ctx: &mut Context, _mcierr: u32, _pszText: u32, _cchText: u32) -> bool {
+    false
+}
