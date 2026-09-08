@@ -642,3 +642,23 @@ pub fn get_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
     ctx.memory.write::<u32>(lpDDColorKey + 4, key.high);
     DD::OK
 }
+
+#[win32_derive::dllexport]
+pub fn DirectDrawEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> DD {
+    // Report the one (primary) display driver, identified by a null GUID.
+    let desc = b"Theseus DirectDraw\0";
+    let name = b"display\0";
+    let buf = kernel32::lock()
+        .process_heap
+        .alloc(&mut ctx.memory, (desc.len() + name.len()) as u32);
+    ctx.memory[buf..][..desc.len()].copy_from_slice(desc);
+    let name_addr = buf + desc.len() as u32;
+    ctx.memory[name_addr..][..name.len()].copy_from_slice(name);
+
+    // LPDDENUMCALLBACKA(lpGUID, lpDriverDescription, lpDriverName, lpContext)
+    let callback = ctx.indirect(lpCallback);
+    ctx.call32_x86(callback, vec![0, buf, name_addr, lpContext]);
+
+    kernel32::lock().process_heap.free(&mut ctx.memory, buf);
+    DD::OK
+}
