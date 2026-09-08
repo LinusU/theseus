@@ -1452,16 +1452,52 @@ pub mod IDirectDrawSurface7 {
         if size != std::mem::size_of::<DDSURFACEDESC2>() as u32 {
             return DD::ERR_INVALIDPARAMS;
         }
-        ctx.memory.write(
-            lpDDSurfaceDesc2,
-            DDSURFACEDESC2 {
-                dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
-                dwFlags: DDSD::WIDTH | DDSD::HEIGHT,
-                dwWidth: surface.width,
-                dwHeight: surface.height,
-                ..Default::default()
-            },
-        );
+        // Report the surface's real attributes: a caller that re-reads the
+        // desc to learn the layout (as MM2 does before its texture uploads)
+        // needs the pixel format and caps it created the surface with.
+        let mut desc = DDSURFACEDESC2 {
+            dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+            dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::CAPS | DDSD::PIXELFORMAT,
+            dwWidth: surface.width,
+            dwHeight: surface.height,
+            ddpfPixelFormat: surface.pixel_format.clone(),
+            ddsCaps: surface.caps,
+            ..Default::default()
+        };
+        // A query must not allocate pixel storage; report it only when it
+        // already exists.
+        if let Some(pixels) = surface.pixels {
+            desc.dwFlags |= DDSD::PITCH | DDSD::LPSURFACE;
+            desc.lPitch_dwLinearSize = surface.width * surface.bytes_per_pixel;
+            desc.lpSurface = pixels;
+        }
+        if surface.caps.dwCaps.contains(DDSCAPS::MIPMAP) {
+            desc.dwFlags |= DDSD::MIPMAPCOUNT;
+            desc.dwMipMapCount_dwRefreshRate_dwSrcVBHandle = 1 + surface
+                .attachments
+                .iter()
+                .filter(|a| a.borrow().caps.dwCaps.contains(DDSCAPS::MIPMAP))
+                .count() as u32;
+        }
+        if surface.attached.is_some() {
+            desc.dwFlags |= DDSD::BACKBUFFERCOUNT;
+            desc.dwBackBufferCount_dwDepth = 1;
+        }
+        if let Some(key) = surface.src_color_key {
+            desc.dwFlags |= DDSD::CKSRCBLT;
+            desc.ddckCKSrcBlt = DDCOLORKEY {
+                dwColorSpaceLowValue: key.low,
+                dwColorSpaceHighValue: key.high,
+            };
+        }
+        if let Some(key) = surface.dst_color_key {
+            desc.dwFlags |= DDSD::CKDESTBLT;
+            desc.ddckCKDestBlt = DDCOLORKEY {
+                dwColorSpaceLowValue: key.low,
+                dwColorSpaceHighValue: key.high,
+            };
+        }
+        ctx.memory.write(lpDDSurfaceDesc2, desc);
 
         DD::OK
     }
