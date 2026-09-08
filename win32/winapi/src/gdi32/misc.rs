@@ -74,7 +74,7 @@ pub enum GetDeviceCapsArg {
 #[win32_derive::dllexport]
 pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: GetDeviceCapsArg) -> i32 {
     use GetDeviceCapsArg::*;
-    // A 640x480 true color display at 96 dpi.
+    // A 640x480 display at 96 dpi.
     match index {
         DRIVERVERSION => 0x400,
         TECHNOLOGY => 1, // DT_RASDISPLAY
@@ -82,9 +82,9 @@ pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: GetDeviceCapsArg) -> 
         VERTSIZE => 127,
         HORZRES | DESKTOPHORZRES => 640,
         VERTRES | DESKTOPVERTRES => 480,
-        BITSPIXEL => 32,
+        BITSPIXEL => crate::gdi32::DESKTOP_BPP as i32,
         PLANES => 1,
-        NUMBRUSHES | NUMPENS | NUMCOLORS => -1, // unlimited / true color
+        NUMBRUSHES | NUMPENS | NUMCOLORS => -1, // unlimited / more than 8 bits
         NUMMARKERS | NUMFONTS | PDEVICESIZE => 0,
         CURVECAPS => 0x1ff,
         LINECAPS => 0xfe,
@@ -97,7 +97,7 @@ pub fn GetDeviceCaps(_ctx: &mut Context, _hdc: HDC, index: GetDeviceCapsArg) -> 
         ASPECTXY => 51,
         LOGPIXELSX | LOGPIXELSY => 96,
         SIZEPALETTE | NUMRESERVED => 0,
-        COLORRES => 24,
+        COLORRES => crate::gdi32::DESKTOP_BPP as i32,
         VREFRESH => 60,
         BLTALIGNMENT => 0,
         PHYSICALWIDTH | PHYSICALHEIGHT | PHYSICALOFFSETX | PHYSICALOFFSETY | SCALINGFACTORX

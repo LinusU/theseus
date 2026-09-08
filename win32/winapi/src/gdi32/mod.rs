@@ -11,6 +11,11 @@ pub use misc::*;
 mod object;
 pub use object::*;
 
+/// Color depth of the emulated desktop, as GetDeviceCaps and DirectDraw report
+/// it before a program changes the display mode. 16-bit: games of the DirectX 3
+/// era (Moto Racer) demand a "High Color" desktop and refuse to run otherwise.
+pub const DESKTOP_BPP: u32 = 16;
+
 pub type HGDIOBJ = HANDLE;
 pub type HBRUSH = HGDIOBJ;
 pub type HPEN = HGDIOBJ;
