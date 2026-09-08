@@ -172,17 +172,6 @@ pub fn OutputDebugStringA(_ctx: &mut Context, _lpOutputString: Ptr<u8>) {
 }
 
 #[win32_derive::dllexport]
-pub fn RtlUnwind(
-    _ctx: &mut Context,
-    _TargetFrame: Ptr<()>,
-    _TargetIp: Ptr<()>,
-    _ExceptionRecord: Ptr<()>,
-    _ReturnValue: Ptr<()>,
-) {
-    todo!()
-}
-
-#[win32_derive::dllexport]
 pub fn lstrcpyW(ctx: &mut Context, lpString1: Ptr<u16>, lpString2: Ptr<u16>) -> u32 /* WSTR */ {
     let buf = &ctx.memory[lpString2.addr..];
     let len = buf.chunks_exact(2).position(|c| c == &[0, 0]).unwrap();
@@ -222,4 +211,135 @@ pub fn GetPrivateProfileStringW(
     _lpFileName: Ptr<u16>,
 ) -> u32 {
     stub!(ERROR_FILE_NOT_FOUND)
+}
+
+#[win32_derive::dllexport]
+pub fn Beep(_ctx: &mut Context, _dwFreq: u32, _dwDuration: u32) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn GetProcessVersion(_ctx: &mut Context, _ProcessId: u32) -> u32 {
+    // Major version in the high word, as for a Windows 4.0 (95) executable.
+    0x0004_0000
+}
+
+#[win32_derive::dllexport]
+pub fn SetErrorMode(_ctx: &mut Context, _uMode: u32) -> u32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn SetLastError(_ctx: &mut Context, _dwErrCode: u32) {
+    // GetLastError always reports success; nothing keeps the value.
+}
+
+#[win32_derive::dllexport]
+pub fn IsBadReadPtr(_ctx: &mut Context, _lp: u32, _ucb: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn IsBadWritePtr(_ctx: &mut Context, _lp: u32, _ucb: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn IsBadCodePtr(_ctx: &mut Context, _lpfn: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn SetUnhandledExceptionFilter(_ctx: &mut Context, _lpTopLevelExceptionFilter: u32) -> u32 {
+    0 // no previous filter
+}
+
+#[win32_derive::dllexport]
+pub fn SetConsoleCtrlHandler(_ctx: &mut Context, _HandlerRoutine: u32, _Add: bool) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn MulDiv(_ctx: &mut Context, nNumber: i32, nNumerator: i32, nDenominator: i32) -> i32 {
+    if nDenominator == 0 {
+        return -1;
+    }
+    let product = nNumber as i64 * nNumerator as i64;
+    // Rounds half away from zero.
+    let half = nDenominator.unsigned_abs() as i64 / 2;
+    let rounded = if (product < 0) != (nDenominator < 0) {
+        product - half
+    } else {
+        product + half
+    };
+    (rounded / nDenominator as i64) as i32
+}
+
+#[repr(C)]
+#[derive(zerocopy::IntoBytes, zerocopy::Immutable)]
+pub struct MEMORYSTATUS {
+    dwLength: u32,
+    dwMemoryLoad: u32,
+    dwTotalPhys: u32,
+    dwAvailPhys: u32,
+    dwTotalPageFile: u32,
+    dwAvailPageFile: u32,
+    dwTotalVirtual: u32,
+    dwAvailVirtual: u32,
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalMemoryStatus(ctx: &mut Context, lpBuffer: Ptr<MEMORYSTATUS>) {
+    let phys = 128 << 20;
+    lpBuffer.write(
+        &mut ctx.memory,
+        MEMORYSTATUS {
+            dwLength: std::mem::size_of::<MEMORYSTATUS>() as u32,
+            dwMemoryLoad: 25,
+            dwTotalPhys: phys,
+            dwAvailPhys: phys * 3 / 4,
+            dwTotalPageFile: phys * 2,
+            dwAvailPageFile: phys * 3 / 2,
+            dwTotalVirtual: 0x7fff_0000,
+            dwAvailVirtual: 0x7000_0000,
+        },
+    );
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalDeleteAtom(_ctx: &mut Context, _nAtom: u16) -> u16 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn DuplicateHandle(
+    ctx: &mut Context,
+    _hSourceProcessHandle: u32,
+    hSourceHandle: u32,
+    _hTargetProcessHandle: u32,
+    lpTargetHandle: Ptr<u32>,
+    _dwDesiredAccess: u32,
+    _bInheritHandle: bool,
+    _dwOptions: u32,
+) -> bool {
+    // Handles aren't reference counted, so the duplicate is the original; a
+    // CloseHandle on either closes both.
+    stub!(());
+    lpTargetHandle.write(&mut ctx.memory, hSourceHandle);
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn VirtualProtect(
+    ctx: &mut Context,
+    _lpAddress: u32,
+    _dwSize: u32,
+    _flNewProtect: u32,
+    lpflOldProtect: Ptr<u32>,
+) -> bool {
+    const PAGE_READWRITE: u32 = 0x04;
+    if lpflOldProtect.addr != 0 {
+        lpflOldProtect.write(&mut ctx.memory, PAGE_READWRITE);
+    }
+    true
 }
