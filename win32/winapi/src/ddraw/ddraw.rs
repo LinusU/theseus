@@ -426,6 +426,11 @@ pub fn blt(
             let width_bytes = ((rect.right - rect.left).max(0) as u32 * bpp) as usize;
             match bpp {
                 1 => ctx.memory[start..][..width_bytes].fill(color as u8),
+                2 => {
+                    for x in 0..(rect.right - rect.left).max(0) as u32 {
+                        ctx.memory.write::<u16>(start + x * 2, color as u16);
+                    }
+                }
                 4 => {
                     for x in 0..(rect.right - rect.left).max(0) as u32 {
                         ctx.memory.write::<u32>(start + x * 4, color);
