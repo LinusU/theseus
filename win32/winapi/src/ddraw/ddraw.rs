@@ -222,16 +222,25 @@ pub struct Palette {
     pub entries: Vec<PALETTEENTRY>,
 }
 
-pub fn get_pixel_format() -> DDPIXELFORMAT {
+/// The pixel format of a surface or display mode with the given depth.
+pub fn get_pixel_format(bpp: u32) -> DDPIXELFORMAT {
+    // DDPF_RGB = 0x40, DDPF_PALETTEINDEXED8 = 0x20.
+    let (flags, r, g, b, a) = match bpp {
+        8 => (0x40 | 0x20, 0, 0, 0, 0),
+        16 => (0x40, 0xF800, 0x07E0, 0x001F, 0), // 5-6-5, see Surface::to_rgba
+        24 => (0x40, 0xFF0000, 0x00FF00, 0x0000FF, 0),
+        // 32: the byte order the surface code and host expect.
+        _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
+    };
     DDPIXELFORMAT {
         dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
-        dwFlags: 0x00000040,
+        dwFlags: flags,
         dwFourCC: 0,
-        dwRGBBitCount: 32,
-        dwRBitMask: 0x0000_00FF,
-        dwGBitMask: 0x0000_FF00,
-        dwBBitMask: 0x00FF_0000,
-        dwRGBAlphaBitMask: 0xFF00_0000,
+        dwRGBBitCount: bpp,
+        dwRBitMask: r,
+        dwGBitMask: g,
+        dwBBitMask: b,
+        dwRGBAlphaBitMask: a,
     }
 }
 
@@ -265,11 +274,17 @@ pub fn DirectDrawCreateEx(
     };
 
     let mut ddraw = state().ddraw.borrow_mut();
-    assert!(ddraw.is_none());
+    if ddraw.is_some() {
+        // Games probe the display with one DirectDraw object, Release it, and
+        // create another to run with. Release can't tell whether other
+        // interface pointers remain (there's no reference counting), so the
+        // old object lives until it is replaced here.
+        log::info!("DirectDrawCreate: replacing the previous DirectDraw object");
+    }
     *ddraw = Some(DirectDraw {
         addr,
         aliases: Vec::new(),
-        bytes_per_pixel: 4,
+        bytes_per_pixel: crate::gdi32::DESKTOP_BPP / 8,
         window: None,
     });
 
