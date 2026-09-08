@@ -63,6 +63,11 @@ struct Args {
     #[argh(option, from_str_fn(parse_ip_range))]
     entry_points: Vec<std::ops::Range<IP>>,
 
+    /// code ranges the program patches at runtime; their immediates and
+    /// displacements are read from memory when executed
+    #[argh(option, from_str_fn(parse_ip_range))]
+    patched_code: Vec<std::ops::Range<IP>>,
+
     /// ghidra symbols csv
     #[argh(option)]
     symbols_csv: Option<String>,
@@ -114,6 +119,11 @@ fn run() -> anyhow::Result<()> {
         anyhow::bail!("unexpected file extension");
     }
     state.init_system_hooks();
+    for range in args.patched_code {
+        state
+            .patched_code
+            .push(range.start.to_addr()..range.end.to_addr());
+    }
 
     let mut entry_points = vec![];
     for ip in args.entry_point {
