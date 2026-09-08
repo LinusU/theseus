@@ -4,11 +4,90 @@ use runtime::Context;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    ddraw::{DD, Palette, get_pixel_format, state, types::*},
+    ddraw::{DD, GUID, Palette, ddraw2, get_pixel_format, state, types::*},
     heap::Heap,
     kernel32, stub,
     user32::HWND,
 };
+
+pub const IID_IUnknown: GUID = GUID((
+    0x00000000,
+    0x0000,
+    0x0000,
+    [0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
+));
+pub const IID_IDirectDraw: GUID = GUID((
+    0x6c14db80,
+    0xa733,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+));
+pub const IID_IDirectDrawSurface: GUID = GUID((
+    0x6c14db81,
+    0xa733,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+));
+
+/// A DDSURFACEDESC describing a display mode.
+pub fn mode_desc(width: u32, height: u32, bpp: u32) -> DDSURFACEDESC {
+    let mut desc = DDSURFACEDESC::default();
+    desc.dwSize = std::mem::size_of::<DDSURFACEDESC>() as u32;
+    desc.dwFlags = DDSD::WIDTH | DDSD::HEIGHT | DDSD::PIXELFORMAT | DDSD::PITCH;
+    desc.dwWidth = width;
+    desc.dwHeight = height;
+    desc.lPitch_dwLinearSize = width * bpp.div_ceil(8);
+
+    // DDPF_RGB = 0x40, DDPF_PALETTEINDEXED8 = 0x20.
+    let (flags, r, g, b) = match bpp {
+        8 => (0x40 | 0x20, 0, 0, 0),
+        16 => (0x40, 0xF800, 0x07E0, 0x001F),      // 5-6-5
+        _ => (0x40, 0xFF0000, 0x00FF00, 0x0000FF), // 24/32
+    };
+    desc.ddpfPixelFormat = DDPIXELFORMAT {
+        dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+        dwFlags: flags,
+        dwFourCC: 0,
+        dwRGBBitCount: bpp,
+        dwRBitMask: r,
+        dwGBitMask: g,
+        dwBBitMask: b,
+        dwRGBAlphaBitMask: 0,
+    };
+    desc
+}
+
+/// Fill in a DDCAPS (of whatever size the caller declared) for GetCaps.
+fn write_caps(ctx: &mut Context, addr: u32) {
+    let size = ctx.memory.read::<u32>(addr);
+    if size < 8 {
+        return;
+    }
+    ctx.memory[addr + 4..addr + size].fill(0);
+    let mut write = |offset: u32, value: u32| {
+        if offset + 4 <= size {
+            ctx.memory.write::<u32>(addr + offset, value);
+        }
+    };
+    // DDCAPS_BLT | DDCAPS_BLTSTRETCH | DDCAPS_GDI | DDCAPS_PALETTE | DDCAPS_COLORKEY
+    // | DDCAPS_BLTCOLORFILL | DDCAPS_CANCLIP | DDCAPS_CANBLTSYSMEM
+    write(
+        0x04,
+        0x40 | 0x200 | 0x400 | 0x8000 | 0x400000 | 0x4000000 | 0x20000000 | 0x80000000,
+    );
+    write(0x0c, 0x1 | 0x800); // dwCKeyCaps: DDCKEYCAPS_DESTBLT | DDCKEYCAPS_SRCBLT
+    write(0x18, 0x4 | 0x10 | 0x40); // dwPalCaps: 8BIT | PRIMARYSURFACE | ALLOW256
+    write(0x3c, 16 << 20); // dwVidMemTotal
+    write(0x40, 16 << 20); // dwVidMemFree
+    // dwRops[]: SRCCOPY (rop index 0xcc) is supported.
+    write(0x64 + (0xcc / 32) * 4, 1 << (0xcc % 32));
+    // ddsCaps: OFFSCREENPLAIN | PRIMARYSURFACE | FLIP | BACKBUFFER | COMPLEX
+    // | PALETTE | SYSTEMMEMORY | VIDEOMEMORY
+    write(
+        0x84,
+        0x40 | 0x200 | 0x10 | 0x4 | 0x8 | 0x100 | 0x800 | 0x4000,
+    );
+}
 
 pub mod IDirectDraw {
     use super::*;
@@ -40,8 +119,31 @@ pub mod IDirectDraw {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppvObject: u32) -> DD {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppvObject: u32) -> DD {
+        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory).unwrap();
+        match iid {
+            IID_IUnknown | IID_IDirectDraw => {
+                ctx.memory.write::<u32>(ppvObject, this);
+                DD::OK
+            }
+            ddraw2::IID_IDirectDraw2 => {
+                // A second interface pointer onto the same object, with the
+                // IDirectDraw2 vtable.
+                let addr = {
+                    let mut kernel32 = kernel32::lock();
+                    ddraw2::IDirectDraw2::new(ctx, &mut kernel32.process_heap)
+                };
+                state().get_ddraw(this).aliases.push(addr);
+                ctx.memory.write::<u32>(ppvObject, addr);
+                DD::OK
+            }
+            _ => {
+                // Includes IID_IDirect3D: no 3D hardware, so games use their
+                // software renderers.
+                log::warn!("IDirectDraw::QueryInterface({iid:?}): not supported");
+                DD::E_NOINTERFACE
+            }
+        }
     }
 
     #[win32_derive::dllexport]
@@ -56,7 +158,7 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn Compact(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -121,8 +223,46 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumDisplayModes(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumDisplayModes(
+        ctx: &mut Context,
+        _this: u32,
+        _dwFlags: u32,
+        lpSurfaceDesc: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
+    ) -> DD {
+        if lpSurfaceDesc != 0 {
+            todo!("EnumDisplayModes with a filter desc");
+        }
+
+        // Report the standard display modes; games match these against their
+        // internal mode tables by width/height/bit count.
+        const RESOLUTIONS: &[(u32, u32)] = &[(640, 480), (800, 600), (1024, 768)];
+        // Only depths the surface code can actually convert to rgba.
+        const BIT_DEPTHS: &[u32] = &[8, 16, 32];
+
+        for &(width, height) in RESOLUTIONS {
+            for &bpp in BIT_DEPTHS {
+                let desc = mode_desc(width, height, bpp);
+                let desc_addr = kernel32::lock()
+                    .process_heap
+                    .alloc(&mut ctx.memory, desc.dwSize);
+                ctx.memory.write(desc_addr, desc);
+                let callback = ctx.indirect(lpEnumCallback);
+                ctx.call32_x86(callback, vec![desc_addr, lpContext]);
+                let ret = ctx.cpu.regs.eax;
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, desc_addr);
+
+                // DDENUMRET_CANCEL (0) means stop enumerating.
+                if ret == 0 {
+                    return DD::OK;
+                }
+            }
+        }
+
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -132,17 +272,37 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn FlipToGDISurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetCaps(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetCaps(ctx: &mut Context, _this: u32, lpDDDriverCaps: u32, lpDDHELCaps: u32) -> DD {
+        // The same capabilities for the "hardware" and the emulation layer:
+        // everything is software here anyway.
+        for addr in [lpDDDriverCaps, lpDDHELCaps] {
+            if addr != 0 {
+                write_caps(ctx, addr);
+            }
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDisplayMode(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetDisplayMode(ctx: &mut Context, this: u32, lpDDSurfaceDesc: u32) -> DD {
+        let (width, height, bpp) = {
+            let ddraw = state().get_ddraw(this);
+            let bpp = ddraw.bytes_per_pixel * 8;
+            match &ddraw.window {
+                Some(window) => {
+                    let window = window.borrow();
+                    (window.width, window.height, bpp)
+                }
+                None => (640, 480, bpp),
+            }
+        };
+        ctx.memory
+            .write(lpDDSurfaceDesc, mode_desc(width, height, bpp));
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -151,23 +311,27 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetGDISurface(_ctx: &mut Context, _this: u32) -> DD {
+    pub fn GetGDISurface(_ctx: &mut Context, _this: u32, _lplpGDIDDSSurface: u32) -> DD {
         todo!()
     }
 
     #[win32_derive::dllexport]
-    pub fn GetMonitorFrequency(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetMonitorFrequency(ctx: &mut Context, _this: u32, lpdwFrequency: u32) -> DD {
+        ctx.memory.write::<u32>(lpdwFrequency, 60);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetScanLine(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetScanLine(ctx: &mut Context, _this: u32, lpdwScanLine: u32) -> DD {
+        ctx.memory.write::<u32>(lpdwScanLine, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetVerticalBlankStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetVerticalBlankStatus(ctx: &mut Context, _this: u32, lpbIsInVB: u32) -> DD {
+        // Always in the vertical blank: a program waiting for it never spins.
+        ctx.memory.write::<u32>(lpbIsInVB, 1);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -177,7 +341,7 @@ pub mod IDirectDraw {
 
     #[win32_derive::dllexport]
     pub fn RestoreDisplayMode(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -257,8 +421,31 @@ pub mod IDirectDrawSurface {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppvObject: u32) -> DD {
+        let iid = crate::Ptr::<GUID>::new(riid).read(&ctx.memory).unwrap();
+        match iid {
+            IID_IUnknown | IID_IDirectDrawSurface => {
+                ctx.memory.write::<u32>(ppvObject, this);
+                DD::OK
+            }
+            ddraw2::IID_IDirectDrawSurface2 => {
+                let Some(surface) = state().surf.borrow().get(&this).cloned() else {
+                    return DD::E_NOINTERFACE;
+                };
+                let addr = {
+                    let mut kernel32 = kernel32::lock();
+                    ddraw2::IDirectDrawSurface2::new(ctx, &mut kernel32.process_heap)
+                };
+                // The new pointer names the same surface.
+                state().surf.borrow_mut().insert(addr, surface);
+                ctx.memory.write::<u32>(ppvObject, addr);
+                DD::OK
+            }
+            _ => {
+                log::warn!("IDirectDrawSurface::QueryInterface({iid:?}): not supported");
+                DD::E_NOINTERFACE
+            }
+        }
     }
 
     #[win32_derive::dllexport]
@@ -432,7 +619,7 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn Restore(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+        DD::OK // never lost, nothing to restore
     }
 
     #[win32_derive::dllexport]
