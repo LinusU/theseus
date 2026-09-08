@@ -308,3 +308,106 @@ pub fn WideCharToMultiByte(
 pub fn GetOEMCP(_ctx: &mut Context) -> u32 {
     todo!()
 }
+
+#[win32_derive::dllexport]
+pub fn GetThreadLocale(_ctx: &mut Context) -> u32 {
+    0x0409 // en-US
+}
+
+/// Values for GetLocaleInfo, for the en-US locale.
+fn locale_info(lctype: u32) -> &'static str {
+    match lctype & 0xffff {
+        0x0001 => "0409",  // LOCALE_ILANGUAGE
+        0x0002 => "English (United States)", // LOCALE_SLANGUAGE
+        0x0003 => "ENU",   // LOCALE_SABBREVLANGNAME
+        0x0006 => "United States", // LOCALE_SCOUNTRY
+        0x0007 => "USA",   // LOCALE_SABBREVCTRYNAME
+        0x000c => ",",     // LOCALE_SLIST
+        0x000d => "1",     // LOCALE_IMEASURE
+        0x000e => ".",     // LOCALE_SDECIMAL
+        0x000f => ",",     // LOCALE_STHOUSAND
+        0x0010 => "3;0",   // LOCALE_SGROUPING
+        0x0011 => "2",     // LOCALE_IDIGITS
+        0x0012 => "1",     // LOCALE_ILZERO
+        0x0014 => "$",     // LOCALE_SCURRENCY
+        0x0015 => "USD",   // LOCALE_SINTLSYMBOL
+        0x0016 => ".",     // LOCALE_SMONDECIMALSEP
+        0x0017 => ",",     // LOCALE_SMONTHOUSANDSEP
+        0x0018 => "3;0",   // LOCALE_SMONGROUPING
+        0x0019 => "2",     // LOCALE_ICURRDIGITS
+        0x001b => "0",     // LOCALE_ICURRENCY
+        0x001c => "0",     // LOCALE_INEGCURR
+        0x001d => "/",     // LOCALE_SDATE
+        0x001e => ":",     // LOCALE_STIME
+        0x001f => "M/d/yy", // LOCALE_SSHORTDATE
+        0x0020 => "dddd, MMMM dd, yyyy", // LOCALE_SLONGDATE
+        0x0021 => "0",     // LOCALE_IDATE
+        0x0022 => "0",     // LOCALE_ILDATE
+        0x0023 => "0",     // LOCALE_ITIME
+        0x0025 => "0",     // LOCALE_ITLZERO
+        0x0028 => "AM",    // LOCALE_S1159
+        0x0029 => "PM",    // LOCALE_S2359
+        0x1003 => "h:mm:ss tt", // LOCALE_STIMEFORMAT
+        0x1010 => "1",     // LOCALE_INEGNUMBER
+        _ => {
+            log::warn!("GetLocaleInfo: unknown LCTYPE {lctype:#x}");
+            ""
+        }
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetLocaleInfoA(
+    ctx: &mut Context,
+    _Locale: u32,
+    LCType: u32,
+    lpLCData: Ptr<u8>,
+    cchData: i32,
+) -> i32 {
+    let info = locale_info(LCType);
+    let needed = info.len() as i32 + 1;
+    if cchData == 0 {
+        return needed;
+    }
+    if cchData < needed {
+        return 0; // ERROR_INSUFFICIENT_BUFFER
+    }
+    crate::kernel32::write_cstr(ctx, lpLCData, cchData as u32, info.as_bytes());
+    needed
+}
+
+#[win32_derive::dllexport]
+pub fn GetLocaleInfoW(
+    ctx: &mut Context,
+    _Locale: u32,
+    LCType: u32,
+    lpLCData: Ptr<u16>,
+    cchData: i32,
+) -> i32 {
+    let info = locale_info(LCType);
+    let needed = info.len() as i32 + 1;
+    if cchData == 0 {
+        return needed;
+    }
+    if cchData < needed {
+        return 0; // ERROR_INSUFFICIENT_BUFFER
+    }
+    let mut addr = lpLCData.addr;
+    for c in info.encode_utf16().chain(std::iter::once(0)) {
+        ctx.memory.write::<u16>(addr, c);
+        addr += 2;
+    }
+    needed
+}
+
+#[win32_derive::dllexport]
+pub fn GetStringTypeExA(
+    ctx: &mut Context,
+    Locale: u32,
+    dwInfoType: u32,
+    lpSrcStr: Ptr<u8>,
+    cchSrc: i32,
+    lpCharType: Ptr<u16>,
+) -> bool {
+    GetStringTypeA(ctx, Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
+}

@@ -83,33 +83,37 @@ pub fn HeapFree(
 
 #[win32_derive::dllexport]
 pub fn HeapReAlloc(
-    _ctx: &mut Context,
-    _hHeap: HANDLE,
+    ctx: &mut Context,
+    hHeap: HANDLE,
     dwFlags: u32, /* HEAP_FLAGS */
-    _lpMem: Ptr<()>,
-    _dwBytes: u32,
+    lpMem: Ptr<()>,
+    dwBytes: u32,
 ) -> u32 {
-    if dwFlags != 0 {
+    const HEAP_ZERO_MEMORY: u32 = 0x08;
+    const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x10;
+    if dwFlags & !(HEAP_ZERO_MEMORY | HEAP_REALLOC_IN_PLACE_ONLY) != 0 {
         log::warn!("HeapReAlloc flags: {:x}", dwFlags);
     }
-    stub!(0)
-    /*
-    let memory = sys.memory();
-    let heap = match memory.heaps.get(&hHeap) {
-        None => {
-            log::error!("HeapSize({hHeap:x}): no such heap");
-            return 0;
-        }
-        Some(heap) => heap,
+    let state = kernel32::lock();
+    let Some(heap) = state.heaps.get(&hHeap) else {
+        log::error!("HeapReAlloc({hHeap:?}): no such heap");
+        return 0;
     };
-    let mem = memory.mem();
-    let old_size = heap.size(mem, lpMem);
-    let new_addr = heap.alloc(mem, dwBytes);
-    let copy_size = old_size.min(dwBytes);
-    mem.copy(lpMem, new_addr, copy_size);
-    heap.free(mem, lpMem);
+    let old_size = heap.size(&mut ctx.memory, lpMem.addr);
+    if dwFlags & HEAP_REALLOC_IN_PLACE_ONLY != 0 && dwBytes > old_size {
+        return 0;
+    }
+    let new_addr = heap.alloc(&mut ctx.memory, dwBytes);
+    let copy = old_size.min(dwBytes) as usize;
+    ctx.memory.bytes.copy_within(
+        lpMem.addr as usize..lpMem.addr as usize + copy,
+        new_addr as usize,
+    );
+    if dwFlags & HEAP_ZERO_MEMORY != 0 && dwBytes > old_size {
+        ctx.memory[new_addr + old_size..new_addr + dwBytes].fill(0);
+    }
+    heap.free(&mut ctx.memory, lpMem.addr);
     new_addr
-    */
 }
 
 win32flags! {
@@ -161,4 +165,60 @@ pub fn GlobalUnlock(_ctx: &mut Context, _hMem: u32) -> bool {
 #[win32_derive::dllexport]
 pub fn GlobalHandle(_ctx: &mut Context, pMem: u32) -> u32 {
     pMem
+}
+
+/// Reallocate a block on the process heap: allocate, copy, free.
+fn process_heap_realloc(ctx: &mut Context, addr: u32, new_size: u32, zero_init: bool) -> u32 {
+    let kernel32 = lock();
+    let heap = &kernel32.process_heap;
+    let old_size = heap.size(&mut ctx.memory, addr);
+    let new_addr = heap.alloc(&mut ctx.memory, new_size);
+    let copy = old_size.min(new_size) as usize;
+    ctx.memory.bytes.copy_within(
+        addr as usize..addr as usize + copy,
+        new_addr as usize,
+    );
+    if zero_init && new_size > old_size {
+        ctx.memory[new_addr + old_size..new_addr + new_size].fill(0);
+    }
+    heap.free(&mut ctx.memory, addr);
+    new_addr
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalReAlloc(ctx: &mut Context, hMem: u32, dwBytes: u32, uFlags: GMEM) -> u32 {
+    // GMEM_MODIFY (0x80) changes flags without resizing; nothing to do.
+    if uFlags.bits() & 0x80 != 0 {
+        return hMem;
+    }
+    process_heap_realloc(ctx, hMem, dwBytes, uFlags.contains(GMEM::ZEROINIT))
+}
+
+// LocalAlloc and friends share the process heap with GlobalAlloc; the LMEM_*
+// flags have the same values as their GMEM_* counterparts.
+
+#[win32_derive::dllexport]
+pub fn LocalAlloc(ctx: &mut Context, uFlags: u32, uBytes: u32) -> u32 {
+    // Like GlobalAlloc, only fixed memory is handed out, so ignore LMEM_MOVEABLE.
+    let flags = GMEM::from_bits_retain(uFlags & !GMEM::MOVEABLE.bits());
+    GlobalAlloc(ctx, flags, uBytes)
+}
+
+#[win32_derive::dllexport]
+pub fn LocalReAlloc(ctx: &mut Context, hMem: u32, uBytes: u32, uFlags: u32) -> u32 {
+    let flags = GMEM::from_bits_retain(uFlags & !GMEM::MOVEABLE.bits());
+    GlobalReAlloc(ctx, hMem, uBytes, flags)
+}
+
+#[win32_derive::dllexport]
+pub fn LocalFree(ctx: &mut Context, hMem: Ptr<()>) -> u32 {
+    if hMem.addr == 0 {
+        return 0;
+    }
+    GlobalFree(ctx, hMem)
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalFlags(_ctx: &mut Context, _hMem: u32) -> u32 {
+    0 // fixed memory, lock count 0
 }

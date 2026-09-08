@@ -84,7 +84,17 @@ impl kernel32::State {
         let origin = ctx.memory.as_ptr() as usize;
         let buf = &mut ctx.memory[process_data_addr..][..0x1000];
 
-        let command_line = "TODO\0";
+        // The program's command line, as GetCommandLine returns it: the program
+        // name followed by whatever arguments the host was started with.
+        let command_line = {
+            let mut cmd = String::from("\"C:\\program.exe\"");
+            for arg in host::args() {
+                cmd.push(' ');
+                cmd.push_str(&arg);
+            }
+            cmd.push('\0');
+            cmd
+        };
 
         let len = align_to_4(command_line.len());
         let (command_line_16, buf) = buf.split_at_mut(len * 2);
