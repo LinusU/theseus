@@ -3,6 +3,7 @@
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(Clone, Copy)]
     pub struct Status: u16 {
         const C3 = 1 << 14;
         const C2 = 1 << 10;
@@ -16,8 +17,9 @@ pub struct FPU {
     pub st: [f64; 8],
     /// Index of top of FPU stack; 8 when stack empty.
     pub st_top: usize,
-    /// The result of the last fcmp, used to generate status word.
-    pub cmp: std::cmp::Ordering,
+    /// Condition code bits (C0..C3 in status-word positions) from the last
+    /// comparison or fxam.
+    pub cc: Status,
     /// Control word, as managed by fldcw/fnstcw. We only round-trip the value;
     /// precision/rounding control bits are not honored.
     pub control: u16,
@@ -28,7 +30,7 @@ impl Default for FPU {
         Self {
             st: [0.; 8],
             st_top: 8,
-            cmp: std::cmp::Ordering::Equal,
+            cc: Status::C3,
             control: 0x037f,
         }
     }
@@ -91,14 +93,37 @@ impl FPU {
         self.st[self.st_offset(ofs)] = val;
     }
 
-    pub fn status(&self) -> u16 {
-        let status = match self.cmp {
+    /// Record a comparison result (fcom and friends) in the condition codes.
+    pub fn set_cmp(&mut self, cmp: std::cmp::Ordering) {
+        self.cc = match cmp {
             std::cmp::Ordering::Less => Status::C0,
             std::cmp::Ordering::Equal => Status::C3,
             std::cmp::Ordering::Greater => Status::empty(),
         };
+    }
+
+    /// fxam: classify a value into the condition codes.
+    pub fn xam(&mut self, val: f64) {
+        let mut cc = if val.is_nan() {
+            Status::C0
+        } else if val.is_infinite() {
+            Status::C0 | Status::C2
+        } else if val == 0.0 {
+            Status::C3
+        } else if val.is_subnormal() {
+            Status::C2 | Status::C3
+        } else {
+            Status::C2 // normal finite
+        };
+        if val.is_sign_negative() {
+            cc |= Status::C1;
+        }
+        self.cc = cc;
+    }
+
+    pub fn status(&self) -> u16 {
         // Our status register impl doesn't include st_top so include it here.
-        let mut status = status.bits();
+        let mut status = self.cc.bits();
         status |= (self.st_top as u16 & 0b111) << 11;
         status
     }
