@@ -23,7 +23,7 @@ pub fn lstrlenA(ctx: &mut Context, lpString: Ptr<u8>) -> i32 {
 
 #[win32_derive::dllexport]
 pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
+    let src = ctx.memory.read_str(lpString2.addr).to_string();
     let bytes = src.as_bytes();
     ctx.memory[lpString1.addr..][..bytes.len()].copy_from_slice(bytes);
     ctx.memory
@@ -34,7 +34,7 @@ pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
 #[win32_derive::dllexport]
 pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
     let dst_len = ctx.memory.read_str(lpString1.addr).len() as u32;
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
+    let src = ctx.memory.read_str(lpString2.addr).to_string();
     let bytes = src.as_bytes();
     ctx.memory[lpString1.addr + dst_len..][..bytes.len()].copy_from_slice(bytes);
     ctx.memory
@@ -125,7 +125,7 @@ pub fn CompareStringW(
 pub fn lstrcmpA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i32 {
     let a = ctx.memory.read_str(lpString1.addr);
     let b = ctx.memory.read_str(lpString2.addr);
-    match a.cmp(b) {
+    match a.cmp(&b) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,

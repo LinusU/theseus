@@ -147,7 +147,7 @@ pub fn GetProcAddress(ctx: &mut Context, hModule: HMODULE, lpProcName: Ptr<u8>) 
     let name = if lpProcName.addr < 0x1000 {
         format!("ordinal{}", lpProcName.addr)
     } else {
-        ctx.memory.read_str(lpProcName.addr).to_owned()
+        ctx.memory.read_str(lpProcName.addr).to_string()
     };
     let addr = lock().dlls.get_proc_address(hModule, &name);
     if addr == 0 {

@@ -676,7 +676,7 @@ pub fn GetDriveTypeA(ctx: &mut Context, lpRootPathName: Ptr<u8>) -> u32 {
         return DRIVE_FIXED;
     }
     let path = ctx.memory.read_str(lpRootPathName.addr);
-    if is_cdrom_path(path) {
+    if is_cdrom_path(&path) {
         DRIVE_CDROM
     } else {
         DRIVE_FIXED
@@ -705,7 +705,7 @@ pub fn GetVolumeInformationA(
     lpFileSystemNameBuffer: Ptr<u8>,
     nFileSystemNameSize: u32,
 ) -> bool {
-    let cdrom = lpRootPathName.addr != 0 && is_cdrom_path(ctx.memory.read_str(lpRootPathName.addr));
+    let cdrom = lpRootPathName.addr != 0 && is_cdrom_path(&ctx.memory.read_str(lpRootPathName.addr));
     let (label, fs) = if cdrom {
         (cdrom_label(), "CDFS")
     } else {

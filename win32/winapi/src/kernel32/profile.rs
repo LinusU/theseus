@@ -44,18 +44,18 @@ pub fn WritePrivateProfileStringA(
     lpString: Ptr<u8>,
     lpFileName: Ptr<u8>,
 ) -> bool {
-    let app = ctx.memory.read_str(lpAppName.addr);
+    let app = ctx.memory.read_str(lpAppName.addr).to_string();
     let key = if lpKeyName.addr == 0 {
-        "(null)"
+        "(null)".to_string()
     } else {
-        ctx.memory.read_str(lpKeyName.addr)
+        ctx.memory.read_str(lpKeyName.addr).to_string()
     };
     let value = if lpString.addr == 0 {
-        "(null)"
+        "(null)".to_string()
     } else {
-        ctx.memory.read_str(lpString.addr)
+        ctx.memory.read_str(lpString.addr).to_string()
     };
-    let file = ctx.memory.read_str(lpFileName.addr);
+    let file = ctx.memory.read_str(lpFileName.addr).to_string();
     log::warn!("WritePrivateProfileStringA({file}: [{app}] {key}={value}): dropped");
     true
 }
