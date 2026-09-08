@@ -13,15 +13,24 @@ use crate::{
 
 pub struct DirectDraw {
     pub addr: u32,
+    /// COM reference count. An app that releases a DirectDraw object and
+    /// creates a new one expects the old one's window binding to die with it.
+    pub refs: u32,
     pub bytes_per_pixel: u32,
     pub window: Option<Rc<RefCell<user32::Window>>>,
 }
 
 impl DirectDraw {
-    pub fn set_cooperative_level(&mut self, _hwnd: HWND, _flags: u32) {
-        // SetCooperativeLevel can run before the app's window exists, or with
-        // no window at all in a headless session.
-        self.window = user32::state().window.borrow().as_ref().cloned();
+    pub fn set_cooperative_level(&mut self, hwnd: HWND, _flags: u32) {
+        // A null hwnd resets the device to normal mode and unbinds it from
+        // the cooperative-level window. A non-null hwnd binds the current
+        // window — the model has only one — which may not exist yet in a
+        // headless session or before the app's window is created.
+        self.window = if hwnd.is_null() {
+            None
+        } else {
+            user32::state().window.borrow().as_ref().cloned()
+        };
     }
 }
 
@@ -698,6 +707,7 @@ pub fn DirectDrawCreateEx(
     let mut ddraw = state().ddraw.borrow_mut();
     *ddraw = Some(DirectDraw {
         addr,
+        refs: 1,
         bytes_per_pixel: 4,
         window: None,
     });
@@ -1568,11 +1578,15 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ColorKey, PALETTEENTRY, PixelFmt, RECT, expand_palettized, lock_offset, write_blit,
-        write_blit_convert,
+        ColorKey, DirectDraw, PALETTEENTRY, PixelFmt, RECT, expand_palettized, lock_offset,
+        write_blit, write_blit_convert,
     };
-    use crate::ddraw::types::DD;
+    use crate::{
+        ddraw::{state, types::DD},
+        user32::{HWND, Window},
+    };
     use runtime::{BlockCache, CPU, Context, Memory};
+    use std::{cell::RefCell, rc::Rc};
 
     fn context() -> Context {
         Context {
@@ -1593,6 +1607,62 @@ mod tests {
             peBlue: b,
             peFlags: 0,
         }
+    }
+
+    fn test_window() -> Rc<RefCell<Window>> {
+        let host_window: host::Window = unsafe { std::mem::zeroed() };
+        Rc::new(RefCell::new(Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: "Test".into(),
+            enabled: true,
+            visible: true,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            host: host_window,
+            pixels: None,
+            surface: None,
+        }))
+    }
+
+    #[test]
+    fn cooperative_level_null_hwnd_unbinds_the_window() {
+        // SetCooperativeLevel(NULL, DDSCL_NORMAL) unbinds the device window.
+        let mut ddraw = DirectDraw {
+            addr: 0x4321,
+            refs: 1,
+            bytes_per_pixel: 2,
+            window: Some(test_window()),
+        };
+        ddraw.set_cooperative_level(HWND::null(), 0x08);
+        assert!(ddraw.window.is_none());
+    }
+
+    #[test]
+    fn ddraw_object_is_dropped_on_the_last_release() {
+        let mut ctx = context();
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: 0x4321,
+            refs: 1,
+            bytes_per_pixel: 2,
+            window: None,
+        });
+        assert_eq!(crate::ddraw::IDirectDraw7::AddRef(&mut ctx, 0x4321), 2);
+        assert_eq!(crate::ddraw::IDirectDraw7::Release(&mut ctx, 0x4321), 1);
+        assert_eq!(crate::ddraw::IDirectDraw7::Release(&mut ctx, 0x4321), 0);
+        assert!(state().ddraw.borrow().is_none());
+        // Releasing a dead or unknown pointer is a no-op.
+        assert_eq!(crate::ddraw::IDirectDraw7::Release(&mut ctx, 0x4321), 0);
+        assert_eq!(crate::ddraw::IDirectDraw7::Release(&mut ctx, 0x9999), 0);
     }
 
     #[test]

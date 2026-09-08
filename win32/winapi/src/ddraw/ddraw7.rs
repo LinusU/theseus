@@ -98,6 +98,10 @@ pub mod IDirectDraw7 {
         };
         if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
             ctx.memory.write::<u32>(ppv, _this);
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(mut ddraw) = state().get_ddraw(_this) {
+                ddraw.refs += 1;
+            }
             return DD::OK;
         }
         if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
@@ -115,12 +119,31 @@ pub mod IDirectDraw7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        let Some(mut ddraw) = state().get_ddraw(this) else {
+            return 0;
+        };
+        ddraw.refs += 1;
+        ddraw.refs
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+    pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
+        let mut slot = state().ddraw.borrow_mut();
+        let Some(ddraw) = slot.as_mut() else {
+            return 0;
+        };
+        if ddraw.addr != this {
+            return 0;
+        }
+        ddraw.refs = ddraw.refs.saturating_sub(1);
+        if ddraw.refs > 0 {
+            return ddraw.refs;
+        }
+        // The last release destroys the object, dropping its cooperative-level
+        // window binding. Surfaces created through it live in `state().surf`
+        // under their own reference counts.
+        *slot = None;
         0
     }
 

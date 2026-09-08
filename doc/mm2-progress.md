@@ -47,10 +47,9 @@ reproduced failure points at it.
 
 Suspects worth a look when the backlog is otherwise blocked:
 
-- `IDirectDraw7::Release` (`win32/winapi/src/ddraw/ddraw7.rs`) is a stub, so
-  the first DirectDraw object and its surfaces are never freed.
-- `IDirectDraw7::SetCooperativeLevel` with a null hwnd still binds the
-  current window instead of unbinding.
+- DONE 2026-09-08: `IDirectDraw7::Release` and
+  `SetCooperativeLevel(null)` — the object is refcounted and a null hwnd
+  unbinds the window.
 
 ## Rules for a milestone
 
@@ -137,3 +136,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   the translucent modal veil renders correctly; its panel contents are the
   missing `nodeGetBitmap` assets. Change: this doc. Check: check.sh OK.
   Next: `SetCooperativeLevel(null)` unbind + `IDirectDraw7::Release` stub.
+- 2026-09-08 ddraw object lifetime: What: `SetCooperativeLevel(NULL,
+  DDSCL_NORMAL)` bound the current window instead of unbinding, and
+  `IDirectDraw7::Release` was a stub so the first object never died. Repro:
+  `THESEUS_TRACE=ddraw7` boot -> `SetCooperativeLevel(6b63c8, hwnd=null,
+  flags=8)` then `Release(6b63c8)` before the second object is created.
+  Change: `DirectDraw` gains `refs`; null hwnd unbinds; AddRef/Release on
+  IDirectDraw + IDirectDraw7 are real and the last release drops the object
+  (`ddraw.rs`, `ddraw1.rs`, `ddraw7.rs`); QI on the same interface AddRefs.
+  Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build mm2,
+  whitespace)`; 25s headless smoke -> GameLoop, no missing.txt. Next:
+  remaining backlog items are external content; survey audit leftovers.

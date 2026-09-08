@@ -78,15 +78,13 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        // We don't reference count; the single DirectDraw object lives as long
-        // as the process.
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        crate::ddraw::ddraw7::IDirectDraw7::AddRef(_ctx, this)
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        0
+    pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
+        crate::ddraw::ddraw7::IDirectDraw7::Release(_ctx, this)
     }
 
     #[win32_derive::dllexport]
