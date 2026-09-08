@@ -62,8 +62,11 @@ pub fn IsDlgButtonChecked(_ctx: &mut Context, _hDlg: HWND, _nIDButton: i32) -> u
 }
 
 #[win32_derive::dllexport]
-pub fn GetDlgItem(_ctx: &mut Context, _hDlg: HWND, _nIDDlgItem: i32) -> HWND {
-    todo!()
+pub fn GetDlgItem(_ctx: &mut Context, hDlg: HWND, nIDDlgItem: i32) -> HWND {
+    // Dialogs aren't created (see CreateDialogIndirectParamA), so they have
+    // no controls either.
+    log::warn!("GetDlgItem({hDlg:?}, {nIDDlgItem}): no dialogs");
+    HWND::null()
 }
 
 #[win32_derive::dllexport]
