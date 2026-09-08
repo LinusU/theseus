@@ -131,7 +131,8 @@ win32flags! {
 
 #[win32_derive::dllexport]
 pub fn GlobalAlloc(ctx: &mut Context, uFlags: GMEM, dwBytes: u32) -> u32 {
-    assert!(!uFlags.contains(GMEM::MOVEABLE));
+    // Moveable memory is handed out as fixed: the handle is the pointer, which
+    // GlobalLock returns unchanged, and nothing ever moves.
     let ptr = lock().process_heap.alloc(&mut ctx.memory, dwBytes);
     if uFlags.contains(GMEM::ZEROINIT) {
         ctx.memory[ptr..][..dwBytes as usize].fill(0);
