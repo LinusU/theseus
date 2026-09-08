@@ -12,6 +12,9 @@ use crate::{
 
 pub struct DirectDraw {
     pub addr: u32,
+    /// Further interface pointers onto this object (e.g. IDirectDraw2) handed
+    /// out by QueryInterface.
+    pub aliases: Vec<u32>,
     pub bytes_per_pixel: u32,
     pub window: Option<Rc<RefCell<user32::Window>>>,
 }
@@ -367,6 +370,7 @@ pub fn DirectDrawCreateEx(
     assert!(ddraw.is_none());
     *ddraw = Some(DirectDraw {
         addr,
+        aliases: Vec::new(),
         bytes_per_pixel: 4,
         window: None,
     });
