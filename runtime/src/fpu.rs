@@ -103,9 +103,15 @@ impl FPU {
         status
     }
 
+    /// Round per the control word's rounding-control bits, as fist/frndint do.
+    /// The C runtime sets truncation around its double-to-int conversions, so
+    /// honoring these matters.
     pub fn round(&self, val: f64) -> f64 {
-        // TODO: rounding modes?
-        // This implements default rounding mode of round towards even.
-        val.round_ties_even()
+        match (self.control >> 10) & 3 {
+            0 => val.round_ties_even(),
+            1 => val.floor(),
+            2 => val.ceil(),
+            _ => val.trunc(),
+        }
     }
 }
