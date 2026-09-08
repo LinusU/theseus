@@ -63,7 +63,9 @@ pub fn IsDlgButtonChecked(_ctx: &mut Context, _hDlg: HWND, _nIDButton: i32) -> u
 
 #[win32_derive::dllexport]
 pub fn GetDlgItem(_ctx: &mut Context, _hDlg: HWND, _nIDDlgItem: i32) -> HWND {
-    todo!()
+    // Dialog boxes are stubbed out (see DialogBoxParamA), so there are no
+    // controls to find.
+    stub!(HWND::null())
 }
 
 #[win32_derive::dllexport]
