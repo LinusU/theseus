@@ -2700,14 +2700,29 @@ fn rasterize(
             {
                 let path = format!("{dir}/tex_{tex:08x}.ppm");
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                // A second dump decodes the same words as RGB565: a region
+                // that is coherent here but noise in the declared format was
+                // written in a different layout than the surface reports.
+                // A third writes the alpha channel as grayscale.
+                let mut raw = format!("P6\n{w} {h}\n255\n").into_bytes();
+                let mut alpha = format!("P6\n{w} {h}\n255\n").into_bytes();
                 for i in 0..(w * h) {
                     let p = ctx.memory.read::<u16>(addr + i * 2);
-                    let (r, g, b, _a) = decode_texel(p, tex_fmt);
+                    let (r, g, b, a) = decode_texel(p, tex_fmt);
                     out.push(r);
                     out.push(g);
                     out.push(b);
+                    alpha.push(a);
+                    alpha.push(a);
+                    alpha.push(a);
+                    let (r, g, b, _a) = decode_texel(p, TEXFMT_RGB565);
+                    raw.push(r);
+                    raw.push(g);
+                    raw.push(b);
                 }
                 let _ = std::fs::write(&path, out);
+                let _ = std::fs::write(format!("{dir}/tex_{tex:08x}_565.ppm"), raw);
+                let _ = std::fs::write(format!("{dir}/tex_{tex:08x}_a.ppm"), alpha);
             }
             let addr = s.borrow_mut().lock(&mut ctx.memory).unwrap_or(0);
             (w, h, bpp, addr)
