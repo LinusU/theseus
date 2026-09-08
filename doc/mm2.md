@@ -51,7 +51,7 @@ Reconstructing a decrypted ICD image remains an optional compatibility/research 
 
 ## Agent loop
 
-The project skill `/mm2-ralph` runs several focused milestones in one agent session and records each result in `doc/mm2-progress.md`. Each spawned session uses `RALPH_AGENT_PASSES` (default 8, maximum 50) and commits after every milestone, including milestones whose builds or tests fail. For unattended bounded sessions, start from a clean worktree and run:
+The project skill `/mm2-ralph` runs several focused milestones in one agent session and records each result in `doc/mm2-progress.md` (a short status board plus recent log; older history is in `doc/mm2-progress-archive.md`). `.devin/check.sh` is the pre-commit check: it formats changed Rust files, runs clippy and tests for the touched crates, rebuilds the target, and checks whitespace. Each spawned session uses `RALPH_AGENT_PASSES` (default 8, maximum 50) and commits after every milestone, including milestones whose builds or tests fail. For unattended bounded sessions, start from a clean worktree and run:
 
 ```text
 RALPH_AGENT_PASSES=8 .devin/ralph-mm2.sh 1000
