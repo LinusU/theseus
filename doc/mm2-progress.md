@@ -187,3 +187,12 @@ Suspects worth a look when the backlog is otherwise blocked:
   polygon is a correctly-bound surface, not a multitexture gap. Check:
   `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
   Next: external content or a fresh defect report.
+- 2026-09-09 GetGDISurface correctness: What: `IDirectDraw7::GetGDISurface` ignored
+  its `this` pointer and returned the first window-backed surface in the global
+  table, which could hand the game a stale or wrong primary. Repro: new unit test
+  `get_gdi_surface_returns_not_found_without_a_matching_primary` plus the code path
+  in `ddraw7.rs`. Change: `GetGDISurface` now looks up the current DirectDraw
+  object's window and requires a matching `PRIMARYSURFACE` (`ddraw7.rs`); test
+  added (`ddraw.rs`). Check: `check.sh: OK (fmt 2 files, clippy+test winapi,
+  build mm2, whitespace)`. Next: scripted race still stalls at `Just before
+  GameLoop`; diagnose the menu/GO DRIVE path or run a longer live capture.

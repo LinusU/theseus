@@ -1787,6 +1787,26 @@ mod tests {
     }
 
     #[test]
+    fn get_gdi_surface_returns_not_found_without_a_matching_primary() {
+        // GetGDISurface must not return an arbitrary window surface; when the
+        // DirectDraw object has no bound window or there is no matching primary
+        // surface, it reports DDERR_NOTFOUND.
+        let mut ctx = context();
+        let ddraw_addr = 0x4321;
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: ddraw_addr,
+            refs: 1,
+            bytes_per_pixel: 2,
+            window: None,
+        });
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::GetGDISurface(&mut ctx, ddraw_addr, 0x4000),
+            DD::ERR_NOTFOUND
+        );
+        state().ddraw.borrow_mut().take();
+    }
+
+    #[test]
     fn lock_offset_points_at_the_regions_first_pixel() {
         let mut ctx = context();
         // A 4x4 surface at 0x4000 with 4 bytes per pixel has a 16-byte pitch.

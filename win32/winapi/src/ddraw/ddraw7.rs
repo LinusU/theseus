@@ -578,15 +578,30 @@ pub mod IDirectDraw7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetGDISurface(ctx: &mut Context, _this: u32, lplpGDISurface: u32) -> DD {
+    pub fn GetGDISurface(ctx: &mut Context, this: u32, lplpGDISurface: u32) -> DD {
         if lplpGDISurface == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        // The surface GDI writes to is the primary, i.e. the window-backed one.
+        // The GDI surface is the primary surface tied to the DirectDraw object's
+        // current window. A stale surface from a previous device must not be
+        // returned just because it is still in the global surface table.
+        let ddraw_window = state().get_ddraw(this).and_then(|d| d.window.clone());
+        let Some(ddraw_window) = ddraw_window else {
+            return DD::ERR_NOTFOUND;
+        };
+        let ddraw_window_ptr = Rc::as_ptr(&ddraw_window);
         let surfaces = state().surf.borrow();
         let gdi_surface = surfaces
             .values()
-            .find(|s| matches!(s.borrow().target, crate::ddraw::Target::Window(_)))
+            .find(|s| {
+                let s = s.borrow();
+                s.caps.dwCaps.contains(DDSCAPS::PRIMARYSURFACE)
+                    && if let crate::ddraw::Target::Window(window) = &s.target {
+                        Rc::as_ptr(window) == ddraw_window_ptr
+                    } else {
+                        false
+                    }
+            })
             .map(|s| s.borrow().addr);
         match gdi_surface {
             Some(addr) => {
