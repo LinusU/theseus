@@ -94,3 +94,58 @@ pub fn RegSetValueExW(
 ) -> u32 /* WIN32_ERROR */ {
     stub!(0)
 }
+
+/// Fake key handle handed out by RegCreateKeyExA; the registry isn't stored.
+const FAKE_HKEY: HKEY = 0x8000_0001;
+
+#[win32_derive::dllexport]
+pub fn RegCreateKeyExA(
+    ctx: &mut Context,
+    _hKey: HKEY,
+    lpSubKey: crate::Ptr<u8>,
+    _Reserved: u32,
+    _lpClass: u32,
+    _dwOptions: u32,
+    _samDesired: u32,
+    _lpSecurityAttributes: u32,
+    phkResult: crate::Ptr<HKEY>,
+    lpdwDisposition: crate::Ptr<u32>,
+) -> u32 /* WIN32_ERROR */ {
+    const REG_CREATED_NEW_KEY: u32 = 1;
+    let sub_key = ctx.memory.read_str(lpSubKey.addr);
+    log::warn!("RegCreateKeyExA({sub_key:?}): registry not stored");
+    phkResult.write(&mut ctx.memory, FAKE_HKEY);
+    if lpdwDisposition.addr != 0 {
+        lpdwDisposition.write(&mut ctx.memory, REG_CREATED_NEW_KEY);
+    }
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn RegDeleteKeyA(_ctx: &mut Context, _hKey: HKEY, _lpSubKey: u32 /* STR */) -> u32 /* WIN32_ERROR */ {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn RegDeleteValueA(_ctx: &mut Context, _hKey: HKEY, _lpValueName: u32 /* STR */) -> u32 /* WIN32_ERROR */ {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn RegSetValueExA(
+    ctx: &mut Context,
+    _hKey: HKEY,
+    lpValueName: crate::Ptr<u8>,
+    _Reserved: u32,
+    _dwType: u32, /* REG_VALUE_TYPE */
+    _lpData: u32,
+    _cbData: u32,
+) -> u32 /* WIN32_ERROR */ {
+    let name = if lpValueName.addr == 0 {
+        "(default)".to_string()
+    } else {
+        ctx.memory.read_str(lpValueName.addr).to_string()
+    };
+    log::warn!("RegSetValueExA({name:?}): registry not stored");
+    0
+}
