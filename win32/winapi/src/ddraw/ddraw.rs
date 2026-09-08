@@ -110,6 +110,7 @@ impl DirectDraw {
             primary: Default::default(),
             attached: Default::default(),
             pixels: None,
+            texture: None,
             palette: None,
         }));
         // TODO: move surf to ddraw
@@ -139,6 +140,10 @@ pub struct Surface {
 
     /// Address of pixel data.
     pub pixels: Option<u32>,
+
+    /// Host texture for a primary surface that has no attached back buffer to
+    /// borrow one from (created on first present).
+    pub texture: Option<host::Surface>,
 
     pub palette: Option<Rc<RefCell<Palette>>>,
 }
@@ -196,6 +201,36 @@ impl Surface {
             Target::Texture(texture) => {
                 texture.set_pixels(pixels32, self.width * 4);
             }
+        }
+    }
+
+    /// Present this surface's own pixel buffer to the window it targets, used
+    /// when an app draws directly to the primary surface (via Lock or Blt)
+    /// instead of flipping. No-op for non-primary surfaces.
+    pub fn present(&mut self, mem: &mut Memory) {
+        let Target::Window(window) = &self.target else {
+            return;
+        };
+        let window = window.clone();
+        let Some(pixels) = self.to_rgba(mem, &self.palette) else {
+            return;
+        };
+        let (width, height) = (self.width, self.height);
+        if let Some(back) = self.attached.clone() {
+            // Borrow the back buffer's texture rather than keep one of our own.
+            let mut back = back.borrow_mut();
+            let Target::Texture(texture) = &mut back.target else {
+                return;
+            };
+            texture.set_pixels(&pixels, width * 4);
+            window.borrow_mut().host.render(texture);
+        } else {
+            // A lone primary surface the program draws to directly.
+            let texture = self
+                .texture
+                .get_or_insert_with(|| window.borrow_mut().host.create_surface(width, height));
+            texture.set_pixels(&pixels, width * 4);
+            window.borrow_mut().host.render(texture);
         }
     }
 
