@@ -578,8 +578,8 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetBltStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetBltStatus(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
+        DD::OK // blits complete synchronously
     }
 
     #[win32_derive::dllexport]
@@ -610,8 +610,8 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFlipStatus(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetFlipStatus(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
+        DD::OK // flips complete synchronously
     }
 
     #[win32_derive::dllexport]
