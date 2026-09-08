@@ -822,7 +822,7 @@ pub mod IDirectDraw7 {
     }
 }
 
-const IID_IDIRECTDRAWSURFACE7: GUID = GUID::new(
+pub const IID_IDIRECTDRAWSURFACE7: GUID = GUID::new(
     0x06675a80,
     0x3b9b,
     0x11d2,
@@ -963,6 +963,10 @@ pub mod IDirectDrawSurface7 {
         };
         if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDIRECTDRAWSURFACE7 {
             ctx.memory.write::<u32>(ppv, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(surface) = state().surf.borrow().get(&this) {
+                surface.borrow_mut().refs += 1;
+            }
             return DD::OK;
         }
         ctx.memory.write::<u32>(ppv, 0);

@@ -218,3 +218,12 @@ Suspects worth a look when the backlog is otherwise blocked:
   attributed to absent content. Change: documented `@ms` vkey suffix and default
   `THESEUS_INJECT_AT_MS` in `doc/mm2.md`. Check: `check.sh: OK (fmt 0 files,
   whitespace)`. Next: external content or a fresh runtime/DirectDraw audit.
+- 2026-09-09 surface QueryInterface AddRef: What: `IDirectDrawSurface7::QueryInterface`
+  returned the surface pointer without AddRefing it, so a caller that released the
+  new pointer could drop the object too early. Repro: new unit test
+  `surface_query_interface_addrefs` in `win32/winapi/src/ddraw/ddraw.rs` (refs
+  stayed 1 before the fix). Change: `ddraw7.rs` now increments `surface.refs` for
+  matching IIDs and exports `IID_IDIRECTDRAWSURFACE7` for tests; added the test.
+  Check: `check.sh: OK (fmt 2 files, clippy+test winapi, build mm2, whitespace)`.
+  Next: other COM ref-count leaks in ddraw/d3d7 (`GetDDInterface`, `IDirect3D7`
+  and `IDirect3DDevice7` AddRef/Release).

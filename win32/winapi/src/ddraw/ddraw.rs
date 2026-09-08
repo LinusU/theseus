@@ -2202,4 +2202,64 @@ mod tests {
             DD::ERR_INVALIDPARAMS
         );
     }
+
+    #[test]
+    fn surface_query_interface_addrefs() {
+        // IDirectDrawSurface7::QueryInterface must AddRef the returned
+        // interface pointer; otherwise a Release on the new pointer would
+        // drop the object too early.
+        let mut ctx = context();
+        const SURF: u32 = 0x5000;
+        const PPV: u32 = 0x1000;
+        const RIID: u32 = 0x2000;
+
+        let mut surface = surf16(
+            DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: 0x40,
+                dwFourCC: 0,
+                dwRGBBitCount: 16,
+                dwRBitMask: 0xF800,
+                dwGBitMask: 0x07E0,
+                dwBBitMask: 0x001F,
+                dwRGBAlphaBitMask: 0,
+            },
+            test_window(),
+        );
+        surface.addr = SURF;
+        state()
+            .surf
+            .borrow_mut()
+            .insert(SURF, Rc::new(RefCell::new(surface)));
+
+        ctx.memory
+            .write(RIID, crate::ddraw::IID_IDIRECTDRAWSURFACE7);
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::QueryInterface(&mut ctx, SURF, RIID, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(SURF));
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+
+        // An unsupported interface zeros the output pointer and leaves the
+        // reference count unchanged.
+        let unknown =
+            crate::ddraw::GUID::new(0xdead_beef, 0xcafe, 0xbabe, [1, 2, 3, 4, 5, 6, 7, 8]);
+        ctx.memory.write(RIID + 0x20, unknown);
+        ctx.memory.write::<u32>(PPV, 0x42);
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::QueryInterface(&mut ctx, SURF, RIID + 0x20, PPV),
+            DD::E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0));
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+
+        // A bad output pointer is rejected before anything is written.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::QueryInterface(&mut ctx, SURF, RIID, 0xffff_fff0),
+            DD::ERR_INVALIDPARAMS
+        );
+
+        state().surf.borrow_mut().remove(&SURF);
+    }
 }
