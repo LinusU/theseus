@@ -76,6 +76,17 @@ pub fn set_trace(spec: &str) {
     *TRACE_SPEC.lock().unwrap() = spec.to_string();
 }
 
+/// Command-line arguments for the emulated program, excluding the program name.
+#[cfg(not(target_family = "wasm"))]
+pub fn args() -> Vec<String> {
+    std::env::args().skip(1).collect()
+}
+
+#[cfg(target_family = "wasm")]
+pub fn args() -> Vec<String> {
+    Vec::new()
+}
+
 pub fn init() {
     logger::init();
     LazyLock::force(&HOST);
