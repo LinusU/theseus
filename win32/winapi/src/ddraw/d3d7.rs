@@ -415,6 +415,9 @@ pub struct VertexBuffer {
 
 #[derive(Default)]
 pub struct D3DState {
+    /// IDirect3D7 top-level objects, tracked so AddRef/Release can manage
+    /// their lifetime instead of returning constant stub values.
+    pub d3d7_objects: RefCell<HashMap<u32, u32>>,
     pub devices: RefCell<HashMap<u32, Device>>,
     pub vertex_buffers: RefCell<HashMap<u32, VertexBuffer>>,
     /// Texture surface addresses already reported as never-written, so the
@@ -501,6 +504,9 @@ pub mod IDirect3D7 {
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if !d3d_state().d3d7_objects.borrow().contains_key(&this) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let out = if iid == IID_IUNKNOWN || iid == IID_IDirect3D7 {
             this
         } else {
@@ -515,17 +521,41 @@ pub mod IDirect3D7 {
         if out == 0 {
             return DD::E_NOINTERFACE;
         }
+        let mut objects = d3d_state().d3d7_objects.borrow_mut();
+        let refs = objects.entry(this).or_insert(1);
+        *refs += 1;
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        let mut objects = d3d_state().d3d7_objects.borrow_mut();
+        let refs = objects.entry(this).or_insert(1);
+        *refs += 1;
+        *refs
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        0
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let remaining = {
+            let objects = d3d_state().d3d7_objects.borrow();
+            let Some(refs) = objects.get(&this).copied() else {
+                return 0;
+            };
+            let remaining = refs.saturating_sub(1);
+            drop(objects);
+            let mut objects = d3d_state().d3d7_objects.borrow_mut();
+            if remaining == 0 {
+                objects.remove(&this);
+            } else {
+                objects.insert(this, remaining);
+            }
+            remaining
+        };
+        if remaining == 0 {
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
+        }
+        remaining
     }
 
     #[win32_derive::dllexport]
@@ -715,6 +745,7 @@ pub mod IDirect3D7 {
         }
         let addr = heap.try_alloc(&mut ctx.memory, 4)?;
         ctx.memory.write(addr, unsafe { VTABLE });
+        d3d_state().d3d7_objects.borrow_mut().insert(addr, 1);
         Some(addr)
     }
 }
@@ -3564,5 +3595,72 @@ mod tests {
         assert_eq!(vertex_size(0x004 | 0x040 | 0x200), 16 + 4 + 16);
         // D3DFVF_XYZB3 (3 blend weights)
         assert_eq!(vertex_size(0x00a), 12 + 3 * 4);
+    }
+
+    #[test]
+    fn d3d7_object_lifetime_addref_release() {
+        // IDirect3D7::QueryInterface/AddRef/Release now track a real ref
+        // count and free the object on the last release.
+        fn context() -> Context {
+            Context {
+                cpu: CPU::default(),
+                thread_handle: 0,
+                thread_id: 0,
+                memory: Memory::leak_new(0x20_000),
+                blocks: &[],
+                cache: BlockCache::default(),
+                recent: [Context::return_from_x86; 4],
+            }
+        }
+
+        let mut ctx = context();
+        d3d_state().d3d7_objects.borrow_mut().clear();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x10000);
+        }
+        unsafe {
+            IDirect3D7::VTABLE = 0x1234;
+        }
+
+        let mut k32 = crate::kernel32::lock();
+        let d3d = IDirect3D7::new(&mut ctx, &mut k32.process_heap).unwrap();
+        drop(k32);
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&d3d], 1);
+
+        // QI for the same IID AddRefs the returned pointer.
+        const RIID: u32 = 0x2000;
+        const PPV: u32 = 0x3000;
+        ctx.memory.write(RIID, IID_IDirect3D7);
+        assert_eq!(
+            IDirect3D7::QueryInterface(&mut ctx, d3d, RIID, PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(d3d));
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&d3d], 2);
+
+        // Unsupported IID leaves the ref count unchanged.
+        ctx.memory.write(
+            RIID + 0x20,
+            crate::ddraw::GUID::new(0xdead_beef, 0xcafe, 0xbabe, [1, 2, 3, 4, 5, 6, 7, 8]),
+        );
+        ctx.memory.write::<u32>(PPV + 0x20, 0x42);
+        assert_eq!(
+            IDirect3D7::QueryInterface(&mut ctx, d3d, RIID + 0x20, PPV + 0x20),
+            crate::ddraw::DD::E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV + 0x20), Some(0));
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&d3d], 2);
+
+        // AddRef/Release round-trip to zero frees the object.
+        assert_eq!(IDirect3D7::AddRef(&mut ctx, d3d), 3);
+        assert_eq!(IDirect3D7::Release(&mut ctx, d3d), 2);
+        assert_eq!(IDirect3D7::Release(&mut ctx, d3d), 1);
+        assert_eq!(IDirect3D7::Release(&mut ctx, d3d), 0);
+        assert!(!d3d_state().d3d7_objects.borrow().contains_key(&d3d));
+
+        // Releasing an unknown or already-freed pointer is a no-op.
+        assert_eq!(IDirect3D7::Release(&mut ctx, d3d), 0);
     }
 }

@@ -234,3 +234,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   rejects a null output pointer; added the test. Check: `check.sh: OK (fmt 2
   files, clippy+test winapi, build mm2, whitespace)`. Next: `IDirect3D7` and
   `IDirect3DDevice7` AddRef/Release stub leaks.
+- 2026-09-09 IDirect3D7 ref counting: What: `IDirect3D7::AddRef` and `Release`
+  returned stub constants (`1` and `0`) and never freed the object, so a
+  `QueryInterface`/`Release` pair from `IDirectDraw7::QueryInterface` would
+  leak. Repro: new unit test `d3d7_object_lifetime_addref_release` in
+  `win32/winapi/src/ddraw/d3d7.rs` (refs stayed 1 and the heap block leaked
+  before the fix). Change: `d3d7.rs` now tracks `d3d7_objects` ref counts,
+  AddRefs on `QueryInterface` and `AddRef`, and frees the heap block on the
+  last `Release`; updated `.devin/check.sh` to run `RUST_TEST_THREADS=1` so the
+  new test does not race the existing global-RefCell tests. Check:
+  `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
+  Next: `IDirect3DDevice7` and `IDirect3DVertexBuffer7` AddRef/Release.

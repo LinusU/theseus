@@ -71,7 +71,9 @@ for c in "${crates[@]:-}"; do [[ -n "$c" ]] && pkg_args+=(-p "$c"); done
 # 3. Lint and test the touched crates.
 if (( ${#crates[@]} > 0 )); then
     cargo clippy "${pkg_args[@]}" --all-targets -- -D warnings || fail "clippy (${crates[*]})"
-    THESEUS_HEADLESS=1 cargo test "${pkg_args[@]}" || fail "cargo test (${crates[*]})"
+    # Several winapi tests use global RefCell state; running them in parallel
+    # leads to "already borrowed" panics on multi-core hosts.
+    RUST_TEST_THREADS=1 THESEUS_HEADLESS=1 cargo test "${pkg_args[@]}" || fail "cargo test (${crates[*]})"
 fi
 
 # 4. Regenerate when the translator changed, then build the target.
