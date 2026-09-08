@@ -120,3 +120,36 @@ pub fn CompareStringW(
     }
     compare_ordering(a.cmp(&b))
 }
+
+#[win32_derive::dllexport]
+pub fn lstrcmpA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i32 {
+    let a = ctx.memory.read_str(lpString1.addr);
+    let b = ctx.memory.read_str(lpString2.addr);
+    match a.cmp(b) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn lstrcmpiA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> i32 {
+    let a = ctx.memory.read_str(lpString1.addr).to_ascii_lowercase();
+    let b = ctx.memory.read_str(lpString2.addr).to_ascii_lowercase();
+    match a.cmp(&b) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn lstrcpynA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>, iMaxLength: i32) -> u32 {
+    if iMaxLength <= 0 {
+        return lpString1.addr;
+    }
+    let src = ctx.memory.read_str(lpString2.addr).to_string();
+    let dst = lpString1.addr;
+    crate::kernel32::write_cstr(ctx, lpString1, iMaxLength as u32, src.as_bytes());
+    dst
+}
