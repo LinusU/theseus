@@ -71,6 +71,11 @@ pub enum Message {
     /// a press whose release happened while unfocused cannot stick down.
     #[cfg(not(target_family = "wasm"))]
     FocusLost,
+    /// The window gained keyboard focus. Delivered as the Win32 activation
+    /// sequence so an app that paused or unacquired input on focus loss
+    /// resumes.
+    #[cfg(not(target_family = "wasm"))]
+    FocusGained,
     #[cfg(not(target_family = "wasm"))] // no paint on web, browser does painting
     Paint,
     MouseDown(MouseMessage),

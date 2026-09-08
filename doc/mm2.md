@@ -126,6 +126,14 @@ aspect, and mouse coordinates map back to guest space. `THESEUS_FULLSCREEN=1`
 starts in native fullscreen and Alt+Enter toggles it at runtime; the chord is
 consumed by the host and never reaches the game.
 
+The host asks macOS to activate the process at launch by setting SDL's
+`SDL_HINT_MAC_BACKGROUND_APP` to `0` before `SDL_Init`. SDL 3.4 defaults that
+hint to `1` on macOS 14 and later, which leaves a non-bundled binary behind the
+terminal it was started from: an inactive app receives no keyboard events at
+all, while clicks still reach the window through the click-through hint. Focus
+changes are delivered as the Win32 activation sequence (`WM_ACTIVATEAPP`,
+`WM_ACTIVATE`, `WM_SETFOCUS`/`WM_KILLFOCUS`) on both edges.
+
 Debug environment knobs, all optional:
 
 - `THESEUS_HEADLESS=1` — run without an SDL window.

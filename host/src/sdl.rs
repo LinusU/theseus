@@ -347,6 +347,9 @@ impl MainThread {
                 SDL_EventType::WINDOW_FOCUS_LOST => {
                     return Some(host::Message::FocusLost);
                 }
+                SDL_EventType::WINDOW_FOCUS_GAINED => {
+                    return Some(host::Message::FocusGained);
+                }
                 _ => {}
             }
             //log::warn!("todo: handle sdl event: {:#x?}", typ);
@@ -360,6 +363,15 @@ impl MainThread {
         unsafe {
             if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_NO_SIGNAL_HANDLERS, c"1".as_ptr()) {
                 log::warn!("SDL_SetHint(NO_SIGNAL_HANDLERS) failed: {}", sdl_error());
+            }
+            // On macOS 14+ SDL no longer activates a non-bundled process at
+            // launch (the hint defaults to "1" there), and SDL_RaiseWindow's
+            // deprecated activation call is ignored, so the game window came
+            // up behind the terminal and never received a single key event.
+            // Ask for foreground activation explicitly; this must precede
+            // SDL_Init to take effect.
+            if !sdl::hints::SDL_SetHint(sdl::hints::SDL_HINT_MAC_BACKGROUND_APP, c"0".as_ptr()) {
+                log::warn!("SDL_SetHint(MAC_BACKGROUND_APP) failed: {}", sdl_error());
             }
             // SDL's default is to swallow the click that focuses an
             // unfocused window, which makes the first click on the game do
@@ -1324,6 +1336,34 @@ mod tests {
                 main.msg_from_event(&event),
                 Some(host::Message::Paint)
             ));
+        }
+    }
+
+    /// Both focus edges reach the guest: losing focus releases held input
+    /// and gaining it back re-activates, so neither may be dropped.
+    #[test]
+    fn focus_edges_translate_to_focus_messages() {
+        let main = main_thread();
+        for (typ, gained) in [
+            (sdl::events::SDL_EventType::WINDOW_FOCUS_LOST, false),
+            (sdl::events::SDL_EventType::WINDOW_FOCUS_GAINED, true),
+        ] {
+            let mut event = sdl::events::SDL_Event::default();
+            event.window = sdl::events::SDL_WindowEvent {
+                r#type: typ,
+                ..Default::default()
+            };
+            let msg = main.msg_from_event(&event);
+            assert_eq!(
+                matches!(msg, Some(host::Message::FocusGained)),
+                gained,
+                "{typ:?}"
+            );
+            assert_eq!(
+                matches!(msg, Some(host::Message::FocusLost)),
+                !gained,
+                "{typ:?}"
+            );
         }
     }
 

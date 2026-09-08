@@ -424,6 +424,43 @@ impl MessageQueue {
             }
         }
 
+        // A focus change is the Win32 activation sequence, several messages
+        // for one host event: WM_ACTIVATE/WM_ACTIVATEAPP so an app that
+        // pauses or unacquires input while inactive resumes when focus
+        // returns, then WM_SETFOCUS/WM_KILLFOCUS.
+        #[cfg(not(target_family = "wasm"))]
+        if let host::Message::FocusLost | host::Message::FocusGained = msg {
+            let Some(window) = &self.window else {
+                return;
+            };
+            let hwnd = window.borrow().hwnd;
+            let sequence: [(WM, WPARAM); 3] = if matches!(msg, host::Message::FocusGained) {
+                // WA_ACTIVE
+                [(WM::ACTIVATEAPP, 1), (WM::ACTIVATE, 1), (WM::SETFOCUS, 0)]
+            } else {
+                // WA_INACTIVE
+                [(WM::ACTIVATE, 0), (WM::ACTIVATEAPP, 0), (WM::KILLFOCUS, 0)]
+            };
+            let time = host::host().time();
+            for (message, wParam) in sequence {
+                // lParam names the other window in the exchange, which is
+                // outside the single-window model.
+                let msg = MSG {
+                    hwnd,
+                    message: message as u32,
+                    wParam,
+                    lParam: 0,
+                    time,
+                    pt: POINT::default(),
+                };
+                if *LOG_MESSAGES {
+                    log::info!("{:#x?}", msg);
+                }
+                self.messages.push_back(msg);
+            }
+            return;
+        }
+
         let Some(msg) = self.msg_from_message(msg) else {
             return;
         };
@@ -523,21 +560,11 @@ impl MessageQueue {
                 pt: POINT::default(),
             },
             #[cfg(not(target_family = "wasm"))]
-            // lParam is unused; wParam is the window gaining focus, which is
-            // outside the single-window model.
-            FocusLost => MSG {
-                hwnd,
-                message: WM::KILLFOCUS as u32,
-                wParam: 0,
-                lParam: 0,
-                time: host::host().time(),
-                pt: POINT::default(),
-            },
-            #[cfg(not(target_family = "wasm"))]
-            // Paint is translated into a dirty flag in enqueue_message and
-            // Quit is a thread message handled above; a stray event here is
-            // dropped rather than panicking the host.
-            Paint | Quit => return None,
+            // Paint is translated into a dirty flag, focus changes into their
+            // activation sequences, both in enqueue_message, and Quit is a
+            // thread message handled above; a stray event here is dropped
+            // rather than panicking the host.
+            Paint | Quit | FocusLost | FocusGained => return None,
         })
     }
 }
@@ -1046,6 +1073,76 @@ mod tests {
         assert_eq!(msgs[0].wParam, 0);
         assert_eq!(msgs[0].lParam, (200 << 16) | 320);
 
+        state().window.borrow_mut().take();
+    }
+
+    /// Focus loss and gain each post the full activation sequence, in the
+    /// order Windows uses, so a game that pauses on WM_ACTIVATEAPP(FALSE)
+    /// gets the matching WM_ACTIVATEAPP(TRUE) when focus returns.
+    #[test]
+    fn focus_edges_post_the_activation_sequence() {
+        let _guard = crate::user32::WINDOW_STATE_LOCK.lock().unwrap();
+        // enqueue_message consults the message-tracing flag, which reads the
+        // trace spec; no test harness has installed one.
+        crate::trace::init("");
+        let window = Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: String::new(),
+            enabled: true,
+            visible: true,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            pixels: None,
+            host: unsafe { std::mem::zeroed() },
+            surface: None,
+        }));
+        state().window.borrow_mut().replace(window.clone());
+        // Host events are addressed through the queue's own window handle.
+        state().message_queue.borrow_mut().window = Some(window);
+        take_messages();
+
+        state()
+            .message_queue
+            .borrow_mut()
+            .enqueue_message(host::Message::FocusLost);
+        let msgs = take_messages();
+        let got: Vec<(u32, u32)> = msgs.iter().map(|m| (m.message, m.wParam)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (WM::ACTIVATE as u32, 0),
+                (WM::ACTIVATEAPP as u32, 0),
+                (WM::KILLFOCUS as u32, 0),
+            ]
+        );
+        assert!(msgs.iter().all(|m| m.hwnd == HWND::from_raw(1)));
+
+        state()
+            .message_queue
+            .borrow_mut()
+            .enqueue_message(host::Message::FocusGained);
+        let msgs = take_messages();
+        let got: Vec<(u32, u32)> = msgs.iter().map(|m| (m.message, m.wParam)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (WM::ACTIVATEAPP as u32, 1),
+                (WM::ACTIVATE as u32, 1),
+                (WM::SETFOCUS as u32, 0),
+            ]
+        );
+
+        state().message_queue.borrow_mut().window = None;
         state().window.borrow_mut().take();
     }
 }
