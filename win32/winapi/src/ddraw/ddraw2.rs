@@ -375,8 +375,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetBltStatus(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetBltStatus(ctx, this)
+    pub fn GetBltStatus(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        IDirectDrawSurface::GetBltStatus(ctx, this, dwFlags)
     }
 
     #[win32_derive::dllexport]
@@ -405,8 +405,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFlipStatus(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetFlipStatus(ctx, this)
+    pub fn GetFlipStatus(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        IDirectDrawSurface::GetFlipStatus(ctx, this, dwFlags)
     }
 
     #[win32_derive::dllexport]
