@@ -295,6 +295,7 @@ impl Surface {
         let Some(pixels) = self.to_rgba(mem, &self.palette) else {
             return;
         };
+        dump_frame(&pixels, self.width, self.height);
         let (width, height) = (self.width, self.height);
         if let Some(back) = self.attached.clone() {
             // Borrow the back buffer's texture rather than keep one of our own.
@@ -324,12 +325,63 @@ impl Surface {
         if self.palette.is_some() {
             back.update_texture(mem, &self.palette);
         }
+        if dumping_frames() {
+            if let Some(pixels) = back.to_rgba(mem, &self.palette) {
+                dump_frame(&pixels, back.width, back.height);
+            }
+        }
         let Target::Texture(texture) = &mut back.target else {
             unreachable!()
         };
 
         let mut window = window.borrow_mut();
         window.host.render(texture);
+    }
+}
+
+/// Frame dumping for headless debugging: with THESEUS_DUMP_FRAMES=<dir>, every
+/// Nth presented frame (N from THESEUS_DUMP_EVERY, default 30) is written
+/// there as a PPM image, up to 100 files.
+#[cfg(not(target_family = "wasm"))]
+fn dump_dir() -> Option<&'static str> {
+    static DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| std::env::var("THESEUS_DUMP_FRAMES").ok())
+        .as_deref()
+}
+
+#[cfg(target_family = "wasm")]
+fn dump_dir() -> Option<&'static str> {
+    None
+}
+
+fn dumping_frames() -> bool {
+    dump_dir().is_some()
+}
+
+fn dump_frame(rgba: &[u8], width: u32, height: u32) {
+    let Some(dir) = dump_dir() else {
+        return;
+    };
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static EVERY: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let every = *EVERY.get_or_init(|| {
+        std::env::var("THESEUS_DUMP_EVERY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(30)
+    });
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n % every != 0 || n / every >= 100 {
+        return;
+    }
+    let mut out = format!("P6\n{width} {height}\n255\n").into_bytes();
+    for pixel in rgba.chunks_exact(4) {
+        out.extend_from_slice(&pixel[..3]);
+    }
+    let path = format!("{dir}/frame_{:04}.ppm", n / every);
+    if let Err(err) = std::fs::write(&path, out) {
+        log::warn!("dump_frame: {path}: {err}");
     }
 }
 
