@@ -169,6 +169,99 @@ impl<'a> CodeGen<'a> {
             Fchs => {
                 self.line(self.fpu_set_reg(0, format!("-{}", self.fpu_get_reg(0))));
             }
+            Fabs => {
+                self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
+            }
+            Frndint => {
+                self.line(self.fpu_set_reg(
+                    0,
+                    format!("ctx.cpu.fpu.round({})", self.fpu_get_reg(0)),
+                ));
+            }
+            Fscale => {
+                // st0 *= 2^trunc(st1)
+                self.line(self.fpu_set_reg(
+                    0,
+                    format!(
+                        "{} * 2f64.powi({}.trunc() as i32)",
+                        self.fpu_get_reg(0),
+                        self.fpu_get_reg(1)
+                    ),
+                ));
+            }
+            F2xm1 => {
+                self.line(self.fpu_set_reg(0, format!("{}.exp2() - 1.0", self.fpu_get_reg(0))));
+            }
+            Fyl2x | Fyl2xp1 => {
+                // st1 = st1 * log2(st0 [+ 1]); pop
+                let plus = if instr.mnemonic() == Fyl2xp1 { " + 1.0" } else { "" };
+                self.line(format!(
+                    "let t = {} * ({}{plus}).log2();",
+                    self.fpu_get_reg(1),
+                    self.fpu_get_reg(0)
+                ));
+                self.line("ctx.cpu.fpu.pop();");
+                self.line(self.fpu_set_reg(0, "t".into()));
+            }
+            Fsincos => {
+                self.line(format!("let t = {};", self.fpu_get_reg(0)));
+                self.line(self.fpu_set_reg(0, "t.sin()".into()));
+                self.line("ctx.cpu.fpu.push(t.cos());");
+            }
+            Fptan => {
+                self.line(self.fpu_set_reg(0, format!("{}.tan()", self.fpu_get_reg(0))));
+                self.line("ctx.cpu.fpu.push(1.0);");
+            }
+            Fldpi => self.line("ctx.cpu.fpu.push(std::f64::consts::PI);"),
+            Fldl2e => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG2_E);"),
+            Fldl2t => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG2_10);"),
+            Fldlg2 => self.line("ctx.cpu.fpu.push(std::f64::consts::LOG10_2);"),
+            Fldln2 => self.line("ctx.cpu.fpu.push(std::f64::consts::LN_2);"),
+            Fnop | Ffree => {}
+            Fincstp => self.line("ctx.cpu.fpu.st_top = (ctx.cpu.fpu.st_top + 1) % 8;"),
+            Fdecstp => self.line("ctx.cpu.fpu.st_top = (ctx.cpu.fpu.st_top + 7) % 8;"),
+
+            // Integer-operand arithmetic: st0 op= (int)mem
+            Fiadd | Fisub | Fisubr | Fidiv | Fidivr => {
+                let size = op_size(instr, 0);
+                let mem = format!("({} as i{size} as f64)", self.get_op(instr, 0));
+                let st0 = self.fpu_get_reg(0);
+                let expr = match instr.mnemonic() {
+                    Fiadd => format!("{st0} + {mem}"),
+                    Fisub => format!("{st0} - {mem}"),
+                    Fisubr => format!("{mem} - {st0}"),
+                    Fidiv => format!("{st0} / {mem}"),
+                    Fidivr => format!("{mem} / {st0}"),
+                    _ => unreachable!(),
+                };
+                self.line(self.fpu_set_reg(0, expr));
+            }
+            Ficom | Ficomp => {
+                let size = op_size(instr, 0);
+                self.line(format!(
+                    "ctx.cpu.fpu.cmp = {}.total_cmp(&({} as i{size} as f64));",
+                    self.fpu_get_reg(0),
+                    self.get_op(instr, 0)
+                ));
+                if instr.mnemonic() == Ficomp {
+                    self.line("ctx.cpu.fpu.pop();");
+                }
+            }
+            Ftst => {
+                self.line(format!(
+                    "ctx.cpu.fpu.cmp = {}.total_cmp(&0.0);",
+                    self.fpu_get_reg(0)
+                ));
+            }
+            Fcompp | Fucompp => {
+                self.line(format!(
+                    "ctx.cpu.fpu.cmp = {}.total_cmp(&{});",
+                    self.fpu_get_reg(0),
+                    self.fpu_get_reg(1)
+                ));
+                self.line("ctx.cpu.fpu.pop();");
+                self.line("ctx.cpu.fpu.pop();");
+            }
 
             Fsin => {
                 self.line(self.fpu_set_reg(0, format!("{}.sin()", self.fpu_get_reg(0))));
@@ -187,7 +280,7 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_op(instr, 1, "t".into()));
             }
 
-            Fcom | Fcomp => {
+            Fcom | Fcomp | Fucom | Fucomp => {
                 let (arg0, arg1) = match instr.op_count() {
                     1 => (self.fpu_get_reg(0), self.fpu_get_op(instr, 0)),
                     2 => (self.fpu_get_op(instr, 0), self.fpu_get_op(instr, 1)),
@@ -197,7 +290,7 @@ impl<'a> CodeGen<'a> {
                     "ctx.cpu.fpu.cmp = {}.total_cmp(&({}));",
                     arg0, arg1
                 ));
-                if instr.mnemonic() == Fcomp {
+                if matches!(instr.mnemonic(), Fcomp | Fucomp) {
                     self.line("ctx.cpu.fpu.pop();");
                 }
             }
