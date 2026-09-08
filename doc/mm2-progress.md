@@ -158,3 +158,25 @@ Suspects worth a look when the backlog is otherwise blocked:
   whitespace)`; `probe-input.sh 8` -> `windows=no-accessibility-permission`.
   Next: SF race path is unobservable headless (LOCATION value text is a
   missing bitmap); remaining items are external content or need a human.
+- 2026-09-08 rainbow noise sheets = GetSurfaceDesc: What: a London CRUISE
+  roam (`RACES -> CRUISE -> SELECT VEHICLE -> GO DRIVE`, hold throttle)
+  showed large translucent rainbow-noise quads around the car. Probe: the
+  draws are TRIANGLEFAN particle billboards sampling one narrow region of a
+  256x256 A4R4G4B4 atlas; the dumped atlas was coherent 4444 in its bottom
+  half but its top half decoded correctly only as RGB565 — mixed-format
+  surface data. Cause: the game calls `GetSurfaceDesc` right after
+  `CreateSurface`, then `Lock`s and writes the texture; our
+  `IDirectDrawSurface7::GetSurfaceDesc` reported only WIDTH|HEIGHT, so with
+  no PIXELFORMAT returned the game packed its texels as 565. Change:
+  `GetSurfaceDesc` now reports CAPS, PIXELFORMAT, PITCH/LPSURFACE when the
+  surface has storage, MIPMAPCOUNT, BACKBUFFERCOUNT, and color keys
+  (`ddraw7.rs`); `Surface::to_rgba`/`write_rgba` (the GetDC/ReleaseDC
+  path) convert through the declared channel masks instead of hardcoding
+  565 (`ddraw.rs`); `THESEUS_TEX_DUMP` also writes `_a.ppm` (alpha) and
+  `_565.ppm` (raw 565 view) (`d3d7.rs`). Check: `check.sh: OK (fmt 3 files,
+  clippy+test winapi, build mm2, whitespace)`; 2 new unit tests; the atlas
+  now dumps fully coherent 4444 (foliage sprites + digit cells) and roam
+  frames show soft translucent light sprites instead of noise sheets.
+  Next: the giant flat pale polygon is a distant/fogged surface sampling a
+  small UV window of a valid texture — likely authentic; remaining items
+  are external content or need a human.

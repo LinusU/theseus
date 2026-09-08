@@ -427,17 +427,27 @@ impl Surface {
                 buf.into()
             }
             2 => {
-                // RGB565, the standard 16-bit display format.
+                // Decode through the surface's declared channel masks so
+                // alpha-bearing 1555/4444 textures survive the RGBA round
+                // trip; a plain 565 surface lands on the same values.
+                let pf = &self.pixel_format;
                 let mut buf = Vec::with_capacity(pixels.len() * 2);
                 for pixel in pixels.chunks_exact(2) {
-                    let pixel = u16::from_le_bytes([pixel[0], pixel[1]]);
-                    let (r, g, b) = (pixel >> 11, (pixel >> 5) & 0x3f, pixel & 0x1f);
-                    // Replicate the high bits into the low ones so full-scale
-                    // values stay full-scale.
-                    buf.push((r << 3 | r >> 2) as u8);
-                    buf.push((g << 2 | g >> 4) as u8);
-                    buf.push((b << 3 | b >> 2) as u8);
-                    buf.push(0);
+                    let v = u16::from_le_bytes([pixel[0], pixel[1]]) as u32;
+                    if pf.dwFlags & 0x40 != 0 {
+                        buf.push(mask_to_u8(v, pf.dwRBitMask, 0));
+                        buf.push(mask_to_u8(v, pf.dwGBitMask, 0));
+                        buf.push(mask_to_u8(v, pf.dwBBitMask, 0));
+                        buf.push(mask_to_u8(v, pf.dwRGBAlphaBitMask, 255));
+                    } else {
+                        let (r, g, b) = (v >> 11, (v >> 5) & 0x3f, v & 0x1f);
+                        // Replicate the high bits into the low ones so
+                        // full-scale values stay full-scale.
+                        buf.push((r << 3 | r >> 2) as u8);
+                        buf.push((g << 2 | g >> 4) as u8);
+                        buf.push((b << 3 | b >> 2) as u8);
+                        buf.push(0);
+                    }
                 }
                 buf.into()
             }
@@ -450,15 +460,25 @@ impl Surface {
     }
 
     /// Convert the RGBA scratch buffer a DC draws in back to this surface's
-    /// own depth. Only 16bpp RGB565 is supported; other depths warn and leave
-    /// the surface unchanged.
+    /// own format, honoring the declared channel masks so alpha-bearing
+    /// 1555/4444 textures keep their layout. Other depths warn and leave the
+    /// surface unchanged.
     pub fn write_rgba(&mut self, mem: &mut Memory, rgba: &[u8], dst: u32) {
         match self.bytes_per_pixel {
             2 => {
+                let pf = &self.pixel_format;
+                let masked = pf.dwFlags & 0x40 != 0;
                 for (i, px) in rgba.chunks_exact(4).enumerate() {
-                    let v = ((px[0] as u32 >> 3) << 11)
-                        | ((px[1] as u32 >> 2) << 5)
-                        | (px[2] as u32 >> 3);
+                    let v = if masked {
+                        u8_to_mask(px[0], pf.dwRBitMask)
+                            | u8_to_mask(px[1], pf.dwGBitMask)
+                            | u8_to_mask(px[2], pf.dwBBitMask)
+                            | u8_to_mask(px[3], pf.dwRGBAlphaBitMask)
+                    } else {
+                        ((px[0] as u32 >> 3) << 11)
+                            | ((px[1] as u32 >> 2) << 5)
+                            | (px[2] as u32 >> 3)
+                    };
                     mem.write::<u16>(dst + i as u32 * 2, v as u16);
                 }
             }
@@ -1578,11 +1598,15 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ColorKey, DirectDraw, PALETTEENTRY, PixelFmt, RECT, expand_palettized, lock_offset,
-        write_blit, write_blit_convert,
+        ColorKey, DirectDraw, PALETTEENTRY, PixelFmt, RECT, Surface, Target, expand_palettized,
+        lock_offset, write_blit, write_blit_convert,
     };
     use crate::{
-        ddraw::{state, types::DD},
+        Ptr,
+        ddraw::{
+            state,
+            types::{DD, DDPIXELFORMAT, DDSCAPS2, DDSD, DDSURFACEDESC2},
+        },
         user32::{HWND, Window},
     };
     use runtime::{BlockCache, CPU, Context, Memory};
@@ -1645,6 +1669,103 @@ mod tests {
         };
         ddraw.set_cooperative_level(HWND::null(), 0x08);
         assert!(ddraw.window.is_none());
+    }
+
+    /// A 2x1 surface whose pixels live at `PIXELS` in `ctx.memory`, in the
+    /// given 16bpp channel layout.
+    fn surf16(pixel_format: DDPIXELFORMAT, target: Rc<RefCell<Window>>) -> Surface {
+        Surface {
+            addr: 0,
+            refs: 1,
+            width: 2,
+            height: 1,
+            bytes_per_pixel: 2,
+            target: Target::Window(target),
+            primary: None,
+            attached: None,
+            attachments: Vec::new(),
+            pixels: Some(0x2000),
+            palette: None,
+            clipper: None,
+            src_color_key: None,
+            dst_color_key: None,
+            caps: DDSCAPS2::default(),
+            pixel_format,
+            private_data: Default::default(),
+            uniqueness: 1,
+            priority: 0,
+            max_lod: 0,
+        }
+    }
+
+    #[test]
+    fn dc_rgba_round_trip_uses_the_surfaces_channel_masks() {
+        // GetDC exposes a 2bpp surface as an RGBA buffer and ReleaseDC packs
+        // it back; both must use the surface's declared masks, not RGB565,
+        // or alpha-bearing textures (1555/4444) come back scrambled.
+        let mut ctx = context();
+        let window = test_window();
+        let fmt = |r: u32, g: u32, b: u32, a: u32| DDPIXELFORMAT {
+            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+            dwFlags: 0x41, // DDPF_RGB | DDPF_ALPHAPIXELS
+            dwFourCC: 0,
+            dwRGBBitCount: 16,
+            dwRBitMask: r,
+            dwGBitMask: g,
+            dwBBitMask: b,
+            dwRGBAlphaBitMask: a,
+        };
+        for (pixfmt, value) in [
+            (fmt(0xF800, 0x07E0, 0x001F, 0x0000), 0xACE1u16), // RGB565
+            (fmt(0x7C00, 0x03E0, 0x001F, 0x8000), 0xB54Au16), // A1R5G5B5
+            (fmt(0x0F00, 0x00F0, 0x000F, 0xF000), 0xF123u16), // A4R4G4B4
+        ] {
+            let mut surf = surf16(pixfmt, window.clone());
+            ctx.memory.write::<u16>(0x2000, value);
+            let rgba = surf.to_rgba(&ctx.memory, &None).unwrap().into_owned();
+            surf.write_rgba(&mut ctx.memory, &rgba, 0x3000);
+            assert_eq!(ctx.memory.read::<u16>(0x3000), value);
+        }
+    }
+
+    #[test]
+    fn get_surface_desc_reports_the_surfaces_pixel_format() {
+        // MM2 queries GetSurfaceDesc before uploading textures; the desc must
+        // carry the surface's real pixel format or the game packs texels in a
+        // layout the sampler cannot read.
+        let mut ctx = context();
+        let fmt = DDPIXELFORMAT {
+            dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+            dwFlags: 0x41, // DDPF_RGB | DDPF_ALPHAPIXELS
+            dwFourCC: 0,
+            dwRGBBitCount: 16,
+            dwRBitMask: 0x0F00,
+            dwGBitMask: 0x00F0,
+            dwBBitMask: 0x000F,
+            dwRGBAlphaBitMask: 0xF000,
+        };
+        let surf = surf16(fmt.clone(), test_window());
+        state()
+            .surf
+            .borrow_mut()
+            .insert(0x5000, Rc::new(RefCell::new(surf)));
+        // The caller sets dwSize before the call, as the API requires.
+        ctx.memory
+            .write::<u32>(0x4000, std::mem::size_of::<DDSURFACEDESC2>() as u32);
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::GetSurfaceDesc(&mut ctx, 0x5000, 0x4000),
+            DD::OK
+        );
+        let desc = Ptr::<DDSURFACEDESC2>::new(0x4000)
+            .read(&ctx.memory)
+            .unwrap();
+        assert!(desc.dwFlags.contains(DDSD::PIXELFORMAT | DDSD::CAPS));
+        assert_eq!(desc.ddpfPixelFormat.dwRBitMask, 0x0F00);
+        assert_eq!(desc.ddpfPixelFormat.dwRGBAlphaBitMask, 0xF000);
+        assert!(desc.dwFlags.contains(DDSD::LPSURFACE | DDSD::PITCH));
+        assert_eq!(desc.lpSurface, 0x2000);
+        assert_eq!(desc.lPitch_dwLinearSize, 4);
+        state().surf.borrow_mut().remove(&0x5000);
     }
 
     #[test]
