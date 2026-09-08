@@ -63,14 +63,14 @@ pub fn FindResourceA(ctx: &mut Context, _hModule: HMODULE, lpName: Ptr<u8>, lpTy
     let name = if is_intresource(lpName.addr) {
         exe::ResourceName::Id(lpName.addr)
     } else {
-        name_str = widestring::U16String::from_str(ctx.memory.read_str(lpName.addr));
+        name_str = widestring::U16String::from_str(&ctx.memory.read_str(lpName.addr));
         exe::ResourceName::Name(&name_str)
     };
     let type_str;
     let typ = if is_intresource(lpType.addr) {
         exe::ResourceName::Id(lpType.addr)
     } else {
-        type_str = widestring::U16String::from_str(ctx.memory.read_str(lpType.addr));
+        type_str = widestring::U16String::from_str(&ctx.memory.read_str(lpType.addr));
         exe::ResourceName::Name(&type_str)
     };
     let Some(buf) = kernel32::lock().find_resource(ctx, typ, name) else {
