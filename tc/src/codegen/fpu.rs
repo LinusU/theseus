@@ -166,6 +166,9 @@ impl<'a> CodeGen<'a> {
                 ));
             }
 
+            Fxam => {
+                self.line(format!("ctx.cpu.fpu.xam({});", self.fpu_get_reg(0)));
+            }
             Fchs => {
                 self.line(self.fpu_set_reg(0, format!("-{}", self.fpu_get_reg(0))));
             }
@@ -239,7 +242,7 @@ impl<'a> CodeGen<'a> {
             Ficom | Ficomp => {
                 let size = op_size(instr, 0);
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&({} as i{size} as f64));",
+                    "ctx.cpu.fpu.set_cmp({}.total_cmp(&({} as i{size} as f64)));",
                     self.fpu_get_reg(0),
                     self.get_op(instr, 0)
                 ));
@@ -249,13 +252,13 @@ impl<'a> CodeGen<'a> {
             }
             Ftst => {
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&0.0);",
+                    "ctx.cpu.fpu.set_cmp({}.total_cmp(&0.0));",
                     self.fpu_get_reg(0)
                 ));
             }
             Fcompp | Fucompp => {
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&{});",
+                    "ctx.cpu.fpu.set_cmp({}.total_cmp(&{}));",
                     self.fpu_get_reg(0),
                     self.fpu_get_reg(1)
                 ));
@@ -287,7 +290,7 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&({}));",
+                    "ctx.cpu.fpu.set_cmp({}.total_cmp(&({})));",
                     arg0, arg1
                 ));
                 if matches!(instr.mnemonic(), Fcomp | Fucomp) {
