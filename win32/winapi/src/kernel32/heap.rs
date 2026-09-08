@@ -175,10 +175,9 @@ fn process_heap_realloc(ctx: &mut Context, addr: u32, new_size: u32, zero_init: 
     let old_size = heap.size(&mut ctx.memory, addr);
     let new_addr = heap.alloc(&mut ctx.memory, new_size);
     let copy = old_size.min(new_size) as usize;
-    ctx.memory.bytes.copy_within(
-        addr as usize..addr as usize + copy,
-        new_addr as usize,
-    );
+    ctx.memory
+        .bytes
+        .copy_within(addr as usize..addr as usize + copy, new_addr as usize);
     if zero_init && new_size > old_size {
         ctx.memory[new_addr + old_size..new_addr + new_size].fill(0);
     }

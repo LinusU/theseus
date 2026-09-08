@@ -166,7 +166,10 @@ impl Registry {
                         .collect(),
                 )
             } else {
-                let s = value.trim_matches('"').replace("\\\\", "\\").replace("\\\"", "\"");
+                let s = value
+                    .trim_matches('"')
+                    .replace("\\\\", "\\")
+                    .replace("\\\"", "\"");
                 Value::Sz(s)
             };
             self.set(key, name, value);
@@ -225,7 +228,13 @@ pub fn GetUserNameA(
     true
 }
 
-fn open_key(ctx: &mut Context, hkey: HKEY, sub_key: &str, create: bool, phkResult: Ptr<HKEY>) -> u32 {
+fn open_key(
+    ctx: &mut Context,
+    hkey: HKEY,
+    sub_key: &str,
+    create: bool,
+    phkResult: Ptr<HKEY>,
+) -> u32 {
     let mut lock = registry();
     let registry = lock.as_mut().unwrap();
     let Some(path) = registry.resolve(hkey, sub_key) else {
@@ -391,7 +400,14 @@ pub fn RegQueryValueExW(
     query_value(ctx, hKey, &name, lpType, lpData, lpcbData)
 }
 
-fn set_value(ctx: &mut Context, hkey: HKEY, name: &str, reg_type: u32, data: u32, size: u32) -> u32 {
+fn set_value(
+    ctx: &mut Context,
+    hkey: HKEY,
+    name: &str,
+    reg_type: u32,
+    data: u32,
+    size: u32,
+) -> u32 {
     let bytes = ctx.memory[data..][..size as usize].to_vec();
     let value = match reg_type {
         REG_SZ | 2 /* REG_EXPAND_SZ */ => {
@@ -460,14 +476,19 @@ pub fn RegDeleteKeyA(ctx: &mut Context, hKey: HKEY, lpSubKey: Ptr<u8>) -> u32 /*
 }
 
 #[win32_derive::dllexport]
-pub fn RegDeleteValueA(ctx: &mut Context, hKey: HKEY, lpValueName: Ptr<u8>) -> u32 /* WIN32_ERROR */ {
+pub fn RegDeleteValueA(ctx: &mut Context, hKey: HKEY, lpValueName: Ptr<u8>) -> u32 /* WIN32_ERROR */
+{
     let name = read_opt_str(ctx, lpValueName).to_ascii_lowercase();
     let mut lock = registry();
     let registry = lock.as_mut().unwrap();
     let Some(path) = registry.handles.get(&hKey).cloned() else {
         return ERROR_FILE_NOT_FOUND;
     };
-    match registry.keys.get_mut(&normalize(&path)).and_then(|values| values.remove(&name)) {
+    match registry
+        .keys
+        .get_mut(&normalize(&path))
+        .and_then(|values| values.remove(&name))
+    {
         Some(_) => ERROR_SUCCESS,
         None => ERROR_FILE_NOT_FOUND,
     }

@@ -142,7 +142,13 @@ pub fn SetViewportOrgEx(ctx: &mut Context, _hdc: HDC, _x: i32, _y: i32, lppt: Pt
 }
 
 #[win32_derive::dllexport]
-pub fn OffsetViewportOrgEx(ctx: &mut Context, _hdc: HDC, _x: i32, _y: i32, lppt: Ptr<POINT>) -> bool {
+pub fn OffsetViewportOrgEx(
+    ctx: &mut Context,
+    _hdc: HDC,
+    _x: i32,
+    _y: i32,
+    lppt: Ptr<POINT>,
+) -> bool {
     if lppt.addr != 0 {
         lppt.write(&mut ctx.memory, POINT::default());
     }
@@ -225,7 +231,8 @@ pub fn RectVisible(_ctx: &mut Context, _hdc: HDC, _lprect: Ptr<RECT>) -> bool {
 
 #[win32_derive::dllexport]
 pub fn TextOutA(ctx: &mut Context, _hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, c: i32) -> bool {
-    let text = String::from_utf8_lossy(&ctx.memory[lpString.addr..][..c.max(0) as usize]).to_string();
+    let text =
+        String::from_utf8_lossy(&ctx.memory[lpString.addr..][..c.max(0) as usize]).to_string();
     log::warn!("TextOutA({x}, {y}, {text:?}): text not drawn");
     true
 }
@@ -261,7 +268,14 @@ pub fn CreateBitmap(
 }
 
 #[win32_derive::dllexport]
-pub fn Escape(_ctx: &mut Context, _hdc: HDC, iEscape: i32, _cjIn: i32, _pvIn: u32, _pvOut: u32) -> i32 {
+pub fn Escape(
+    _ctx: &mut Context,
+    _hdc: HDC,
+    iEscape: i32,
+    _cjIn: i32,
+    _pvIn: u32,
+    _pvOut: u32,
+) -> i32 {
     // Printer escapes; MFC queries these when setting up printing.
     log::warn!("Escape({iEscape}): unsupported");
     0

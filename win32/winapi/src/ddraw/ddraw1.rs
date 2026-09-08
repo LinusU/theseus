@@ -626,7 +626,14 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn GetPixelFormat(ctx: &mut Context, this: u32, lpDDPixelFormat: u32) -> DD {
-        let bpp = state().surf.borrow().get(&this).unwrap().borrow().bytes_per_pixel * 8;
+        let bpp = state()
+            .surf
+            .borrow()
+            .get(&this)
+            .unwrap()
+            .borrow()
+            .bytes_per_pixel
+            * 8;
         ctx.memory.write(lpDDPixelFormat, get_pixel_format(bpp));
         DD::OK
     }

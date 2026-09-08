@@ -707,14 +707,20 @@ pub fn GetVolumeInformationA(
     lpFileSystemNameBuffer: Ptr<u8>,
     nFileSystemNameSize: u32,
 ) -> bool {
-    let cdrom = lpRootPathName.addr != 0 && is_cdrom_path(&ctx.memory.read_str(lpRootPathName.addr));
+    let cdrom =
+        lpRootPathName.addr != 0 && is_cdrom_path(&ctx.memory.read_str(lpRootPathName.addr));
     let (label, fs) = if cdrom {
         (cdrom_label(), "CDFS")
     } else {
         ("THESEUS".to_string(), "FAT")
     };
     crate::kernel32::write_cstr(ctx, lpVolumeNameBuffer, nVolumeNameSize, label.as_bytes());
-    crate::kernel32::write_cstr(ctx, lpFileSystemNameBuffer, nFileSystemNameSize, fs.as_bytes());
+    crate::kernel32::write_cstr(
+        ctx,
+        lpFileSystemNameBuffer,
+        nFileSystemNameSize,
+        fs.as_bytes(),
+    );
     if lpVolumeSerialNumber.addr != 0 {
         lpVolumeSerialNumber.write(&mut ctx.memory, 0x1234_5678);
     }

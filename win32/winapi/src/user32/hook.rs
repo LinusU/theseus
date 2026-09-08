@@ -7,7 +7,10 @@
 
 use runtime::Context;
 
-use crate::{kernel32, user32::{HWND, state}};
+use crate::{
+    kernel32,
+    user32::{HWND, state},
+};
 
 pub struct Hook {
     /// WH_* hook type.
@@ -114,6 +117,12 @@ pub fn UnhookWindowsHookEx(_ctx: &mut Context, hhk: HHOOK) -> bool {
 }
 
 #[win32_derive::dllexport]
-pub fn CallNextHookEx(_ctx: &mut Context, _hhk: HHOOK, _nCode: i32, _wParam: u32, _lParam: u32) -> u32 {
+pub fn CallNextHookEx(
+    _ctx: &mut Context,
+    _hhk: HHOOK,
+    _nCode: i32,
+    _wParam: u32,
+    _lParam: u32,
+) -> u32 {
     0
 }

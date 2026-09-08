@@ -33,16 +33,31 @@ pub fn mixerGetLineInfoA(_ctx: &mut Context, _hmxobj: u32, _pmxl: u32, _fdwInfo:
 }
 
 #[win32_derive::dllexport]
-pub fn mixerGetLineControlsA(_ctx: &mut Context, _hmxobj: u32, _pmxlc: u32, _fdwControls: u32) -> u32 {
+pub fn mixerGetLineControlsA(
+    _ctx: &mut Context,
+    _hmxobj: u32,
+    _pmxlc: u32,
+    _fdwControls: u32,
+) -> u32 {
     MMSYSERR_NODRIVER
 }
 
 #[win32_derive::dllexport]
-pub fn mixerGetControlDetailsA(_ctx: &mut Context, _hmxobj: u32, _pmxcd: u32, _fdwDetails: u32) -> u32 {
+pub fn mixerGetControlDetailsA(
+    _ctx: &mut Context,
+    _hmxobj: u32,
+    _pmxcd: u32,
+    _fdwDetails: u32,
+) -> u32 {
     MMSYSERR_NODRIVER
 }
 
 #[win32_derive::dllexport]
-pub fn mixerSetControlDetails(_ctx: &mut Context, _hmxobj: u32, _pmxcd: u32, _fdwDetails: u32) -> u32 {
+pub fn mixerSetControlDetails(
+    _ctx: &mut Context,
+    _hmxobj: u32,
+    _pmxcd: u32,
+    _fdwDetails: u32,
+) -> u32 {
     MMSYSERR_NODRIVER
 }

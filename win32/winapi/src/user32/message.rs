@@ -487,7 +487,13 @@ pub fn SendMessageW(
 
 /// Call a window's window procedure directly, as SendMessage does.
 /// Returns the procedure's result.
-pub fn call_wndproc(ctx: &mut Context, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> u32 {
+pub fn call_wndproc(
+    ctx: &mut Context,
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> u32 {
     let wndproc = {
         let window = state().window.borrow();
         let Some(window) = window.as_ref() else {
@@ -507,7 +513,13 @@ pub fn call_wndproc(ctx: &mut Context, hwnd: HWND, msg: u32, wparam: WPARAM, lpa
 }
 
 #[win32_derive::dllexport]
-pub fn SendMessageA(ctx: &mut Context, hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> u32 {
+pub fn SendMessageA(
+    ctx: &mut Context,
+    hWnd: HWND,
+    Msg: u32,
+    wParam: WPARAM,
+    lParam: LPARAM,
+) -> u32 {
     if *LOG_MESSAGES {
         log::info!("SendMessageA({hWnd:?}, {Msg:#x}, {wParam:#x}, {lParam:#x})");
     }
