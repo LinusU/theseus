@@ -206,3 +206,15 @@ Suspects worth a look when the backlog is otherwise blocked:
   Check: `check.sh: OK (fmt 1 files, clippy+test host, build mm2, whitespace)`.
   Next: use `0x0d@260000` and `0x26@270000` in a 300s headless race to press
   start and throttle after GameLoop; then survey frames.
+- 2026-09-09 vkey @ms race smoke and docs: What: `doc/mm2.md` did not describe
+  the new `vkey@ms` syntax, and a long race was needed to confirm the car still
+  drives with the vkey parser changes. Repro:
+  `THESEUS_INJECT_AT_MS=5000 THESEUS_INJECT_VKEY=0x0d,0x0d,0x28,0x28,0x28,0x28,0x0d
+  THESEUS_INJECT_CLICK="540,450;530,440" THESEUS_INJECT_CLICK_MS=15000
+  THESEUS_INJECT_CLICK_GAP=2000 THESEUS_INJECT_HOLD=0x26@45000
+  THESEUS_FRAME_DUMP_EVERY=500` for 240s. Result: reached GameLoop, the car left
+  the start line and drove off the course (HUD timer 00:25:00 -> 00:04:16); the
+  only visible artifacts are the same alpha veil and missing LOD/water already
+  attributed to absent content. Change: documented `@ms` vkey suffix and default
+  `THESEUS_INJECT_AT_MS` in `doc/mm2.md`. Check: `check.sh: OK (fmt 0 files,
+  whitespace)`. Next: external content or a fresh runtime/DirectDraw audit.

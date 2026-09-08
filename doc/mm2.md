@@ -158,10 +158,12 @@ Debug environment knobs, all optional:
   the render-state gates (z-test, alpha test, blend) for line-primitive
   debugging.
 - `THESEUS_INJECT_VKEY` / `THESEUS_INJECT_AT_MS` — comma-separated hex VK
-  codes tapped 300ms apart starting at the given millisecond. The harness
-  maps the usual menu keys plus letters A–Z and digits 0–9 to PC set-1
-  scancodes, so scripted text entry works (letters arrive lowercase, no
-  shift state).
+  codes tapped 300ms apart starting at the given millisecond (default 0 if
+  unset).  An individual key may carry an `@<ms>` suffix to override its
+  absolute time; later un-timed keys resume the 300ms cadence from that
+  time.  The harness maps the usual menu keys plus letters A–Z and digits
+  0–9 to PC set-1 scancodes, so scripted text entry works (letters arrive
+  lowercase, no shift state).
 - `THESEUS_INJECT_CLICK` / `THESEUS_INJECT_CLICK_MS` /
   `THESEUS_INJECT_CLICK_GAP` — `;`-separated `x,y` left-clicks (move, down,
   up 50ms apart) with a configurable gap. An `x,y@ms` suffix overrides the
