@@ -85,23 +85,32 @@ pub fn unknown_block(addr: u32) -> Cont {
 }
 
 impl Context {
-    /// Call an x86 stdcall function, only returning once the function returns.
+    /// Call an x86 function, only returning once the function returns.
+    ///
+    /// The arguments are pushed as for stdcall; a cdecl callee leaves them on
+    /// the stack for the caller to pop.
     pub fn call32_x86(&mut self, f: Cont, args: Vec<u32>) {
-        let esp = self.cpu.regs.esp;
         for arg in args.into_iter().rev() {
             self.push32(arg);
         }
         // Note that return_from_x86 is never called.  When the x86 code returns
-        // to it, the stack will have been popped so that esp matches our initial
-        // esp and we abort the loop before invoking the continuation.
+        // to it, we abort the loop before invoking the continuation.
         self.push32(RETURN_FROM_X86_ADDR32);
 
-        self.cpu_loop(f, esp);
+        self.cpu_loop(f);
     }
 
-    pub fn cpu_loop(&mut self, mut f: Cont, target_esp: u32) {
+    /// Run x86 code until it returns to RETURN_FROM_X86_ADDR32.
+    ///
+    /// This watches for the return address rather than for esp coming back to
+    /// where it started: a callee may pop a different amount (cdecl vs
+    /// stdcall), and an exception handler that catches never returns at all
+    /// but jumps into the catching frame, after which the rest of the program
+    /// runs inside this loop (see winapi's kernel32/seh.rs).
+    pub fn cpu_loop(&mut self, mut f: Cont) {
         let mut i = 0;
-        while self.cpu.regs.esp != target_esp {
+        let done: ContFn = Context::return_from_x86;
+        while f.0 as usize != done as usize {
             self.recent[i] = f.0;
             i = (i + 1) % self.recent.len();
             f = f.0(self);
