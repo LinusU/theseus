@@ -103,9 +103,28 @@ impl<'a> CodeGen<'a> {
                 expr.push(format!("{}", get_reg(instr.memory_index()),));
             }
         }
-        let offset = instr.memory_displacement32();
-        if offset != 0 || expr.is_empty() {
-            expr.push(format!("{offset:#x}u{}", self.module.bitness()));
+        let patched_disp = self
+            .patched_offsets(instr)
+            .filter(|offsets| offsets.has_displacement());
+        if let Some(offsets) = patched_disp {
+            // Self-modifying code: the displacement is whatever the program has
+            // written there by the time this runs. Short displacements are
+            // sign-extended to the address size.
+            let addr = instr.ip32() + offsets.displacement_offset() as u32;
+            let bits = self.module.bitness();
+            let read = match offsets.displacement_size() {
+                1 => format!("(ctx.memory.read::<u8>({addr:#x}) as i8 as i{bits} as u{bits})"),
+                2 if bits == 32 => {
+                    format!("(ctx.memory.read::<u16>({addr:#x}) as i16 as i32 as u32)")
+                }
+                _ => format!("ctx.memory.read::<u{bits}>({addr:#x})"),
+            };
+            expr.push(read);
+        } else {
+            let offset = instr.memory_displacement32();
+            if offset != 0 || expr.is_empty() {
+                expr.push(format!("{offset:#x}u{}", self.module.bitness()));
+            }
         }
 
         expr.into_iter()
@@ -148,8 +167,48 @@ pub fn set_mem(typ: String, addr: String, expr: String) -> String {
 }
 
 impl<'a> CodeGen<'a> {
+    /// For an instruction in a patched code range, where its constant bytes
+    /// live, so the generated code can read them from memory at runtime.
+    fn patched_offsets(&self, instr: &iced_x86::Instruction) -> Option<iced_x86::ConstantOffsets> {
+        let ip = instr.ip32();
+        if !self.patched_code.iter().any(|range| range.contains(&ip)) {
+            return None;
+        }
+        let bytes = self.mem.slice(ip, instr.len() as u32);
+        let mut decoder = iced_x86::Decoder::with_ip(
+            self.module.bitness(),
+            bytes,
+            ip as u64,
+            iced_x86::DecoderOptions::NONE,
+        );
+        let decoded = decoder.decode();
+        Some(decoder.get_constant_offsets(&decoded))
+    }
+
+    /// The immediate operand of an instruction in a patched code range, read
+    /// from memory; None if the instruction isn't patched.
+    fn patched_immediate(&self, instr: &iced_x86::Instruction, n: u32) -> Option<String> {
+        use iced_x86::OpKind::*;
+        let offsets = self.patched_offsets(instr)?;
+        if !offsets.has_immediate() {
+            return None;
+        }
+        let addr = instr.ip32() + offsets.immediate_offset() as u32;
+        Some(match instr.op_kind(n) {
+            Immediate8 => format!("ctx.memory.read::<u8>({addr:#x})"),
+            Immediate16 => format!("ctx.memory.read::<u16>({addr:#x})"),
+            Immediate8to16 => format!("(ctx.memory.read::<u8>({addr:#x}) as i8 as i16 as u16)"),
+            Immediate8to32 => format!("(ctx.memory.read::<u8>({addr:#x}) as i8 as i32 as u32)"),
+            Immediate32 => format!("ctx.memory.read::<u32>({addr:#x})"),
+            _ => return None,
+        })
+    }
+
     pub fn get_op(&self, instr: &iced_x86::Instruction, n: u32) -> String {
         use iced_x86::OpKind::*;
+        if let Some(imm) = self.patched_immediate(instr, n) {
+            return imm;
+        }
         match instr.op_kind(n) {
             Immediate8 => format!("{:#x}u8", instr.immediate8()),
             Immediate16 => format!("{:#x}u16", instr.immediate16()),
@@ -224,6 +283,8 @@ pub struct CodeGen<'a> {
     module: &'a Module,
     mem: &'a Memory,
     blocks: &'a HashMap<u32, Block>,
+    /// See `State::patched_code`.
+    patched_code: &'a [std::ops::Range<u32>],
     trace: bool,
     /// Statically-known jump targets with no discovered block; each gets a
     /// panicking stub function so the output still compiles and runs.
@@ -238,6 +299,7 @@ impl<'a> CodeGen<'a> {
             module: &state.module,
             mem: &state.mem,
             blocks: &state.blocks,
+            patched_code: &state.patched_code,
             trace,
             unknown: Default::default(),
             buf: Default::default(),

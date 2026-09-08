@@ -111,6 +111,10 @@ pub struct State {
     pub addr_info: HashMap<u32, AddrInfo>,
     pub blocks: HashMap<u32, Block>,
     pub report: gather::Report,
+    /// Code ranges the program patches at runtime (self-modifying inner loops
+    /// with placeholder constants). Instructions here read their immediates
+    /// and displacements from memory when executed, not from the translation.
+    pub patched_code: Vec<std::ops::Range<u32>>,
 }
 
 impl Default for State {
@@ -121,6 +125,7 @@ impl Default for State {
             addr_info: Default::default(),
             blocks: Default::default(),
             report: Default::default(),
+            patched_code: Default::default(),
         }
     }
 }
