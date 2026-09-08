@@ -6,19 +6,26 @@ use std::{
 
 mod ddraw;
 mod ddraw1;
+mod ddraw2;
 mod ddraw7;
 pub mod types;
 
 pub use ddraw::*;
 pub use ddraw1::*;
+pub use ddraw2::*;
 pub use ddraw7::*;
 pub use types::DD;
 
-pub const VTABLES: [(&'static str, &[&str]); 5] = [
+pub const VTABLES: [(&'static str, &[&str]); 7] = [
     ("IDirectDraw", IDirectDraw::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectDrawSurface",
         IDirectDrawSurface::VTABLE_ENTRIES.as_slice(),
+    ),
+    ("IDirectDraw2", IDirectDraw2::VTABLE_ENTRIES.as_slice()),
+    (
+        "IDirectDrawSurface2",
+        IDirectDrawSurface2::VTABLE_ENTRIES.as_slice(),
     ),
     ("IDirectDraw7", IDirectDraw7::VTABLE_ENTRIES.as_slice()),
     (
@@ -62,7 +69,7 @@ pub struct State {
 impl State {
     pub fn get_ddraw(&self, ptr: u32) -> RefMut<'_, DirectDraw> {
         let ddraw = RefMut::map(self.ddraw.borrow_mut(), |ddraw| ddraw.as_mut().unwrap());
-        assert!(ptr == ddraw.addr);
+        assert!(ptr == ddraw.addr || ddraw.aliases.contains(&ptr));
         ddraw
     }
 }
