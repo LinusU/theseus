@@ -249,14 +249,8 @@ pub fn DispatchMessageA(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
-    let wndproc = state().wndclass.borrow().as_ref().unwrap().wndproc.clone();
     let msg = lpMsg.read(&ctx.memory).unwrap();
-    // WNDPROC
-    ctx.call32_x86(
-        wndproc,
-        vec![msg.hwnd.to_raw(), msg.message, msg.wParam, msg.lParam],
-    );
-    0
+    call_wndproc(ctx, msg.hwnd, msg.message, msg.wParam, msg.lParam)
 }
 
 #[win32_derive::dllexport]
@@ -404,4 +398,74 @@ pub fn SendMessageW(
     _lParam: LPARAM,
 ) -> u32 {
     todo!()
+}
+
+/// Call a window's window procedure directly, as SendMessage does.
+/// Returns the procedure's result.
+pub fn call_wndproc(ctx: &mut Context, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> u32 {
+    let wndproc = {
+        let window = state().window.borrow();
+        let Some(window) = window.as_ref() else {
+            log::warn!("message {msg:#x} for {hwnd:?} with no window");
+            return 0;
+        };
+        let window = window.borrow();
+        if window.hwnd != hwnd {
+            log::warn!("message {msg:#x} for unknown window {hwnd:?}");
+            return 0;
+        }
+        window.wndproc
+    };
+    let wndproc = ctx.indirect(wndproc);
+    ctx.call32_x86(wndproc, vec![hwnd.to_raw(), msg, wparam, lparam]);
+    ctx.cpu.regs.eax
+}
+
+#[win32_derive::dllexport]
+pub fn SendMessageA(ctx: &mut Context, hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> u32 {
+    if *LOG_MESSAGES {
+        log::info!("SendMessageA({hWnd:?}, {Msg:#x}, {wParam:#x}, {lParam:#x})");
+    }
+    call_wndproc(ctx, hWnd, Msg, wParam, lParam)
+}
+
+#[win32_derive::dllexport]
+pub fn CallWindowProcA(
+    ctx: &mut Context,
+    lpPrevWndFunc: u32,
+    hWnd: HWND,
+    Msg: u32,
+    wParam: WPARAM,
+    lParam: LPARAM,
+) -> u32 {
+    let wndproc = ctx.indirect(lpPrevWndFunc);
+    ctx.call32_x86(wndproc, vec![hWnd.to_raw(), Msg, wParam, lParam]);
+    ctx.cpu.regs.eax
+}
+
+/// Names registered through RegisterWindowMessage, indexed by (id - 0xc000).
+static REGISTERED_MESSAGES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+#[win32_derive::dllexport]
+pub fn RegisterWindowMessageA(ctx: &mut Context, lpString: Ptr<u8>) -> u32 {
+    let name = ctx.memory.read_str(lpString.addr).to_string();
+    let mut messages = REGISTERED_MESSAGES.lock().unwrap();
+    let index = match messages.iter().position(|m| *m == name) {
+        Some(index) => index,
+        None => {
+            messages.push(name);
+            messages.len() - 1
+        }
+    };
+    0xc000 + index as u32
+}
+
+#[win32_derive::dllexport]
+pub fn GetMessagePos(_ctx: &mut Context) -> u32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn GetMessageTime(_ctx: &mut Context) -> i32 {
+    host::host().time() as i32
 }

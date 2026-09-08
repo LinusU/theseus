@@ -12,6 +12,15 @@ use crate::{
 pub struct Window {
     /// There is a single unique HWND for each window, it's not a refcounted handle.
     pub hwnd: HWND,
+    pub class: String,
+    pub title: String,
+    /// x86 address of the window procedure. Starts as the class's, and changes
+    /// when the program subclasses the window with SetWindowLong(GWL_WNDPROC).
+    pub wndproc: u32,
+    pub style: u32,
+    pub ex_style: u32,
+    /// GWL_USERDATA
+    pub user_data: u32,
     pub dirty: bool, // triggers WM_PAINT
     pub x: i32,
     pub y: i32,
@@ -69,7 +78,10 @@ impl Window {
 
 #[derive(Default)]
 struct CreateWindowArgs {
+    class: String,
     name: String,
+    style: u32,
+    ex_style: u32,
     x: i32,
     y: i32,
     width: Option<u32>,
@@ -104,13 +116,48 @@ impl std::fmt::Debug for CW {
 }
 
 impl State {
+    /// Look up a registered class by name, or by atom when the "name" is one.
+    pub fn find_class(&self, name: &str) -> Option<usize> {
+        let classes = self.wndclasses.borrow();
+        if let Some(atom) = name.strip_prefix('#') {
+            let atom: usize = atom.parse().ok()?;
+            return atom.checked_sub(0xc000).filter(|&i| i < classes.len());
+        }
+        classes
+            .iter()
+            .position(|class| class.name.eq_ignore_ascii_case(name))
+    }
+
     fn create_window(&self, args: CreateWindowArgs) -> HWND {
         let width = args.width.unwrap_or(640);
         let height = args.height.unwrap_or(480);
 
+        let wndproc = match self.find_class(&args.class) {
+            Some(index) => self.wndclasses.borrow()[index].wndproc_addr,
+            None => {
+                // TODO: system classes (BUTTON, STATIC, ...) have no procedure here.
+                log::warn!("CreateWindow: unknown class {:?}", args.class);
+                0
+            }
+        };
+
+        if self.window.borrow().is_some() {
+            log::warn!(
+                "CreateWindow({:?}, {:?}): replacing the existing window; only one is modelled",
+                args.class,
+                args.name
+            );
+        }
+
         let hwnd = HWND::from_raw(1);
         let window = Rc::new(RefCell::new(Window {
             hwnd,
+            class: args.class,
+            title: args.name.clone(),
+            wndproc,
+            style: args.style,
+            ex_style: args.ex_style,
+            user_data: 0,
             dirty: true,
             x: args.x,
             y: args.y,
@@ -129,36 +176,70 @@ impl State {
 #[win32_derive::dllexport]
 pub fn CreateWindowExA(
     ctx: &mut Context,
-    _dwExStyle: u32, /* WINDOW_EX_STYLE */
-    _lpClassName: Ptr<u8>,
+    dwExStyle: u32, /* WINDOW_EX_STYLE */
+    lpClassName: Ptr<u8>,
     lpWindowName: Ptr<u8>,
-    _dwStyle: u32, /* WINDOW_STYLE */
+    dwStyle: u32, /* WINDOW_STYLE */
     X: i32,
     Y: i32,
     nWidth: CW,
     nHeight: CW,
-    _hWndParent: HWND,
-    _hMenu: HMENU,
-    _hInstance: HINSTANCE,
-    _lpParam: Ptr<()>,
+    hWndParent: HWND,
+    hMenu: HMENU,
+    hInstance: HINSTANCE,
+    lpParam: Ptr<()>,
 ) -> HWND {
-    let name = ctx.memory.read_str(lpWindowName.addr);
-    state().create_window(CreateWindowArgs {
-        name: name.into(),
+    let class = class_name(ctx, lpClassName.addr);
+    let name = if lpWindowName.addr == 0 {
+        String::new()
+    } else {
+        ctx.memory.read_str(lpWindowName.addr).to_string()
+    };
+    let hwnd = state().create_window(CreateWindowArgs {
+        class,
+        name,
+        style: dwStyle,
+        ex_style: dwExStyle,
         x: X,
         y: Y,
         width: nWidth.value(),
         height: nHeight.value(),
-    })
+    });
+    let cs = super::CREATESTRUCTA {
+        lpCreateParams: lpParam.addr,
+        hInstance,
+        hMenu,
+        hwndParent: hWndParent.to_raw(),
+        cy: nHeight.0 as i32,
+        cx: nWidth.0 as i32,
+        y: Y,
+        x: X,
+        style: dwStyle,
+        lpszName: lpWindowName.addr,
+        lpszClass: lpClassName.addr,
+        dwExStyle,
+    };
+    super::cbt_create_wnd(ctx, hwnd, &cs);
+    // TODO: send WM_NCCREATE / WM_CREATE to the window procedure.
+    hwnd
+}
+
+/// The class name argument of CreateWindow, which may be an atom.
+fn class_name(ctx: &Context, lpClassName: u32) -> String {
+    if lpClassName < 0x10000 {
+        format!("#{lpClassName}")
+    } else {
+        ctx.memory.read_str(lpClassName).to_string()
+    }
 }
 
 #[win32_derive::dllexport]
 pub fn CreateWindowExW(
     ctx: &mut Context,
-    _dwExStyle: u32,        /* WINDOW_EX_STYLE */
-    _lpClassName: Ptr<u16>, /* WSTR */
+    dwExStyle: u32,        /* WINDOW_EX_STYLE */
+    lpClassName: Ptr<u16>, /* WSTR */
     lpWindowName: Ptr<u16>, /* WSTR */
-    _dwStyle: u32,          /* WINDOW_STYLE */
+    dwStyle: u32,          /* WINDOW_STYLE */
     X: i32,
     Y: i32,
     nWidth: CW,
@@ -168,9 +249,17 @@ pub fn CreateWindowExW(
     _hInstance: HINSTANCE,
     _lpParam: Ptr<()>,
 ) -> HWND {
+    let class = if lpClassName.addr < 0x10000 {
+        format!("#{}", lpClassName.addr)
+    } else {
+        ctx.memory.read_wstr(lpClassName.addr).to_string_lossy()
+    };
     let name = ctx.memory.read_wstr(lpWindowName.addr);
     state().create_window(CreateWindowArgs {
+        class,
         name: name.to_string_lossy(),
+        style: dwStyle,
+        ex_style: dwExStyle,
         x: X,
         y: Y,
         width: nWidth.value(),
@@ -286,14 +375,26 @@ pub struct WNDCLASS {
 }
 
 pub struct WndClass {
-    pub wndproc: runtime::Cont,
+    pub name: String,
+    /// x86 address of the class's window procedure.
+    pub wndproc_addr: u32,
     pub background: Option<gdi32::Brush>,
 }
 
 impl State {
+    /// Returns the class atom.
     pub fn register_class(&self, wnd_class: WndClass) -> u16 {
-        *self.wndclass.borrow_mut() = Some(wnd_class);
-        0
+        let mut classes = self.wndclasses.borrow_mut();
+        if let Some(index) = classes
+            .iter()
+            .position(|class| class.name.eq_ignore_ascii_case(&wnd_class.name))
+        {
+            log::warn!("RegisterClass({:?}): replacing existing class", wnd_class.name);
+            classes[index] = wnd_class;
+            return 0xc000 + index as u16;
+        }
+        classes.push(wnd_class);
+        0xc000 + (classes.len() - 1) as u16
     }
 }
 
@@ -327,21 +428,39 @@ impl COLOR {
     fn to_colorref(&self) -> COLORREF {
         use COLOR::*;
         match self {
-            WINDOW | WINDOWFRAME | MENU | BTNFACE => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
-            APPWORKSPACE => COLORREF::from_rgb(0x80, 0x80, 0x80),
-            _ => todo!("{:?}", self),
+            // The Windows 95 default color scheme.
+            SCROLLBAR => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
+            BACKGROUND => COLORREF::from_rgb(0x00, 0x80, 0x80),
+            ACTIVECAPTION => COLORREF::from_rgb(0x00, 0x00, 0x80),
+            INACTIVECAPTION => COLORREF::from_rgb(0x80, 0x80, 0x80),
+            WINDOW => COLORREF::from_rgb(0xff, 0xff, 0xff),
+            WINDOWFRAME | MENUTEXT | WINDOWTEXT | BTNTEXT => COLORREF::from_rgb(0, 0, 0),
+            MENU | BTNFACE | ACTIVEBORDER | INACTIVEBORDER => {
+                COLORREF::from_rgb(0xc0, 0xc0, 0xc0)
+            }
+            CAPTIONTEXT | HIGHLIGHTTEXT | BTNHIGHLIGHT => COLORREF::from_rgb(0xff, 0xff, 0xff),
+            APPWORKSPACE | BTNSHADOW | GRAYTEXT => COLORREF::from_rgb(0x80, 0x80, 0x80),
+            HIGHLIGHT => COLORREF::from_rgb(0x00, 0x00, 0x80),
+            INACTIVECAPTIONTEXT => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
         }
     }
 }
 
 #[win32_derive::dllexport]
 pub fn RegisterClassA(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
-    RegisterClassW(ctx, lpWndClass)
+    let wndclass = lpWndClass.read(&ctx.memory).unwrap();
+    let name = ctx.memory.read_str(wndclass.lpszClassName).to_string();
+    register_class(ctx, &wndclass, name)
 }
 
 #[win32_derive::dllexport]
 pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
     let wndclass = lpWndClass.read(&ctx.memory).unwrap();
+    let name = ctx.memory.read_wstr(wndclass.lpszClassName).to_string_lossy();
+    register_class(ctx, &wndclass, name)
+}
+
+fn register_class(_ctx: &mut Context, wndclass: &WNDCLASS, name: String) -> u16 {
     let background = if wndclass.hbrBackground.is_null() {
         None
     } else if wndclass.hbrBackground.to_raw() < 32 {
@@ -357,10 +476,10 @@ pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
         )
     };
     state().register_class(WndClass {
-        wndproc: ctx.indirect(wndclass.lpfnWndProc),
+        name,
+        wndproc_addr: wndclass.lpfnWndProc,
         background,
-    });
-    stub!(1)
+    })
 }
 
 #[repr(C)]
@@ -377,9 +496,10 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
     let window = state().window.borrow();
     let mut window = window.as_ref().unwrap().borrow_mut();
 
-    let wndclass = state().wndclass.borrow();
-    let wndclass = wndclass.as_ref().unwrap();
-    if let Some(background) = &wndclass.background {
+    let background = state()
+        .find_class(&window.class)
+        .and_then(|index| state().wndclasses.borrow()[index].background.clone());
+    if let Some(background) = &background {
         // TODO: send WM_ERASEBKGND, let DefWindowProc handle it
         let pixels = window.ensure_pixels(ctx);
         let pixel_count = (window.width * (window.height)) as usize;
@@ -400,7 +520,7 @@ pub fn BeginPaint(ctx: &mut Context, hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> H
             &mut ctx.memory,
             PAINTSTRUCT {
                 hdc,
-                fErase: wndclass.background.is_none() as u32,
+                fErase: background.is_none() as u32,
                 rcPaint,
                 reserved: [0; 10],
             },
@@ -552,4 +672,221 @@ pub fn MapWindowPoints(
 #[win32_derive::dllexport]
 pub fn ValidateRect(_ctx: &mut Context, _hWnd: HWND, _lpRect: Ptr<RECT>) -> bool {
     stub!(true)
+}
+
+/// The window for an HWND, if it is the one window we model.
+fn window(hwnd: HWND) -> Option<Rc<RefCell<Window>>> {
+    let window = state().window.borrow();
+    let window = window.as_ref()?;
+    if window.borrow().hwnd != hwnd {
+        return None;
+    }
+    Some(window.clone())
+}
+
+#[win32_derive::dllexport]
+pub fn GetSysColor(_ctx: &mut Context, nIndex: COLOR) -> u32 {
+    nIndex.to_colorref().as_win32()
+}
+
+#[win32_derive::dllexport]
+pub fn GetSysColorBrush(_ctx: &mut Context, nIndex: COLOR) -> HBRUSH {
+    // A new handle per call; Windows shares them, but nobody frees these.
+    gdi32::lock()
+        .objects
+        .add(gdi32::Object::Brush(Brush(nIndex.to_colorref())))
+}
+
+const GWL_WNDPROC: i32 = -4;
+const GWL_HINSTANCE: i32 = -6;
+const GWL_HWNDPARENT: i32 = -8;
+const GWL_STYLE: i32 = -16;
+const GWL_EXSTYLE: i32 = -20;
+const GWL_USERDATA: i32 = -21;
+const GWL_ID: i32 = -12;
+
+#[win32_derive::dllexport]
+pub fn GetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32) -> u32 {
+    let Some(window) = window(hWnd) else {
+        log::warn!("GetWindowLongA({hWnd:?}): unknown window");
+        return 0;
+    };
+    let window = window.borrow();
+    match nIndex {
+        GWL_WNDPROC => window.wndproc,
+        GWL_HINSTANCE => kernel32::lock().image_base,
+        GWL_HWNDPARENT | GWL_ID => 0,
+        GWL_STYLE => window.style,
+        GWL_EXSTYLE => window.ex_style,
+        GWL_USERDATA => window.user_data,
+        _ => {
+            log::warn!("GetWindowLongA: unsupported index {nIndex} (cbWndExtra?)");
+            0
+        }
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn SetWindowLongA(_ctx: &mut Context, hWnd: HWND, nIndex: i32, dwNewLong: u32) -> u32 {
+    let Some(window) = window(hWnd) else {
+        log::warn!("SetWindowLongA({hWnd:?}): unknown window");
+        return 0;
+    };
+    let mut window = window.borrow_mut();
+    let slot = match nIndex {
+        GWL_WNDPROC => &mut window.wndproc,
+        GWL_STYLE => &mut window.style,
+        GWL_EXSTYLE => &mut window.ex_style,
+        GWL_USERDATA => &mut window.user_data,
+        _ => {
+            log::warn!("SetWindowLongA: unsupported index {nIndex} (cbWndExtra?)");
+            return 0;
+        }
+    };
+    std::mem::replace(slot, dwNewLong)
+}
+
+#[win32_derive::dllexport]
+pub fn GetWindowRect(ctx: &mut Context, hWnd: HWND, lpRect: Ptr<RECT>) -> bool {
+    let Some(window) = window(hWnd) else {
+        return false;
+    };
+    let window = window.borrow();
+    lpRect.write(
+        &mut ctx.memory,
+        RECT {
+            left: window.x,
+            top: window.y,
+            right: window.x + window.width as i32,
+            bottom: window.y + window.height as i32,
+        },
+    );
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn ScreenToClient(ctx: &mut Context, hWnd: HWND, lpPoint: Ptr<POINT>) -> bool {
+    let Some(window) = window(hWnd) else {
+        return false;
+    };
+    let window = window.borrow();
+    let mut point = lpPoint.read(&ctx.memory).unwrap();
+    point.x -= window.x;
+    point.y -= window.y;
+    lpPoint.write(&mut ctx.memory, point);
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn AdjustWindowRectEx(
+    _ctx: &mut Context,
+    _lpRect: Ptr<RECT>,
+    _dwStyle: u32,
+    _bMenu: bool,
+    _dwExStyle: u32,
+) -> bool {
+    // Our windows have no frame, so the client rectangle is the window rectangle.
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn IsWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    window(hWnd).is_some()
+}
+
+#[win32_derive::dllexport]
+pub fn IsWindowVisible(_ctx: &mut Context, hWnd: HWND) -> bool {
+    window(hWnd).is_some()
+}
+
+#[win32_derive::dllexport]
+pub fn IsWindowEnabled(_ctx: &mut Context, hWnd: HWND) -> bool {
+    window(hWnd).is_some()
+}
+
+#[win32_derive::dllexport]
+pub fn GetParent(_ctx: &mut Context, _hWnd: HWND) -> HWND {
+    HWND::null()
+}
+
+#[win32_derive::dllexport]
+pub fn GetWindow(_ctx: &mut Context, _hWnd: HWND, _uCmd: u32) -> HWND {
+    HWND::null() // no siblings, children or owners
+}
+
+#[win32_derive::dllexport]
+pub fn GetTopWindow(_ctx: &mut Context, _hWnd: HWND) -> HWND {
+    HWND::null()
+}
+
+fn the_window() -> HWND {
+    match state().window.borrow().as_ref() {
+        Some(window) => window.borrow().hwnd,
+        None => HWND::null(),
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetForegroundWindow(_ctx: &mut Context) -> HWND {
+    the_window()
+}
+
+#[win32_derive::dllexport]
+pub fn SetForegroundWindow(_ctx: &mut Context, _hWnd: HWND) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn SetActiveWindow(_ctx: &mut Context, _hWnd: HWND) -> HWND {
+    the_window()
+}
+
+#[win32_derive::dllexport]
+pub fn GetFocus(_ctx: &mut Context) -> HWND {
+    the_window()
+}
+
+#[win32_derive::dllexport]
+pub fn GetClassNameA(ctx: &mut Context, hWnd: HWND, lpClassName: Ptr<u8>, nMaxCount: i32) -> i32 {
+    let Some(window) = window(hWnd) else {
+        return 0;
+    };
+    let class = window.borrow().class.clone();
+    kernel32::write_cstr(ctx, lpClassName, nMaxCount.max(0) as u32, class.as_bytes()) as i32
+}
+
+#[win32_derive::dllexport]
+pub fn GetClassInfoA(
+    ctx: &mut Context,
+    _hInstance: HINSTANCE,
+    lpClassName: Ptr<u8>,
+    _lpWndClass: Ptr<WNDCLASS>,
+) -> bool {
+    // Reporting no class makes frameworks register their own, which we can model.
+    let name = class_name(ctx, lpClassName.addr);
+    log::info!("GetClassInfoA({name:?}): reporting not found");
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn GetWindowTextA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, nMaxCount: i32) -> i32 {
+    let Some(window) = window(hWnd) else {
+        return 0;
+    };
+    let title = window.borrow().title.clone();
+    kernel32::write_cstr(ctx, lpString, nMaxCount.max(0) as u32, title.as_bytes()) as i32
+}
+
+#[win32_derive::dllexport]
+pub fn GetWindowTextLengthA(_ctx: &mut Context, hWnd: HWND) -> i32 {
+    match window(hWnd) {
+        Some(window) => window.borrow().title.len() as i32,
+        None => 0,
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn WindowFromPoint(_ctx: &mut Context, _x: i32, _y: i32) -> HWND {
+    // POINT is passed by value as two dwords.
+    the_window()
 }

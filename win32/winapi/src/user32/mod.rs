@@ -1,6 +1,9 @@
 mod dialog;
+mod hook;
+mod menu;
 mod message;
 mod misc;
+mod prop;
 mod rect;
 mod resource;
 mod window;
@@ -11,8 +14,11 @@ use std::{
 };
 
 pub use dialog::*;
+pub use hook::*;
+pub use menu::*;
 pub use message::*;
 pub use misc::*;
+pub use prop::*;
 pub use rect::*;
 pub use resource::*;
 pub use window::*;
@@ -27,9 +33,13 @@ pub type HICON = u32;
 pub type HACCEL = u32;
 
 pub struct State {
-    pub wndclass: RefCell<Option<WndClass>>,
+    /// Registered window classes; a class atom is its index here plus 0xc000.
+    pub wndclasses: RefCell<Vec<WndClass>>,
+    /// The one window. TODO: programs built on frameworks like MFC create
+    /// several windows (frame, view, hidden helpers); model them all.
     pub window: RefCell<Option<Rc<RefCell<Window>>>>,
     message_queue: RefCell<MessageQueue>,
+    pub hooks: RefCell<Vec<Hook>>,
 }
 
 // TODO: reuse locking pattern from kernel32
@@ -42,7 +52,8 @@ static STATE: StaticState = StaticState(OnceCell::new());
 pub fn state() -> &'static State {
     STATE.0.get_or_init(|| State {
         window: Default::default(),
-        wndclass: Default::default(),
+        wndclasses: Default::default(),
         message_queue: Default::default(),
+        hooks: Default::default(),
     })
 }
