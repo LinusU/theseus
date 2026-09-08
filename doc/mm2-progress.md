@@ -147,3 +147,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build mm2,
   whitespace)`; 25s headless smoke -> GameLoop, no missing.txt. Next:
   remaining backlog items are external content; survey audit leftovers.
+- 2026-09-08 probe window enumeration: What: `probe-input.sh` printed
+  `windows=none` when osascript lacked Accessibility permission, which
+  reads as "the game has no window". Repro: `probe-input.sh 20` ->
+  `frontmost=mm2` x5 (activation and both window focus edges fine after the
+  ddraw Release change) but `windows=none`; direct osascript -> error -1728
+  "not allowed assistive access". Change: `sample()` captures stderr and
+  prints `no-accessibility-permission` / `no-window` instead of `none`
+  (`out/mm2/probe-input.sh`). Check: `check.sh: OK (fmt 0 files, build mm2,
+  whitespace)`; `probe-input.sh 8` -> `windows=no-accessibility-permission`.
+  Next: SF race path is unobservable headless (LOCATION value text is a
+  missing bitmap); remaining items are external content or need a human.

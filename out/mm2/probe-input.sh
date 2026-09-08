@@ -39,9 +39,19 @@ sample() {
     if ! command -v osascript >/dev/null; then
         return
     fi
-    local front windows
+    local front windows werr
     front="$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null)"
-    windows="$(osascript -e 'tell application "System Events" to tell process "mm2" to get {name, position, size} of every window' 2>/dev/null)"
+    # Window enumeration needs Accessibility permission for the calling app;
+    # without it osascript fails with -1728, which is not "no windows".
+    windows="$(osascript -e 'tell application "System Events" to tell process "mm2" to get {name, position, size} of every window' 2>&1)"
+    werr=$?
+    if (( werr != 0 )); then
+        case "$windows" in
+            *"assistive access"*|*"-1728"*) windows="no-accessibility-permission" ;;
+            *"Can't get process"*) windows="no-window" ;;
+            *) windows="error:$windows" ;;
+        esac
+    fi
     printf '  t=%3ds frontmost=%-12s windows=%s\n' "$1" "${front:-?}" "${windows:-none}"
 }
 
