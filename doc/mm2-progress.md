@@ -180,3 +180,10 @@ Suspects worth a look when the backlog is otherwise blocked:
   Next: the giant flat pale polygon is a distant/fogged surface sampling a
   small UV window of a valid texture — likely authentic; remaining items
   are external content or need a human.
+- 2026-09-08 texture-stage survey: What: whether the flat pale polygon is a
+  missing second texture stage (the rasterizer samples stage 0 only).
+  Change: `SetTexture` warns once per bound stage>0 (`d3d7.rs`). Repro:
+  70s London CRUISE roam -> no warning; MM2 binds stage 0 only, so the
+  polygon is a correctly-bound surface, not a multitexture gap. Check:
+  `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
+  Next: external content or a fresh defect report.

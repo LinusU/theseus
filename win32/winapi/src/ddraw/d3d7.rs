@@ -424,6 +424,8 @@ pub struct D3DState {
     dumped_textures: RefCell<std::collections::HashSet<u32>>,
     /// Texture surfaces already reported for unrecognized pixel masks.
     odd_textures: RefCell<std::collections::HashSet<u32>>,
+    /// Texture stages (other than 0) already reported as unsampled.
+    seen_stages: RefCell<std::collections::HashSet<u32>>,
     state_blocks: RefCell<std::collections::HashSet<u32>>,
     next_state_block: std::cell::Cell<u32>,
 }
@@ -1662,6 +1664,11 @@ pub mod IDirect3DDevice7 {
         } else {
             if !state().surf.borrow().contains_key(&lpTexture) {
                 return DD::ERR_INVALIDPARAMS;
+            }
+            if dwStage != 0 && d3d_state().seen_stages.borrow_mut().insert(dwStage) {
+                log::warn!(
+                    "SetTexture: stage {dwStage} is bound but the rasterizer samples stage 0 only"
+                );
             }
             device.textures.insert(dwStage, lpTexture);
         }
