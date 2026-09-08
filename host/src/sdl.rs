@@ -551,6 +551,23 @@ impl Window {
             return;
         }
         unsafe {
+            // A fullscreen window (THESEUS_FULLSCREEN) must leave its
+            // fullscreen space before it is hidden, and macOS runs that
+            // transition asynchronously: a fullscreen request for the
+            // window the guest creates next would be dropped while this
+            // one is still animating out, so wait for it to finish.
+            let flags = sdl::video::SDL_GetWindowFlags(self.window);
+            if (flags & sdl::video::SDL_WindowFlags::FULLSCREEN).0 != 0 {
+                if !sdl::video::SDL_SetWindowFullscreen(self.window, false) {
+                    log::warn!(
+                        "SDL_SetWindowFullscreen(false) failed ({}); continuing",
+                        sdl_error()
+                    );
+                }
+                if !sdl::video::SDL_SyncWindow(self.window) {
+                    log::warn!("SDL_SyncWindow timed out ({}); continuing", sdl_error());
+                }
+            }
             if !sdl::video::SDL_HideWindow(self.window) {
                 log::warn!("SDL_HideWindow failed ({}); continuing", sdl_error());
             }

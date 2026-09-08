@@ -29,10 +29,10 @@ User-requested priority backlog, in order. Open items outrank every audit:
    defect that is not a content gap.
 5. Sound: BLOCKED, external content. `aud\aud22\*.22k` banks are missing;
    the DirectSound path is verified end to end with `THESEUS_DSOUND_WAV`.
-6. Window resolutions and fullscreen: IMPLEMENTED, NOT LIVE-VERIFIED.
-   Letterboxed present, resizable window, `THESEUS_FULLSCREEN=1`, Alt+Enter.
-   Verify with `out/mm2/probe-input.sh` on a display: resize, toggle
-   fullscreen, confirm clicks still hit the right controls.
+6. Window resolutions and fullscreen: DONE, live-verified 2026-09-08.
+   Resize to 1024x707, Alt+Enter into 1440x900 and back, and
+   `THESEUS_FULLSCREEN=1` at launch all hold; a real click at the window
+   centre maps to guest (320, 240) in every state.
 7. Draw distance and LOD: SURVEYED. Zero unhandled render states; the
    difference from the original is missing LOD content.
 
@@ -85,6 +85,12 @@ Suspects worth a look when the backlog is otherwise blocked:
 - Live input and focus: `out/mm2/probe-input.sh 40`, then click and press
   arrow keys; success is `frontmost=mm2` at every sample and `WM_KEYDOWN`
   in the summary.
+- Driving the window without a human (needs Accessibility permission for
+  the app running the commands): keys via `osascript -e 'tell application
+  "System Events" to key code 125'`, real clicks via `out/mm2/probe-click.swift`
+  (see its header), resize via `set size of window 1 to {1024, 768}` in the
+  same System Events `tell process "mm2"` form. Read the mapped guest
+  coordinates back from the `wm` trace's `WM_LBUTTONDOWN` lParam.
 
 ## Log (newest last; move entries older than about 20 into the archive)
 
@@ -108,3 +114,11 @@ Suspects worth a look when the backlog is otherwise blocked:
   `out/mm2/probe-input.sh`, `.devin/check.sh`, and this restructured log.
   Next: backlog #4 (capture race frames windowed) or #6 (live-verify
   resize and fullscreen with the probe).
+- 2026-09-08 item 6 live verification: What: `THESEUS_FULLSCREEN=1` was
+  lost at the window swap (the first window's fullscreen exit is
+  asynchronous and swallowed the second window's request); resize, Alt+Enter
+  and click mapping had never been checked live. Repro: `probe-input.sh 16
+  THESEUS_FULLSCREEN=1` -> real window 640x512. Change: `host::Window::close`
+  leaves fullscreen and `SDL_SyncWindow`s before hiding. Check: `.devin/check.sh`
+  OK; fullscreen launch 1440x900 x3 samples; resize/fullscreen/windowed clicks
+  map to (320,240); arrows deliver `WM_KEYDOWN` 0x28/0x26. Next: backlog #4.
