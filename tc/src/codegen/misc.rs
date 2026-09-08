@@ -93,7 +93,27 @@ impl<'a> CodeGen<'a> {
                     self.todo(format!("int {:#x}", instr.immediate8()));
                 }
             }
-            Int3 | Cmpxchg | Pushfd | Cpuid | Xgetbv | Bt | Div => self.todo(instr_name(instr)),
+            Int3 | Cmpxchg | Xgetbv | Div => self.todo(instr_name(instr)),
+
+            Pushfd => self.line("ctx.push32(ctx.cpu.flags.bits());"),
+            Popfd => {
+                // Keep unknown bits (like ID, bit 21) so that the usual
+                // "can I toggle ID?" probe for cpuid support sees them.
+                self.line("let flags = ctx.pop32();");
+                self.line("ctx.cpu.flags = Flags::from_bits_retain(flags);");
+            }
+            Cpuid => self.line("ctx.cpuid();"),
+            Bt => {
+                let size = op_size(instr, 0);
+                self.line(format!(
+                    "let bit = ({} as u32) % {size};",
+                    self.get_op(instr, 1)
+                ));
+                self.line(format!(
+                    "ctx.cpu.flags.set(Flags::CF, ({} >> bit) & 1 != 0);",
+                    self.get_op(instr, 0)
+                ));
+            }
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),
