@@ -115,8 +115,10 @@ pub fn CreateFileA(
     _dwFlagsAndAttributes: u32,
     _hTemplateFile: u32,
 ) -> crate::HANDLE {
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let name = ctx.memory.read_str(lpFileName.addr).to_string();
     let path = resolve_path(&name);
+    // The traced arguments show only the pointer; the name is what one wants.
+    log::info!("CreateFileA({name:?})");
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
     let read = dwDesiredAccess & GENERIC_READ != 0;
     let mut opts = host::fs::OpenOptions::new();
