@@ -23,10 +23,14 @@ User-requested priority backlog, in order. Open items outrank every audit:
    `mm2tex.ar` (see `doc/mm2.md`). Reopen only if a screen loses text for
    an asset that does ship.
 4. In-race graphical glitches: PARTIAL. `FOGENABLE` gating fixed the
-   washed-out screen; remaining artifacts were attributed to missing LOD
-   meshes, but no one has captured race frames on a display since. Next:
-   capture representative frames windowed, isolate the first renderer
-   defect that is not a content gap.
+   washed-out screen. A 2026-09-08 frame survey of the scripted London
+   crash-course race found no non-content defect: the dominant artifact
+   (a large grey rectangle once the car leaves the course) is a correctly
+   alpha-blended translucent modal veil — probe: untextured TRIANGLEFAN,
+   RHW verts (128,48)-(512,432), diffuse 0x80101f5d, SRCALPHA/INVSRCALPHA —
+   whose panel contents are the known missing `nodeGetBitmap` assets; the
+   bare horizon is the missing-LOD gap. Remaining: a live capture on a
+   display while a human drives, to catch anything scripted input misses.
 5. Sound: BLOCKED, external content. `aud\aud22\*.22k` banks are missing;
    the DirectSound path is verified end to end with `THESEUS_DSOUND_WAV`.
 6. Window resolutions and fullscreen: DONE, live-verified 2026-09-08.
@@ -122,3 +126,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   leaves fullscreen and `SDL_SyncWindow`s before hiding. Check: `.devin/check.sh`
   OK; fullscreen launch 1440x900 x3 samples; resize/fullscreen/windowed clicks
   map to (320,240); arrows deliver `WM_KEYDOWN` 0x28/0x26. Next: backlog #4.
+- 2026-09-08 item 4 frame survey: What: captured the scripted London
+  crash-course race headless (identical pixels to windowed — software
+  rasterizer) and probed the dominant artifact. Repro: `THESEUS_HEADLESS=1
+  THESEUS_FRAME_DUMP=/tmp/mm2frames/f.ppm THESEUS_FRAME_DUMP_EVERY=150`
+  + menu clicks + `THESEUS_INJECT_HOLD="0x26@45000+115000"` -> race runs,
+  car leaves course, a grey rectangle veils the view, timer freezes at the
+  lesson end. `THESEUS_PROBE=320,200` -> a single untextured TRIANGLEFAN
+  (128,48)-(512,432), diffuse 0x80101f5d, alpha-blend SRCALPHA/INVSRCALPHA:
+  the translucent modal veil renders correctly; its panel contents are the
+  missing `nodeGetBitmap` assets. Change: this doc. Check: check.sh OK.
+  Next: `SetCooperativeLevel(null)` unbind + `IDirectDraw7::Release` stub.
