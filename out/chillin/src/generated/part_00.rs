@@ -10838,11 +10838,12 @@ pub fn x403a5e(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0xcu32)) as f64,
     );
     // 00403a65 fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403a6b fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -10859,11 +10860,12 @@ pub fn x403a70(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x14u32)) as f64,
     );
     // 00403a73 fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403a79 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -10904,11 +10906,12 @@ pub fn x403a98(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x10u32)) as f64,
     );
     // 00403a9b fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403aa1 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -10925,11 +10928,12 @@ pub fn x403aa6(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x18u32)) as f64,
     );
     // 00403aa9 fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403aaf fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -10970,11 +10974,12 @@ pub fn x403ace(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0xcu32)) as f64,
     );
     // 00403ad1 fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403ad7 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11053,11 +11058,12 @@ pub fn x403b02(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x14u32)) as f64,
     );
     // 00403b05 fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403b0b fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11284,11 +11290,12 @@ pub fn x403b94(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x10u32)) as f64,
     );
     // 00403b97 fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403b9d fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11367,11 +11374,12 @@ pub fn x403bc8(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x18u32)) as f64,
     );
     // 00403bcb fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403bd1 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11598,11 +11606,12 @@ pub fn x403c5a(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0xcu32)) as f64,
     );
     // 00403c5d fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403c63 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11619,11 +11628,12 @@ pub fn x403c6c(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x14u32)) as f64,
     );
     // 00403c6f fcomp dword ptr ds:[40C080h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c080u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403c75 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11664,11 +11674,12 @@ pub fn x403c8c(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x10u32)) as f64,
     );
     // 00403c8f fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403c95 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -11685,11 +11696,12 @@ pub fn x403c9a(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0x18u32)) as f64,
     );
     // 00403c9d fcomp dword ptr ds:[40C084h]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c084u32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00403ca3 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -14059,10 +14071,12 @@ pub fn x4045b8(ctx: &mut Context) -> Cont {
     );
     ctx.cpu.fpu.pop();
     // 00404643 fcomp dword ptr [ebp-0Ch]
-    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).partial_cmp(
-        &(ctx
-            .memory
-            .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0xfffffff4u32)) as f64),
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu.fpu.get(0).partial_cmp(
+            &(ctx
+                .memory
+                .read::<f32>(ctx.cpu.regs.ebp.wrapping_add(0xfffffff4u32)) as f64),
+        ),
     );
     ctx.cpu.fpu.pop();
     // 00404646 fnstsw ax
@@ -15039,10 +15053,12 @@ pub fn x404979(ctx: &mut Context) -> Cont {
     );
     ctx.cpu.fpu.pop();
     // 0040497c fcomp qword ptr [ebp-20h]
-    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).partial_cmp(
-        &(ctx
-            .memory
-            .read::<f64>(ctx.cpu.regs.ebp.wrapping_add(0xffffffe0u32))),
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu.fpu.get(0).partial_cmp(
+            &(ctx
+                .memory
+                .read::<f64>(ctx.cpu.regs.ebp.wrapping_add(0xffffffe0u32))),
+        ),
     );
     ctx.cpu.fpu.pop();
     // 0040497f fnstsw ax
@@ -18316,11 +18332,12 @@ pub fn x4053fc(ctx: &mut Context) -> Cont {
         ctx.cpu.fpu.get(0) as f32,
     );
     // 00405421 fcomp dword ptr ds:[40C1BCh]
-    ctx.cpu.fpu.cmp = ctx
-        .cpu
-        .fpu
-        .get(0)
-        .partial_cmp(&(ctx.memory.read::<f32>(0x40c1bcu32) as f64));
+    ctx.cpu.fpu.set_cmp(
+        ctx.cpu
+            .fpu
+            .get(0)
+            .partial_cmp(&(ctx.memory.read::<f32>(0x40c1bcu32) as f64)),
+    );
     ctx.cpu.fpu.pop();
     // 00405427 fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
