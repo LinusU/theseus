@@ -158,6 +158,13 @@ impl Context {
         self.jmpf16(cs, ip)
     }
 
+    pub fn retf32(&mut self, n: u16) -> Cont {
+        let eip = self.pop32();
+        let _cs = self.pop32(); // selector, pushed as a dword
+        self.cpu.regs.esp += n as u32;
+        self.indirect(eip)
+    }
+
     pub fn jmpf16(&mut self, seg: u16, ofs: u16) -> Cont {
         self.cpu.regs.set_cs(seg);
         self.indirect(segofs(seg, ofs))
