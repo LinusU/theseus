@@ -949,36 +949,60 @@ fn inject_vkey(vkey: u8) -> Option<host::KeyMessage> {
 }
 
 impl Host {
+    /// Parse `THESEUS_INJECT_VKEY` and `THESEUS_INJECT_AT_MS`.
+    fn parse_inject_vkey() -> Option<Vec<(u8, u32)>> {
+        let s = std::env::var("THESEUS_INJECT_VKEY").ok()?;
+        let at_ms = std::env::var("THESEUS_INJECT_AT_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        Self::parse_vkey_schedule(&s, at_ms)
+    }
+
+    /// Parse a comma-separated list of hex VK codes.  Each entry may carry an
+    /// optional `@<ms>` absolute time suffix that overrides the default 300ms-
+    /// spaced schedule; un-timed keys start at `at_ms` and fall 300ms after the
+    /// previous key's computed time.  This lets a script wait through a long
+    /// loading screen and then press a key (e.g. to start a race).
+    fn parse_vkey_schedule(s: &str, at_ms: u32) -> Option<Vec<(u8, u32)>> {
+        let mut next_at = at_ms;
+        let mut vkeys = Vec::new();
+        for part in s.split(',') {
+            let (key, at) = match part.trim().split_once('@') {
+                Some((key, at)) => (key.trim(), Some(at.trim().parse::<u32>().ok()?)),
+                None => (part.trim(), None),
+            };
+            let vkey = u8::from_str_radix(key.trim_start_matches("0x"), 16).ok()?;
+            if inject_vkey(vkey).is_some() {
+                let at = at.unwrap_or(next_at);
+                vkeys.push((vkey, at));
+                next_at = at + 300;
+            }
+        }
+        Some(vkeys)
+    }
+
     pub fn poll(&self) -> Option<host::Message> {
         // Debug aid: synthesize key presses so scripted or headless runs can
         // exercise the target's input path. THESEUS_INJECT_VKEY is a
-        // comma-separated list of hex VK_* codes, THESEUS_INJECT_AT_MS the
-        // delay before the first press; keys are tapped 300ms apart.
-        static INJECT: std::sync::OnceLock<Option<(Vec<u8>, u32)>> = std::sync::OnceLock::new();
+        // comma-separated list of hex VK_* codes with optional "@ms" absolute
+        // time suffixes; the first key (or all un-timed keys) starts at
+        // THESEUS_INJECT_AT_MS and subsequent keys are 300ms apart.
+        static INJECT: std::sync::OnceLock<Option<Vec<(u8, u32)>>> = std::sync::OnceLock::new();
         // u16 like the other injectors: a u8 wraps (or overflows in debug
         // builds) past 255 phases, replaying a long vkey list forever.
         static PHASE: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-        if let Some((vkeys, at_ms)) = INJECT.get_or_init(|| {
-            let vkeys = std::env::var("THESEUS_INJECT_VKEY").ok()?;
-            let vkeys = vkeys
-                .split(',')
-                .map(|s| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
-                .collect::<Option<Vec<u8>>>()?
-                .into_iter()
-                .filter(|v| inject_vkey(*v).is_some())
-                .collect::<Vec<u8>>();
-            let at_ms = std::env::var("THESEUS_INJECT_AT_MS").ok()?.parse().ok()?;
-            Some((vkeys, at_ms))
-        }) {
+        if let Some(vkeys) = INJECT.get_or_init(Self::parse_inject_vkey) {
             use std::sync::atomic::Ordering::Relaxed;
             let phase = PHASE.load(Relaxed) as usize;
             let key = phase / 2;
             let down = phase.is_multiple_of(2);
             if key < vkeys.len() {
-                let at = at_ms + key as u32 * 300 + if down { 0 } else { 100 };
+                let (vkey, at) = vkeys[key];
+                let at = at + if down { 0 } else { 100 };
                 if self.time() >= at {
                     PHASE.store(phase as u16 + 1, Relaxed);
-                    let msg = inject_vkey(vkeys[key])?;
+                    let msg = inject_vkey(vkey)?;
                     return Some(if down {
                         host::Message::KeyDown(msg)
                     } else {
@@ -1443,5 +1467,31 @@ mod tests {
         // No window or no guest frame: the raw point passes through clamped.
         assert_eq!(map_to_guest(0, 0, 640, 480, 12.0, 8.0), (12, 8));
         assert_eq!(map_to_guest(640, 480, 0, 0, 12.0, 8.0), (12, 8));
+    }
+
+    #[test]
+    fn vkey_schedule_is_300ms_apart_by_default() {
+        let schedule = Host::parse_vkey_schedule("0x0d,0x28,0x0d", 1000).unwrap();
+        assert_eq!(schedule, vec![(0x0d, 1000), (0x28, 1300), (0x0d, 1600)]);
+    }
+
+    #[test]
+    fn vkey_schedule_supports_absolute_time_suffixes() {
+        // An @ms suffix on a key overrides the default schedule; later keys
+        // resume the 300ms cadence from that explicit time.
+        let schedule = Host::parse_vkey_schedule("0x0d,0x28@5000,0x0d", 0).unwrap();
+        assert_eq!(schedule, vec![(0x0d, 0), (0x28, 5000), (0x0d, 5300)]);
+    }
+
+    #[test]
+    fn vkey_schedule_ignores_unsupported_codes() {
+        let schedule = Host::parse_vkey_schedule("0xff,0x0d,0xff", 0).unwrap();
+        assert_eq!(schedule, vec![(0x0d, 0)]);
+    }
+
+    #[test]
+    fn vkey_schedule_rejects_malformed_input() {
+        assert!(Host::parse_vkey_schedule("not-a-key", 0).is_none());
+        assert!(Host::parse_vkey_schedule("0x0d@not-a-time", 0).is_none());
     }
 }

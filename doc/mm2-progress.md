@@ -196,3 +196,13 @@ Suspects worth a look when the backlog is otherwise blocked:
   added (`ddraw.rs`). Check: `check.sh: OK (fmt 2 files, clippy+test winapi,
   build mm2, whitespace)`. Next: scripted race still stalls at `Just before
   GameLoop`; diagnose the menu/GO DRIVE path or run a longer live capture.
+- 2026-09-09 vkey absolute-time suffixes: What: `THESEUS_INJECT_VKEY` only
+  supported a single 300ms-spaced phase, so a scripted run could not press a
+  key after a long loading screen. Repro: new unit tests
+  `vkey_schedule_supports_absolute_time_suffixes` and
+  `vkey_schedule_is_300ms_apart_by_default` in `host/src/sdl.rs`. Change:
+  `Host::parse_vkey_schedule` parses optional `vkey@<ms>` absolute-time
+  suffixes per key; `THESEUS_INJECT_AT_MS` now defaults to 0 (`host/src/sdl.rs`).
+  Check: `check.sh: OK (fmt 1 files, clippy+test host, build mm2, whitespace)`.
+  Next: use `0x0d@260000` and `0x26@270000` in a 300s headless race to press
+  start and throttle after GameLoop; then survey frames.
