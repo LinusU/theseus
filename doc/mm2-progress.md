@@ -227,3 +227,10 @@ Suspects worth a look when the backlog is otherwise blocked:
   Check: `check.sh: OK (fmt 2 files, clippy+test winapi, build mm2, whitespace)`.
   Next: other COM ref-count leaks in ddraw/d3d7 (`GetDDInterface`, `IDirect3D7`
   and `IDirect3DDevice7` AddRef/Release).
+- 2026-09-09 GetDDInterface AddRef: What: `IDirectDrawSurface7::GetDDInterface` returned
+  the DirectDraw pointer without AddRefing it. Repro: new unit test
+  `get_dd_interface_addrefs` in `win32/winapi/src/ddraw/ddraw.rs` (refs stayed 1
+  before the fix). Change: `ddraw7.rs` now AddRefs the DirectDraw object and
+  rejects a null output pointer; added the test. Check: `check.sh: OK (fmt 2
+  files, clippy+test winapi, build mm2, whitespace)`. Next: `IDirect3D7` and
+  `IDirect3DDevice7` AddRef/Release stub leaks.

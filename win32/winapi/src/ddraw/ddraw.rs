@@ -1787,6 +1787,40 @@ mod tests {
     }
 
     #[test]
+    fn get_dd_interface_addrefs() {
+        // IDirectDrawSurface7::GetDDInterface returns the DirectDraw pointer
+        // and AddRefs it.
+        let mut ctx = context();
+        const DDRAW: u32 = 0x4321;
+        const PPV: u32 = 0x1000;
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: DDRAW,
+            refs: 1,
+            bytes_per_pixel: 2,
+            window: None,
+        });
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::GetDDInterface(&mut ctx, 0x5000, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(DDRAW));
+        assert_eq!(state().ddraw.borrow().as_ref().unwrap().refs, 2);
+
+        // A null output pointer is rejected.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::GetDDInterface(&mut ctx, 0x5000, 0),
+            DD::ERR_INVALIDPARAMS
+        );
+
+        // With no DirectDraw object, the call reports NOTFOUND.
+        state().ddraw.borrow_mut().take();
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::GetDDInterface(&mut ctx, 0x5000, PPV),
+            DD::ERR_NOTFOUND
+        );
+    }
+
+    #[test]
     fn get_gdi_surface_returns_not_found_without_a_matching_primary() {
         // GetGDISurface must not return an arbitrary window surface; when the
         // DirectDraw object has no bound window or there is no matching primary

@@ -1712,15 +1712,17 @@ pub mod IDirectDrawSurface7 {
         if lplpDD == 0 {
             return DD::ERR_INVALIDPARAMS;
         }
-        // There is a single DirectDraw object for the process.
-        let addr = state().ddraw.borrow().as_ref().map(|d| d.addr);
-        match addr {
-            Some(addr) => {
-                ctx.memory.write::<u32>(lplpDD, addr);
-                DD::OK
-            }
-            None => DD::ERR_NOTFOUND,
+        // There is a single DirectDraw object for the process. The returned
+        // pointer is AddRefed to match COM lifetime rules.
+        let ddraw_addr = state().ddraw.borrow().as_ref().map(|d| d.addr);
+        let Some(ddraw_addr) = ddraw_addr else {
+            return DD::ERR_NOTFOUND;
+        };
+        if let Some(mut ddraw) = state().get_ddraw(ddraw_addr) {
+            ddraw.refs += 1;
         }
+        ctx.memory.write::<u32>(lplpDD, ddraw_addr);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
