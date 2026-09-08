@@ -132,6 +132,7 @@ impl DirectDraw {
             primary: Default::default(),
             attached: Default::default(),
             pixels: None,
+            texture: None,
             palette: None,
             src_color_key: None,
             dst_color_key: None,
@@ -180,6 +181,10 @@ pub struct Surface {
 
     /// Address of pixel data.
     pub pixels: Option<u32>,
+
+    /// Host texture for a primary surface that has no attached back buffer to
+    /// borrow one from (created on first present).
+    pub texture: Option<host::Surface>,
 
     pub palette: Option<Rc<RefCell<Palette>>>,
 
@@ -286,19 +291,27 @@ impl Surface {
         let Target::Window(window) = &self.target else {
             return;
         };
-        // We have no texture of our own; borrow the back buffer's.
-        let Some(back) = self.attached.clone() else {
-            return;
-        };
+        let window = window.clone();
         let Some(pixels) = self.to_rgba(mem, &self.palette) else {
             return;
         };
-        let mut back = back.borrow_mut();
-        let Target::Texture(texture) = &mut back.target else {
-            return;
-        };
-        texture.set_pixels(&pixels, self.width * 4);
-        window.borrow_mut().host.render(texture);
+        let (width, height) = (self.width, self.height);
+        if let Some(back) = self.attached.clone() {
+            // Borrow the back buffer's texture rather than keep one of our own.
+            let mut back = back.borrow_mut();
+            let Target::Texture(texture) = &mut back.target else {
+                return;
+            };
+            texture.set_pixels(&pixels, width * 4);
+            window.borrow_mut().host.render(texture);
+        } else {
+            // A lone primary surface the program draws to directly.
+            let texture = self
+                .texture
+                .get_or_insert_with(|| window.borrow_mut().host.create_surface(width, height));
+            texture.set_pixels(&pixels, width * 4);
+            window.borrow_mut().host.render(texture);
+        }
     }
 
     pub fn flip(&mut self, mem: &mut Memory) {
