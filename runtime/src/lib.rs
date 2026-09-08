@@ -1,6 +1,6 @@
 mod exe;
 mod flags;
-mod fpu;
+pub mod fpu;
 mod machine;
 mod mapping;
 mod memory;
