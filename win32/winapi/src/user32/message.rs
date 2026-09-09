@@ -461,9 +461,10 @@ pub fn PeekMessageA(
         1 => true,    // PM_REMOVE
         _ => todo!(), // e.g. PM_NOYIELD
     };
-    // Games poll for messages every frame; keep the audio mixer fed from here
-    // too, in case the app renders without flipping.
+    // Games poll for messages every frame; keep the audio fed from here too,
+    // in case the app renders without flipping.
     crate::dsound::pump(ctx);
+    crate::winmm::pump();
 
     let mut queue = state().message_queue.borrow_mut();
     queue.poll_host();

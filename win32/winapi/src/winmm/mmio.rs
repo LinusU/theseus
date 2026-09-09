@@ -1,4 +1,4 @@
-//! mmio*: the multimedia file I/O API, used to walk RIFF files (.wav), plus MCI.
+//! mmio*: the multimedia file I/O API, used to walk RIFF files (.wav).
 //!
 //! Files are read into memory whole on open and served from there, which keeps
 //! seeking and the chunk walk trivial. Callers that read through MMIOINFO's
@@ -133,18 +133,6 @@ fn ensure_buffer(ctx: &mut Context, hmmio: u32) -> Option<(u32, u32, u32)> {
     ctx.memory[addr..][..file.data.len()].copy_from_slice(&file.data);
     file.buffer = addr;
     Some((addr, pos, len))
-}
-
-#[win32_derive::dllexport]
-pub fn mciSendCommandA(
-    _ctx: &mut Context,
-    _mciId: u32,
-    _uMsg: u32,
-    _dwParam1: u32,
-    _dwParam2: u32,
-) -> u32 {
-    // CD audio etc.; pretend success and play nothing.
-    crate::stub!(0)
 }
 
 #[win32_derive::dllexport]
