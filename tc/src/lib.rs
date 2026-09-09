@@ -111,7 +111,6 @@ pub struct State {
     pub mem: Memory,
     pub addr_info: HashMap<u32, AddrInfo>,
     pub blocks: HashMap<u32, Block>,
-    pub report: gather::Report,
     /// Code ranges the program patches at runtime (self-modifying inner loops
     /// with placeholder constants). Instructions here read their immediates
     /// and displacements from memory when executed, not from the translation.
@@ -125,7 +124,6 @@ impl Default for State {
             mem: Default::default(),
             addr_info: Default::default(),
             blocks: Default::default(),
-            report: Default::default(),
             patched_code: Default::default(),
         }
     }
