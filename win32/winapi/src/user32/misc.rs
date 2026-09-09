@@ -75,8 +75,8 @@ pub fn GetMenuItemRect(
 }
 
 #[win32_derive::dllexport]
-pub fn KillTimer(_ctx: &mut Context, _hWnd: HWND, _uIDEvent: u32) -> bool {
-    todo!()
+pub fn KillTimer(_ctx: &mut Context, hWnd: HWND, uIDEvent: u32) -> bool {
+    crate::user32::kill_timer(hWnd, uIDEvent)
 }
 
 #[win32_derive::dllexport]
@@ -135,12 +135,25 @@ pub fn SetMenu(_ctx: &mut Context, _hWnd: HWND, _hMenu: HMENU) -> bool {
 #[win32_derive::dllexport]
 pub fn SetTimer(
     _ctx: &mut Context,
-    _hWnd: HWND,
-    _nIDEvent: u32,
-    _uElapse: u32,
-    _lpTimerFunc: Ptr<()>, /* TIMERPROC */
+    hWnd: HWND,
+    nIDEvent: u32,
+    uElapse: u32,
+    lpTimerFunc: Ptr<()>, /* TIMERPROC */
 ) -> u32 {
-    stub!(0) // fail
+    // With a window, the app picks the id and gets it back; without one, the
+    // id is ours to hand out. Ids only have to be unique per window, so a
+    // counter is enough for the windowless case.
+    let id = if hWnd.is_null() {
+        static NEXT_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    } else {
+        nIDEvent
+    };
+    // USER_TIMER_MINIMUM: Windows clamps anything faster, and without the
+    // clamp a zero-length period would starve every other message.
+    let period = uElapse.max(10);
+    crate::user32::set_timer(hWnd, id, period, lpTimerFunc.addr);
+    id
 }
 
 // XXX: cdecl

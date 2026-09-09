@@ -24,6 +24,7 @@ pub enum WM {
     QUIT = 0x12,
     SHOWWINDOW = 0x18,
     ACTIVATEAPP = 0x1c,
+    TIMER = 0x113,
     KEYDOWN = 0x100,
     KEYUP = 0x101,
     CHAR = 0x102,
@@ -49,11 +50,29 @@ pub struct MSG {
     pt: POINT,
 }
 
+/// A timer created by SetTimer. Like WM_PAINT, WM_TIMER is not queued as it
+/// happens but synthesized when the app asks for a message and the timer is
+/// due, so a slow app sees one WM_TIMER rather than a backlog of them.
+///
+/// That also means a timer only fires while the app is asking: an app blocked
+/// in GetMessage waits for a host event rather than for the next timer, where
+/// Windows would wake it. Apps that use timers poll with PeekMessage.
+struct Timer {
+    hwnd: HWND,
+    id: u32,
+    period: u32,
+    /// Host time the next WM_TIMER is due at.
+    due: u32,
+    /// TIMERPROC to call instead of the window procedure, or 0 for none.
+    proc: u32,
+}
+
 #[derive(Default)]
 pub struct MessageQueue {
     pub window: Option<Rc<RefCell<Window>>>,
     messages: VecDeque<MSG>,
     quit: Option<MSG>,
+    timers: Vec<Timer>,
 }
 
 win32flags! {
@@ -170,6 +189,19 @@ pub fn post_message(hwnd: HWND, message: u32, wParam: WPARAM, lParam: LPARAM) {
     });
 }
 
+/// Back SetTimer: start (or restart) a timer delivering WM_TIMER to `hwnd`.
+pub fn set_timer(hwnd: HWND, id: u32, period: u32, proc: u32) {
+    state()
+        .message_queue
+        .borrow_mut()
+        .set_timer(hwnd, id, period, proc);
+}
+
+/// Back KillTimer; false when no such timer exists.
+pub fn kill_timer(hwnd: HWND, id: u32) -> bool {
+    state().message_queue.borrow_mut().kill_timer(hwnd, id)
+}
+
 #[win32_derive::dllexport]
 pub fn WaitMessage(_ctx: &mut Context) -> bool {
     let mut queue = state().message_queue.borrow_mut();
@@ -196,11 +228,37 @@ impl MessageQueue {
         })
     }
 
+    /// The first timer that has come due, if any.
+    fn due_timer(&self) -> Option<usize> {
+        let now = host::host().time();
+        // Wrapping subtraction so the comparison survives the host clock
+        // passing u32::MAX.
+        self.timers
+            .iter()
+            .position(|timer| now.wrapping_sub(timer.due) < i32::MAX as u32)
+    }
+
+    fn timer_msg(&self, index: usize) -> MSG {
+        let timer = &self.timers[index];
+        MSG {
+            hwnd: timer.hwnd,
+            message: WM::TIMER as u32,
+            wParam: timer.id,
+            // The TIMERPROC rides along in lParam, where DispatchMessage
+            // finds it.
+            lParam: timer.proc,
+            time: host::host().time(),
+            pt: POINT::default(),
+        }
+    }
+
     fn peek(&mut self) -> Option<MSG> {
         if let Some(msg) = self.messages.front() {
             Some(*msg)
         } else if self.quit.is_some() {
             self.quit
+        } else if let Some(index) = self.due_timer() {
+            Some(self.timer_msg(index))
         } else {
             self.paint_msg()
         }
@@ -211,9 +269,47 @@ impl MessageQueue {
             Some(msg)
         } else if self.quit.is_some() {
             self.quit.take()
+        } else if let Some(index) = self.due_timer() {
+            let msg = self.timer_msg(index);
+            // A timer that fell behind (the app was busy, or the host slept)
+            // resumes from now rather than firing repeatedly to catch up.
+            let timer = &mut self.timers[index];
+            timer.due = host::host().time() + timer.period;
+            Some(msg)
         } else {
             self.paint_msg()
         }
+    }
+
+    fn set_timer(&mut self, hwnd: HWND, id: u32, period: u32, proc: u32) {
+        let due = host::host().time() + period;
+        match self
+            .timers
+            .iter_mut()
+            .find(|timer| timer.hwnd == hwnd && timer.id == id)
+        {
+            // Reusing an existing (hwnd, id) resets that timer rather than
+            // adding a second one.
+            Some(timer) => {
+                timer.period = period;
+                timer.due = due;
+                timer.proc = proc;
+            }
+            None => self.timers.push(Timer {
+                hwnd,
+                id,
+                period,
+                due,
+                proc,
+            }),
+        }
+    }
+
+    fn kill_timer(&mut self, hwnd: HWND, id: u32) -> bool {
+        let before = self.timers.len();
+        self.timers
+            .retain(|timer| !(timer.hwnd == hwnd && timer.id == id));
+        self.timers.len() != before
     }
 
     /// Pop one message, waiting for a new one if necessary.
@@ -319,6 +415,18 @@ pub fn DispatchMessageA(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
 #[win32_derive::dllexport]
 pub fn DispatchMessageW(ctx: &mut Context, lpMsg: Ptr<MSG>) -> u32 {
     let msg = lpMsg.read(&ctx.memory).unwrap();
+    if msg.message == WM::TIMER as u32 && msg.lParam != 0 {
+        // A timer created with a TIMERPROC bypasses the window procedure; the
+        // callback takes the same four arguments, with the elapsed time in
+        // place of lParam.
+        let timer_proc = ctx.indirect(msg.lParam);
+        let time = host::host().time();
+        ctx.call32_x86(
+            timer_proc,
+            vec![msg.hwnd.to_raw(), msg.message, msg.wParam, time],
+        );
+        return 0;
+    }
     call_wndproc(ctx, msg.hwnd, msg.message, msg.wParam, msg.lParam)
 }
 
