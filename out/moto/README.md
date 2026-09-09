@@ -8,11 +8,10 @@ together, how to iterate, and what is known to be missing. Update the
 
 ## Status
 
-See the bottom of this file ("Log") for the latest state. In short: the game
-starts, plays its 3D intro (the Delphine logo) and reaches the title screen
-("Moto Racer GP" with a Start button), rendering correctly through the
-software renderer at 640x480x16. Not yet exercised: input (getting past the
-title screen), sound, CD music, the loading dialog, and an actual race.
+See the bottom of this file ("Log") for the latest state. In short: a full
+race plays end to end — menus, track/bike select, racing with keyboard
+input, HUD, going off-track, GAME OVER — rendering correctly through the
+software renderer at 640x480x16. Not yet exercised: sound, CD music.
 
 ## Layout
 
@@ -144,10 +143,15 @@ structures on `kernel32::lock().process_heap`, drop the lock, then
 
 ### Where things are
 
-- `win32/winapi/src/user32/`: one window is modelled (`state().window`), with
-  per-window `wndproc`/style/user data so `SetWindowLong(GWL_WNDPROC)`
-  subclassing works. Window classes are a list keyed by name (`wndclasses`).
-  `hook.rs` implements the WH_CBT hook MFC needs to attach its `CWnd` objects.
+- `win32/winapi/src/user32/`: one host-backed window is modelled
+  (`state().window`), with per-window `wndproc`/style/user data so
+  `SetWindowLong(GWL_WNDPROC)` subclassing works. Window classes are a list
+  keyed by name (`wndclasses`). Dialogs and their controls are a separate,
+  lighter table (`state().dialog_windows`, `dialog.rs`) with no window
+  procedure or on-screen presence of their own — `GetDlgItem` looks them up
+  by id. `hook.rs` implements the WH_CBT hook MFC needs to attach its `CWnd`
+  objects (both `CreateWindowExA` and `CreateDialogIndirectParamA` deliver
+  it).
 - `win32/winapi/src/ddraw/`: `ddraw1.rs` is IDirectDraw/IDirectDrawSurface
   (DirectX 1), `ddraw7.rs` is the DX7 flavour. Surfaces are software buffers
   blitted to the host window.
@@ -166,7 +170,9 @@ structures on `kernel32::lock().process_heap`, drop the lock, then
    Windows; `moto.reg` does it here.
 2. Creates its main window (class registered through MFC, subclassed via the
    WH_CBT hook), then a modeless dialog from a resource template
-   (`CreateDialogIndirectParamA`, control id 1005) that we don't create.
+   (`CreateDialogIndirectParamA`, control id 1005) — created for real since
+   2026-09-09 (see "Where things are" above), with HCBT_CREATEWND delivered
+   so MFC's `CWnd` attaches to it.
 3. `DirectDrawEnumerateA`, `DirectDrawCreate`, `QueryInterface(IID_IDirectDraw2)`,
    `EnumDisplayModes`, `GetCaps`, `GetDisplayMode` (must say 16 bpp, else
    "16 bits screen mode requiered !"), Release, then `DirectDrawCreate` again,
@@ -178,9 +184,12 @@ structures on `kernel32::lock().process_heap`, drop the lock, then
    skips DirectSound.
 5. Loads `DATA\*.BPT` and `*.BKF`. Its loader uses C++ exceptions (`throw int`)
    as part of normal control flow, so SEH had to work (`kernel32/seh.rs`).
-6. Updating the loading dialog throws `CNotSupportedException` (control lookup
-   on the missing dialog), which MFC's `CWnd::WindowProc` catches and reports
-   with an empty message box; the game carries on.
+6. Updating the loading dialog no longer throws: `GetDlgItem` now finds the
+   real control (previously this threw `CNotSupportedException`, caught by
+   MFC's `CWnd::WindowProc` and reported with an empty message box — harmless
+   here, but the same exception recurred every frame once racing starts,
+   since the in-race HUD updates through a dialog control too; see Known
+   gaps history below).
 7. Menu pages load (`MENU.BKF`, `MENUUS.BKF`, `PAGES.BKF`), then the 3D
    intro runs (Delphine logo; texture mappers are self-modifying code, see
    below) and the title screen appears; the game then idles pumping
@@ -188,44 +197,41 @@ structures on `kernel32::lock().process_heap`, drop the lock, then
 
 ## Known gaps, in likely order of mattering
 
-0. **Input has not been tried.** Run without `THESEUS_HEADLESS` and press
-   keys/click Start. The game reads `WM_KEYDOWN`/`GetKeyState`; the host
-   delivers those for the one window, so this may just work. If not, start
-   with `THESEUS_TRACE=user32/message,user32/input`.
-1. **Dialogs / multiple windows.** user32 models exactly one window
-   (`user32::State::window`); a second `CreateWindowEx` replaces the first
-   (warning logged) and `CreateDialogIndirectParamA` returns NULL. The game's
-   loading dialog then throws every time it updates progress (harmless so far,
-   but noisy and may hide real problems). The fix is a window table keyed by
-   HWND: child/dialog windows without a host window, `GetDlgItem` returning
-   their controls, `SendMessage` reaching their procedures. Parse the
-   DLGTEMPLATE (header, then items with class/text as ordinal-or-string) to
-   create the controls.
-2. **`WM_CREATE`/`WM_NCCREATE`** are not sent on window creation; MFC does some
+0. **Multiple real (host-backed) windows.** user32 still models exactly one
+   such window (`user32::State::window`); a second `CreateWindowEx` still
+   replaces the first (warning logged). Dialogs are no longer part of this
+   gap (see "Where things are" above): `CreateDialogIndirectParamA` parses
+   the DLGTEMPLATE and registers a dialog plus one entry per child control,
+   and `GetDlgItem` finds them by id. What's still missing there: the
+   controls have no real class/rect info parsed out, no window procedure, and
+   nothing draws them — fine for code that only checks a control *exists* (as
+   moto's HUD update does), not for anything that needs one rendered or
+   sent a real message.
+1. **`WM_CREATE`/`WM_NCCREATE`** are not sent on window creation; MFC does some
    setup in `OnCreate`. See the TODO in `CreateWindowExA`.
-3. **x87 coverage.** `tc/src/codegen/fpu.rs` implements the common instructions;
+2. **x87 coverage.** `tc/src/codegen/fpu.rs` implements the common instructions;
    an unimplemented one compiles to a `panic!("X not implemented")` in the
    generated code and is hit only when executed. Add it, re-translate.
-4. **MMX/cpuid.** `-noCpuDetect -noMMX` avoid both paths; `cpuid` compiles to a
+3. **MMX/cpuid.** `-noCpuDetect -noMMX` avoid both paths; `cpuid` compiles to a
    runtime `todo!()`. The MMX blitters could be enabled later by finishing
    `codegen/mmx.rs`.
-5. **Rendering correctness.** Surfaces are 16-bit RGB565 buffers; `Blt` handles
+4. **Rendering correctness.** Surfaces are 16-bit RGB565 buffers; `Blt` handles
    copies, color keys and color fills; stretching, mirroring and `DDBLTFX`
    effects are not implemented. Palettes only for 8-bit surfaces.
-6. **Input.** The game reads keys via window messages and `GetKeyState` (no
+5. **Input.** The game reads keys via window messages and `GetKeyState` (no
    DirectInput import). Joystick reports no devices.
-7. **CD audio**: the game plays music through `mciSendCommandA` (MCI_OPEN of
+6. **CD audio**: the game plays music through `mciSendCommandA` (MCI_OPEN of
    `cdaudio`, MCI_PLAY with track numbers). `winmm/mmio.rs` stubs it. GOG
    solves this on Windows with a `winmm.dll` shim; here the equivalent is to
    play `scratch/moto/install/NN.wav` (CD track NN, 44.1 kHz 16-bit stereo)
    through `host` audio when MCI_PLAY asks for track NN.
-8. **Sound effects**: run without `-nosound` once the menu works; DirectSound
+7. **Sound effects**: run without `-nosound` once the menu works; DirectSound
    exists in winapi but `IDirectSound3DBuffer` (GUID present in the exe) does
    not.
-9. **IDirect3D**: keep returning `E_NOINTERFACE` and run with `-noD3D`; the
+8. **IDirect3D**: keep returning `E_NOINTERFACE` and run with `-noD3D`; the
    game has a software renderer.
-10. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
-11. **Exceptions and the Rust stack.** A caught C++ exception leaves a few Rust
+9. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
+10. **Exceptions and the Rust stack.** A caught C++ exception leaves a few Rust
     frames behind for good (see `kernel32/seh.rs`); thousands of exceptions
     would overflow the stack. If that happens, run the program on a thread
     with a large stack, or rework the dispatch so handlers are entered by
@@ -256,3 +262,29 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   title screen render as before (~47 fps headless, this build limits the
   frame rate). History rebased so generic Theseus commits come first; the
   CD-based history survives as branch `lu-moto-racer-cd`.
+- 2026-09-09 (later): First input testing found three bugs blocking an actual
+  race, all fixed:
+  - `fprem` (x87 float modulo, used constantly by the angle math a race
+    needs) computed the right value but never updated the FPU status word,
+    so the `fnstsw`/`sahf`/`jp` retry loop MSVC emits around it could spin
+    forever whenever an earlier comparison happened to leave C2 set — hung
+    the game as soon as a race started. Added `FPU::prem()`, which reports
+    C2 clear and the quotient's bits in C0/C1/C3 (Intel SDM Vol. 1 8.3.5).
+  - `CreateDialogIndirectParamA`/`GetDlgItem` were fully stubbed, and the
+    in-race HUD updates through a real dialog control (not a sprite) every
+    frame, so it threw `CNotSupportedException` every frame — the catching
+    handler aborted the rest of that frame's draw, leaving only the sky/water
+    background on screen (a persistent, not transient, bug: it lasted the
+    whole race). Added dialog/dialog-control window tracking — see "Where
+    things are" and Known gaps above.
+  - Separately, `Surface::flip` only refreshed the on-screen texture when the
+    front surface had a palette (`ddraw.rs`) — irrelevant for this 16bpp
+    (RGB565) game, so the window never updated past its first frame while the
+    guest-memory back buffer (and `THESEUS_DUMP_FRAMES` dumps, which read it
+    directly) kept rendering correctly underneath. This made the bug
+    invisible to headless testing and produced the confusing symptom of the
+    same build looking perfect in dumped frames and broken on screen at the
+    same moment. Fixed to refresh unconditionally (same fix as `00b5e95e` on
+    branch `lu-mm2`, ported here). Result: a full race — menus, track/bike
+    select, racing, HUD, going off-track, GAME OVER — renders and plays
+    correctly.
