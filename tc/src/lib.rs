@@ -164,12 +164,19 @@ pub fn stdcall_name(name: &str) -> String {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
 
-    // weanetr.dll is a C++ DLL with __thiscall methods.  We don't
-    // implement MLDPlay, but we route each call to a stub that pops the
-    // correct number of stack arguments so the caller's stack is not
-    // corrupted.
+    // weanetr.dll is a C++ DLL with __thiscall methods.  Most calls are
+    // routed to a stub that pops the correct number of stack arguments so
+    // the caller's stack is not corrupted, but the Populous startup path
+    // needs a few specific methods to report success and enumerate a fake
+    // service.
     if let Some(func) = name.strip_prefix("weanetr::") {
         if let Some(method) = weanetr_method_name(func) {
+            match method.as_str() {
+                "StartupNetwork" | "AreWeLobbied" | "EnumerateServices" => {
+                    return format!("weanetr::{method}");
+                }
+                _ => {}
+            }
             if let Some(n) = weanetr_arg_count(&method) {
                 return format!("weanetr::thunk_{n}_stdcall");
             }
