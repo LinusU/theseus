@@ -3,3 +3,4 @@ src/generated.rs
 src/generated/
 report.html
 missing.txt
+missing-addrs.txt
