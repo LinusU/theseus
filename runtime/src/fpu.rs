@@ -121,6 +121,32 @@ impl FPU {
         self.cc = cc;
     }
 
+    /// fprem: replace st(0) with the IEEE remainder of st(0) / st(1) and set
+    /// the condition codes as hardware does for a *complete* reduction (C2
+    /// clear, C0/C1/C3 the low 3 bits of the truncated quotient). Real x87
+    /// FPREM can leave a partial result with C2 set when the operands'
+    /// exponents differ by more than 63, requiring the caller to loop; we
+    /// always reduce fully in one step, so a caller's `fnstsw`/`jp` retry
+    /// loop must see C2 clear or it spins forever (as happened before this
+    /// was implemented: `cc` was simply never touched by fprem).
+    pub fn prem(&mut self) {
+        let st0 = self.get(0);
+        let st1 = self.get(1);
+        let quotient = (st0 / st1).trunc() as i64;
+        self.set(0, st0 % st1);
+        let mut cc = Status::empty();
+        if quotient & 0b100 != 0 {
+            cc |= Status::C0;
+        }
+        if quotient & 0b010 != 0 {
+            cc |= Status::C1;
+        }
+        if quotient & 0b001 != 0 {
+            cc |= Status::C3;
+        }
+        self.cc = cc;
+    }
+
     pub fn status(&self) -> u16 {
         // Our status register impl doesn't include st_top so include it here.
         let mut status = self.cc.bits();
