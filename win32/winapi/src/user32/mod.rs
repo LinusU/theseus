@@ -25,7 +25,7 @@ pub use rect::*;
 pub use resource::*;
 pub use window::*;
 
-use crate::HANDLE;
+use crate::{HANDLE, handle::Handles};
 
 pub type HWND = HANDLE;
 pub type HMENU = u32;
@@ -43,6 +43,10 @@ pub struct State {
     message_queue: RefCell<MessageQueue>,
     pub input: RefCell<Input>,
     pub hooks: RefCell<Vec<Hook>>,
+    /// Dialogs created via CreateDialogIndirectParamA, and their controls.
+    /// The one real window's HWND is hardcoded to 1 (see
+    /// window::create_window), so this starts at 2 to stay disjoint from it.
+    pub dialog_windows: RefCell<Handles<DialogWindow>>,
 }
 
 // TODO: reuse locking pattern from kernel32
@@ -59,5 +63,6 @@ pub fn state() -> &'static State {
         message_queue: Default::default(),
         input: Default::default(),
         hooks: Default::default(),
+        dialog_windows: RefCell::new(Handles::new(2)),
     })
 }

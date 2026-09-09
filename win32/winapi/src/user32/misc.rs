@@ -329,15 +329,14 @@ pub fn IsDialogMessageA(_ctx: &mut Context, _hDlg: HWND, _lpMsg: u32) -> bool {
 
 #[win32_derive::dllexport]
 pub fn CreateDialogIndirectParamA(
-    _ctx: &mut Context,
-    _hInstance: u32,
-    _lpTemplate: u32,
-    _hWndParent: HWND,
+    ctx: &mut Context,
+    hInstance: u32,
+    lpTemplate: u32,
+    hWndParent: HWND,
     _lpDialogFunc: u32,
     _dwInitParam: u32,
 ) -> HWND {
-    log::warn!("CreateDialogIndirectParamA: dialogs not supported");
-    HWND::null()
+    create_dialog(ctx, lpTemplate, hInstance, hWndParent)
 }
 
 #[win32_derive::dllexport]

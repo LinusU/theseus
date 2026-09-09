@@ -706,6 +706,13 @@ fn window(hwnd: HWND) -> Option<Rc<RefCell<Window>>> {
     Some(window.clone())
 }
 
+/// Whether an HWND refers to a dialog or dialog control (see
+/// CreateDialogIndirectParamA), which `window()` doesn't know about since
+/// they have no host-backed surface.
+fn is_dialog_window(hwnd: HWND) -> bool {
+    state().dialog_windows.borrow().get(hwnd).is_some()
+}
+
 #[win32_derive::dllexport]
 pub fn GetSysColor(_ctx: &mut Context, nIndex: COLOR) -> u32 {
     nIndex.to_colorref().as_win32()
@@ -813,17 +820,17 @@ pub fn AdjustWindowRectEx(
 
 #[win32_derive::dllexport]
 pub fn IsWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
-    window(hWnd).is_some()
+    window(hWnd).is_some() || is_dialog_window(hWnd)
 }
 
 #[win32_derive::dllexport]
 pub fn IsWindowVisible(_ctx: &mut Context, hWnd: HWND) -> bool {
-    window(hWnd).is_some()
+    window(hWnd).is_some() || is_dialog_window(hWnd)
 }
 
 #[win32_derive::dllexport]
 pub fn IsWindowEnabled(_ctx: &mut Context, hWnd: HWND) -> bool {
-    window(hWnd).is_some()
+    window(hWnd).is_some() || is_dialog_window(hWnd)
 }
 
 #[win32_derive::dllexport]
