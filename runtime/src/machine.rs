@@ -86,7 +86,7 @@ impl Context {
     pub fn indirect(&self, addr: u32) -> Cont {
         if addr == 0 {
             self.dump();
-            panic!("jmp to null ptr");
+            panic!("jmp to null ptr from {:#x}", self.cpu.regs.eip_context);
         }
         if let Some(func) = self.cache.get(addr) {
             return Cont(func);
