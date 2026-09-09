@@ -11976,7 +11976,7 @@ pub fn x4b30d6(ctx: &mut Context) -> Cont {
 
 pub fn x4b30df(ctx: &mut Context) -> Cont {
     // 004b30df fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 004b30e1 jmp short 004B30E8h
     Cont(x4b30e8)
 }

@@ -10123,7 +10123,7 @@ pub fn x48b3f1(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x2cu32)) as f64,
     );
     // 0048b407 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b409 fstp dword ptr [esp+2Ch]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x2cu32),
@@ -10271,7 +10271,7 @@ pub fn x48b464(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x28u32)) as f64,
     );
     // 0048b47a fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b47c fstp dword ptr [esp+28h]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x28u32),
@@ -10399,7 +10399,7 @@ pub fn x48b4c3(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x24u32)) as f64,
     );
     // 0048b4d9 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b4db fstp dword ptr [esp+24h]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x24u32),
@@ -10483,7 +10483,7 @@ pub fn x48b503(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x20u32)) as f64,
     );
     // 0048b519 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b51b fstp dword ptr [esp+20h]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x20u32),
@@ -10693,7 +10693,7 @@ pub fn x48b590(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x1cu32)) as f64,
     );
     // 0048b5a6 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b5a8 fstp dword ptr [esp+1Ch]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x1cu32),
@@ -10798,7 +10798,7 @@ pub fn x48b5d0(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x18u32)) as f64,
     );
     // 0048b5f4 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b5f6 fstp dword ptr [esp+18h]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x18u32),
@@ -10945,7 +10945,7 @@ pub fn x48b64d(ctx: &mut Context) -> Cont {
             .read::<f32>(ctx.cpu.regs.esp.wrapping_add(0x10u32)) as f64,
     );
     // 0048b666 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 0048b668 fstp dword ptr [esp+10h]
     ctx.memory.write::<f32>(
         ctx.cpu.regs.esp.wrapping_add(0x10u32),
