@@ -19,32 +19,60 @@ pub struct Event {
     cond: Condvar,
 }
 
+const WAIT_OBJECT_0: u32 = 0;
+const WAIT_TIMEOUT: u32 = 0x102;
+const WAIT_FAILED: u32 = 0xFFFFFFFF;
+
 #[win32_derive::dllexport]
 pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: u32) -> u32 /* WAIT_EVENT */
 {
     let event = {
         let kernel32 = lock();
         let Some(Object::Event(event)) = kernel32.objects.get(hHandle) else {
-            return 0;
+            return WAIT_FAILED;
         };
         event.clone()
     };
 
     let mut signaled = event.signaled.lock().unwrap();
-    while !*signaled {
-        signaled = event
-            .cond
-            .wait_timeout(
-                signaled,
-                std::time::Duration::from_millis(dwMilliseconds as u64),
-            )
-            .unwrap()
-            .0;
+    if *signaled {
+        if !event.manual_reset {
+            *signaled = false;
+        }
+        return WAIT_OBJECT_0;
     }
-    if !event.manual_reset {
-        *signaled = false;
+
+    // Already unsignaled. If the caller just wants to poll, return immediately.
+    if dwMilliseconds == 0 {
+        return WAIT_TIMEOUT;
     }
-    0
+
+    // INFINITE: block until the event is set.
+    if dwMilliseconds == 0xFFFFFFFF {
+        while !*signaled {
+            signaled = event.cond.wait(signaled).unwrap();
+        }
+        if !event.manual_reset {
+            *signaled = false;
+        }
+        return WAIT_OBJECT_0;
+    }
+
+    let mut result = event
+        .cond
+        .wait_timeout(
+            signaled,
+            std::time::Duration::from_millis(dwMilliseconds as u64),
+        )
+        .unwrap();
+    if result.1.timed_out() {
+        WAIT_TIMEOUT
+    } else {
+        if !event.manual_reset {
+            *result.0 = false;
+        }
+        WAIT_OBJECT_0
+    }
 }
 
 #[win32_derive::dllexport]
