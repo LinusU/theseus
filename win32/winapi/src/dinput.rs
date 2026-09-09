@@ -224,6 +224,8 @@ pub struct Device {
 pub struct State {
     /// Maps an IDirectInputDevice interface pointer to the device it represents.
     pub devices: HashMap<u32, Device>,
+    /// IDirectInput interface pointers -> COM reference count.
+    pub objects: HashMap<u32, u32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -258,6 +260,7 @@ pub fn DirectInputCreateA(
     };
     drop(kernel32);
     ctx.memory.write::<u32>(ppDI, ptr);
+    lock().objects.insert(ptr, 1);
     DI_OK
 }
 
@@ -285,22 +288,47 @@ pub mod IDirectInput {
 
     #[win32_derive::dllexport]
     pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
-        query_interface(
+        let hr = query_interface(
             ctx,
             this,
             riid,
             ppv,
             &[IID_IDirectInputA, IID_IDirectInput2A],
-        )
+        );
+        if hr == DI_OK {
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(refs) = lock().objects.get_mut(&this) {
+                *refs += 1;
+            }
+        }
+        hr
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        match lock().objects.get_mut(&this) {
+            Some(refs) => {
+                *refs += 1;
+                *refs
+            }
+            None => 0,
+        }
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let mut state = lock();
+        let Some(refs) = state.objects.get_mut(&this) else {
+            return 0;
+        };
+        *refs = refs.saturating_sub(1);
+        let remaining = *refs;
+        if remaining > 0 {
+            return remaining;
+        }
+        state.objects.remove(&this);
+        drop(state);
+        kernel32::lock().process_heap.free(&mut ctx.memory, this);
         0
     }
 
@@ -1176,6 +1204,37 @@ mod tests {
             IDirectInput::QueryInterface(&mut ctx, 0x2000, 0x1000, 0),
             E_POINTER
         );
+    }
+
+    #[test]
+    fn dinput_object_lifetime_addref_release() {
+        // The IDirectInput object counts real references: QueryInterface
+        // AddRefs, and the last Release frees the interface block.
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = kernel32::lock();
+            k32.process_heap = Heap::new(0x1000, 0x800);
+        }
+        write_guid(&mut ctx, 0x3000, &IID_IUnknown);
+
+        const PPV: u32 = 0x2000;
+        assert_eq!(DirectInputCreateA(&mut ctx, 0, 0, PPV, 0), DI_OK);
+        let di = ctx.memory.read::<u32>(PPV);
+        assert_eq!(lock().objects.get(&di), Some(&1));
+
+        assert_eq!(
+            IDirectInput::QueryInterface(&mut ctx, di, 0x3000, PPV + 4),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), di);
+        assert_eq!(lock().objects.get(&di), Some(&2));
+
+        assert_eq!(IDirectInput::AddRef(&mut ctx, di), 3);
+        assert_eq!(IDirectInput::Release(&mut ctx, di), 2);
+        assert_eq!(IDirectInput::Release(&mut ctx, di), 1);
+        assert_eq!(IDirectInput::Release(&mut ctx, di), 0);
+        assert!(!lock().objects.contains_key(&di));
     }
 
     #[test]

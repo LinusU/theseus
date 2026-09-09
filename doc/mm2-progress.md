@@ -330,3 +330,13 @@ Suspects worth a look when the backlog is otherwise blocked:
   the interface block (`dsound.rs`). Check: `check.sh: OK (fmt 1 files,
   clippy+test winapi, build mm2, whitespace)`. Next: audit
   `IDirectInput`/`IDirectInputDevice` QI shape, then a live probe run.
+- 2026-09-09 IDirectInput object ref counting: What: `IDirectInput`'s
+  `AddRef`/`Release` returned constants and the object was never registered,
+  so `QueryInterface` could not AddRef it either; the device side already
+  counted real refs. Repro: new test
+  `dinput_object_lifetime_addref_release`. Change: `dinput::State` gains an
+  `objects` ref map registered by `DirectInputCreateA`; QI AddRefs on
+  success, AddRef/Release count real refs, and the last Release frees the
+  interface block (`dinput.rs`). Check: `check.sh: OK (fmt 1 files,
+  clippy+test winapi, build mm2, whitespace)`. Next: live
+  `out/mm2/probe-input.sh` run — a display is available in this session.
