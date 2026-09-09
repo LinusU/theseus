@@ -22,6 +22,7 @@ pub mod ole32;
 mod point;
 mod ptr;
 mod rect;
+pub mod qmixer;
 pub mod shell32;
 pub mod trace;
 pub mod unsupported;
