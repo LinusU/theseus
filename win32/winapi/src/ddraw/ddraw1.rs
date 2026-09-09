@@ -16,6 +16,13 @@ pub const IID_IDirectDraw: GUID = GUID::new(
     [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
 );
 
+pub const IID_IDirectDrawSurface: GUID = GUID::new(
+    0x6c14db81,
+    0xa733,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+);
+
 pub mod IDirectDraw {
     use super::*;
 
@@ -619,15 +626,36 @@ pub mod IDirectDrawSurface {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppvObject: u32) -> DD {
+        if !crate::ddraw::guest_range(ctx, ppvObject, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDirectDrawSurface
+        {
+            ctx.memory.write::<u32>(ppvObject, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(surface) = state().surf.borrow().get(&this) {
+                surface.borrow_mut().refs += 1;
+            }
+            return DD::OK;
+        }
+        if iid == crate::ddraw::ddraw7::IID_IDIRECTDRAWSURFACE7 {
+            // A cross-version QueryInterface hands out a v7 interface pointer
+            // to the same surface object.
+            return crate::ddraw::ddraw::surface_alias(
+                ctx,
+                this,
+                ppvObject,
+                crate::ddraw::ddraw7::IDirectDrawSurface7::new,
+            );
+        }
         log::warn!("IDirectDrawSurface::QueryInterface({iid:?}): not supported");
-        ctx.memory.write::<u32>(_ppvObject, 0);
+        ctx.memory.write::<u32>(ppvObject, 0);
         DD::E_NOINTERFACE
     }
 
@@ -645,28 +673,7 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn Release(ctx: &mut Context, this: u32) -> u32 {
-        let surfaces = state().surf.borrow_mut();
-        let Some(surface) = surfaces.get(&this) else {
-            return 0;
-        };
-        let remaining = {
-            let mut surface = surface.borrow_mut();
-            surface.refs = surface.refs.saturating_sub(1);
-            surface.refs
-        };
-        drop(surfaces);
-        if remaining > 0 {
-            return remaining;
-        }
-        let Some(surface) = state().surf.borrow_mut().remove(&this) else {
-            return 0;
-        };
-        // Games recreate surfaces when changing screens, so returning the
-        // pixels keeps the heap from growing without bound.
-        if let Some(pixels) = surface.borrow_mut().pixels.take() {
-            kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
-        }
-        0
+        crate::ddraw::ddraw::release_surface(ctx, this)
     }
 
     #[win32_derive::dllexport]

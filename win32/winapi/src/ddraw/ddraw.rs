@@ -855,6 +855,64 @@ pub(crate) fn lock_offset(
     Some(pixels + top * pitch + left * bytes_per_pixel)
 }
 
+/// Shared body for a cross-version surface `QueryInterface`: allocate an
+/// interface pointer with `new_pointer` for the surface behind `this` and
+/// register it as another map entry naming the same object.
+pub(crate) fn surface_alias(
+    ctx: &mut Context,
+    this: u32,
+    ppv: u32,
+    new_pointer: fn(&mut Context, &mut crate::heap::Heap) -> Option<u32>,
+) -> DD {
+    let surface = {
+        let surfaces = state().surf.borrow();
+        match surfaces.get(&this) {
+            Some(surface) => surface.clone(),
+            None => return DD::ERR_INVALIDPARAMS,
+        }
+    };
+    let mut kernel32 = kernel32::lock();
+    let Some(addr) = new_pointer(ctx, &mut kernel32.process_heap) else {
+        return DD::ERR_OUTOFMEMORY;
+    };
+    drop(kernel32);
+    surface.borrow_mut().refs += 1;
+    state().surf.borrow_mut().insert(addr, surface);
+    ctx.memory.write::<u32>(ppv, addr);
+    DD::OK
+}
+
+/// Shared body for surface `Release`: decrements the object's ref count and,
+/// at zero, frees the pixel buffer and drops every interface-pointer map
+/// entry naming the dead object.
+pub(crate) fn release_surface(ctx: &mut Context, this: u32) -> u32 {
+    let surface = {
+        let surfaces = state().surf.borrow();
+        match surfaces.get(&this) {
+            Some(surface) => surface.clone(),
+            None => return 0,
+        }
+    };
+    let remaining = {
+        let mut surface = surface.borrow_mut();
+        surface.refs = surface.refs.saturating_sub(1);
+        surface.refs
+    };
+    if remaining > 0 {
+        return remaining;
+    }
+    // Games recreate surfaces when changing screens, so returning the
+    // pixels keeps the heap from growing without bound.
+    if let Some(pixels) = surface.borrow_mut().pixels.take() {
+        kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
+    }
+    state()
+        .surf
+        .borrow_mut()
+        .retain(|_, s| !Rc::ptr_eq(s, &surface));
+    0
+}
+
 /// Copy a rect between two surfaces (which may be the same one; the copy
 /// stages through a temporary buffer).
 ///
@@ -2435,5 +2493,98 @@ mod tests {
         assert_eq!(state().ddraw.borrow().as_ref().unwrap().refs, 2);
 
         state().ddraw.borrow_mut().take();
+    }
+
+    #[test]
+    fn surface_query_interface_crosses_versions() {
+        // A cross-version surface QueryInterface hands out an interface
+        // pointer with the other version's vtable naming the same object;
+        // the last Release on any of them drops all of its map entries.
+        let mut ctx = context();
+        ddraw_test_heap();
+        let (sv1, sv7) = unsafe {
+            if crate::ddraw::IDirectDrawSurface::VTABLE == 0 {
+                crate::ddraw::IDirectDrawSurface::VTABLE = 0x3333;
+            }
+            if crate::ddraw::IDirectDrawSurface7::VTABLE == 0 {
+                crate::ddraw::IDirectDrawSurface7::VTABLE = 0x4444;
+            }
+            (
+                crate::ddraw::IDirectDrawSurface::VTABLE,
+                crate::ddraw::IDirectDrawSurface7::VTABLE,
+            )
+        };
+        let surf7 = {
+            let mut k32 = crate::kernel32::lock();
+            crate::ddraw::IDirectDrawSurface7::new(&mut ctx, &mut k32.process_heap).unwrap()
+        };
+        let mut surface = surf16(
+            DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: 0x40,
+                dwFourCC: 0,
+                dwRGBBitCount: 16,
+                dwRBitMask: 0xF800,
+                dwGBitMask: 0x07E0,
+                dwBBitMask: 0x001F,
+                dwRGBAlphaBitMask: 0,
+            },
+            test_window(),
+        );
+        surface.addr = surf7;
+        state()
+            .surf
+            .borrow_mut()
+            .insert(surf7, Rc::new(RefCell::new(surface)));
+
+        const RIID: u32 = 0x8000;
+        const PPV: u32 = 0x9000;
+
+        // IID_IDirectDrawSurface on a v7 surface hands out a v1 pointer.
+        ctx.memory
+            .write(RIID, crate::ddraw::ddraw1::IID_IDirectDrawSurface);
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::QueryInterface(&mut ctx, surf7, RIID, PPV),
+            DD::OK
+        );
+        let surf1 = ctx.memory.try_read::<u32>(PPV).unwrap();
+        assert_ne!(surf1, surf7);
+        assert_eq!(ctx.memory.try_read::<u32>(surf1), Some(sv1));
+        {
+            let surfaces = state().surf.borrow();
+            assert!(Rc::ptr_eq(&surfaces[&surf7], &surfaces[&surf1]));
+            assert_eq!(surfaces[&surf7].borrow().refs, 2);
+        }
+
+        // IID_IDirectDrawSurface7 on the v1 pointer hands out another v7
+        // pointer to the same object.
+        ctx.memory
+            .write(RIID, crate::ddraw::IID_IDIRECTDRAWSURFACE7);
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface::QueryInterface(&mut ctx, surf1, RIID, PPV),
+            DD::OK
+        );
+        let surf7b = ctx.memory.try_read::<u32>(PPV).unwrap();
+        assert_eq!(ctx.memory.try_read::<u32>(surf7b), Some(sv7));
+        assert_eq!(state().surf.borrow()[&surf7].borrow().refs, 3);
+
+        // Releases on any interface count the shared object; the last one
+        // drops every interface-pointer entry naming it.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::Release(&mut ctx, surf7b),
+            2
+        );
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface::Release(&mut ctx, surf7),
+            1
+        );
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface::Release(&mut ctx, surf1),
+            0
+        );
+        let surfaces = state().surf.borrow();
+        assert!(!surfaces.contains_key(&surf7));
+        assert!(!surfaces.contains_key(&surf1));
+        assert!(!surfaces.contains_key(&surf7b));
     }
 }

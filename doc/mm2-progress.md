@@ -281,3 +281,16 @@ Suspects worth a look when the backlog is otherwise blocked:
   `ddraw7.rs`); 2 new tests. Check: `check.sh: OK (fmt 4 files, clippy+test
   winapi, build mm2, whitespace)`. Next: same treatment for surfaces
   (`IDirectDrawSurface` v1 QI rejects everything) and palette ref counting.
+- 2026-09-09 surface cross-version QueryInterface: What: the v1
+  `IDirectDrawSurface::QueryInterface` returned E_NOINTERFACE for every IID,
+  and `IDirectDrawSurface7::QueryInterface` did not answer the v1 surface IID,
+  so a surface could never be queried across interface versions. Repro: new
+  test `surface_query_interface_crosses_versions` -> E_NOINTERFACE before the
+  fix. Change: new shared helpers `surface_alias` (hands out a same-object
+  interface pointer of the other version, registered as a second map entry)
+  and `release_surface` (last release drops every interface-pointer entry via
+  `Rc::ptr_eq`) in `ddraw.rs`; both surface QIs answer canonical+null
+  IUnknown, their own IID, and the other version's IID (`ddraw1.rs`,
+  `ddraw7.rs`). Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build
+  mm2, whitespace)`. Next: `IDirectDrawPalette` has no ref counting at all —
+  `AddRef` returns a constant 1 and `Release` frees unconditionally.

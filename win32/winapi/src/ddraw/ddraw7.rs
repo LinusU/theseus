@@ -984,13 +984,26 @@ pub mod IDirectDrawSurface7 {
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDIRECTDRAWSURFACE7 {
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDIRECTDRAWSURFACE7
+        {
             ctx.memory.write::<u32>(ppv, this);
             // QueryInterface AddRefs the returned interface pointer.
             if let Some(surface) = state().surf.borrow().get(&this) {
                 surface.borrow_mut().refs += 1;
             }
             return DD::OK;
+        }
+        if iid == crate::ddraw::ddraw1::IID_IDirectDrawSurface {
+            // A cross-version QueryInterface hands out a v1 interface pointer
+            // to the same surface object.
+            return crate::ddraw::ddraw::surface_alias(
+                ctx,
+                this,
+                ppv,
+                crate::ddraw::ddraw1::IDirectDrawSurface::new,
+            );
         }
         ctx.memory.write::<u32>(ppv, 0);
         DD::E_NOINTERFACE
@@ -1010,28 +1023,7 @@ pub mod IDirectDrawSurface7 {
 
     #[win32_derive::dllexport]
     pub fn Release(ctx: &mut Context, this: u32) -> u32 {
-        let surfaces = state().surf.borrow_mut();
-        let Some(surface) = surfaces.get(&this) else {
-            return 0;
-        };
-        let remaining = {
-            let mut surface = surface.borrow_mut();
-            surface.refs = surface.refs.saturating_sub(1);
-            surface.refs
-        };
-        drop(surfaces);
-        if remaining > 0 {
-            return remaining;
-        }
-        let Some(surface) = state().surf.borrow_mut().remove(&this) else {
-            return 0;
-        };
-        // Games recreate surfaces when changing screens, so returning the
-        // pixels keeps the heap from growing without bound.
-        if let Some(pixels) = surface.borrow_mut().pixels.take() {
-            kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
-        }
-        0
+        crate::ddraw::ddraw::release_surface(ctx, this)
     }
 
     #[win32_derive::dllexport]
