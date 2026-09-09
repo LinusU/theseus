@@ -535,18 +535,23 @@ pub mod IDirectInputDevice {
         }
     }
 
-    fn release(this: u32) -> u32 {
-        let mut state = lock();
-        let Some(device) = state.devices.get_mut(&this) else {
-            return 0;
+    fn release(ctx: &mut Context, this: u32) -> u32 {
+        let remaining = {
+            let mut state = lock();
+            let Some(device) = state.devices.get_mut(&this) else {
+                return 0;
+            };
+            device.refcount = device.refcount.saturating_sub(1);
+            let remaining = device.refcount;
+            if remaining == 0 {
+                state.devices.remove(&this);
+            }
+            remaining
         };
-        device.refcount -= 1;
-        if device.refcount == 0 {
-            state.devices.remove(&this);
-            0
-        } else {
-            device.refcount
+        if remaining == 0 {
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
         }
+        remaining
     }
 
     #[win32_derive::dllexport]
@@ -570,8 +575,8 @@ pub mod IDirectInputDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
-        release(this)
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        release(ctx, this)
     }
 
     #[win32_derive::dllexport]
@@ -1235,6 +1240,35 @@ mod tests {
         assert_eq!(IDirectInput::Release(&mut ctx, di), 1);
         assert_eq!(IDirectInput::Release(&mut ctx, di), 0);
         assert!(!lock().objects.contains_key(&di));
+    }
+
+    #[test]
+    fn device_release_frees_the_interface_block() {
+        // A device created by CreateDevice loses its heap block when the
+        // last Release drops the refcount to zero.
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = kernel32::lock();
+            k32.process_heap = Heap::new(0x1000, 0x800);
+        }
+        write_guid(&mut ctx, 0x3000, &GUID_SysKeyboard);
+
+        const PPV: u32 = 0x2000;
+        assert_eq!(
+            IDirectInput::CreateDevice(&mut ctx, 0x2100, 0x3000, PPV, 0),
+            DI_OK
+        );
+        let dev = ctx.memory.read::<u32>(PPV);
+        assert_ne!(dev, 0);
+        assert_eq!(lock().devices.get(&dev).map(|d| d.refcount), Some(1));
+        assert!(kernel32::lock().process_heap.block_size(dev).is_some());
+
+        assert_eq!(IDirectInputDevice::AddRef(&mut ctx, dev), 2);
+        assert_eq!(IDirectInputDevice::Release(&mut ctx, dev), 1);
+        assert_eq!(IDirectInputDevice::Release(&mut ctx, dev), 0);
+        assert!(!lock().devices.contains_key(&dev));
+        assert!(kernel32::lock().process_heap.block_size(dev).is_none());
     }
 
     #[test]

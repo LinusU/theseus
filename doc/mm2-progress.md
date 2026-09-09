@@ -400,3 +400,13 @@ Suspects worth a look when the backlog is otherwise blocked:
   `Just before GameLoop` with only the known `.CHK`/aud22/nodeGetBitmap
   warnings and no `missing.txt`. Next: ole32/registry or a fresh defect
   report.
+- 2026-09-09 IDirectInputDevice last-Release leak: What: the device's
+  `release` dropped the `devices` map entry at refcount 0 but never freed
+  the 4-byte interface block `CreateDevice` allocates on the process heap.
+  Repro: new test `device_release_frees_the_interface_block`
+  (`dinput.rs`). Change: `release` takes `ctx` and frees the block via
+  `process_heap` at refs=0; refcount decrement is now saturating. Check:
+  `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
+  Next: remaining E_NOTIMPL sites are honest no-hardware answers
+  (RunControlPanel, Escape, force feedback); survey another area or take a
+  fresh defect report.
