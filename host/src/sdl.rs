@@ -1130,7 +1130,7 @@ impl Host {
             }
         }
 
-        self.main_thread.get().poll()
+        self.main_thread.try_get().and_then(|mt| mt.poll())
     }
     pub fn wait(&self) -> host::Message {
         self.main_thread.get().wait()

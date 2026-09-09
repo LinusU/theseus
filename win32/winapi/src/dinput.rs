@@ -781,13 +781,19 @@ pub mod IDirectInputDevice {
             .get(&this)
             .map(|device| device.data_size as usize)
             .unwrap_or(0);
+        // Default state sizes when SetDataFormat was never called. The actual
+        // format size is what the caller must have room for, but never write
+        // past the supplied cbData.
+        let data_size = match kind {
+            DeviceKind::Keyboard => negotiated.max(256),
+            DeviceKind::Mouse => negotiated.max(DIMOUSESTATE_SIZE),
+            DeviceKind::Joystick => negotiated.max(256),
+        };
         let len = match kind {
-            DeviceKind::Keyboard => 256,
-            // DIMOUSESTATE: lX, lY, lZ, then four buttons.
-            DeviceKind::Mouse => DIMOUSESTATE_SIZE,
+            DeviceKind::Keyboard | DeviceKind::Mouse => cbData as usize,
             // Accept DIJOYSTATE (44 bytes) up to the negotiated format size
             // (or DIJOYSTATE2's 256 when no format was set).
-            DeviceKind::Joystick if (44..=negotiated.max(256)).contains(&(cbData as usize)) => {
+            DeviceKind::Joystick if (44..=data_size).contains(&(cbData as usize)) => {
                 cbData as usize
             }
             DeviceKind::Joystick => {
@@ -795,6 +801,9 @@ pub mod IDirectInputDevice {
                 return DIERR_INVALIDPARAM;
             }
         };
+        // The caller's buffer may be smaller than the full state format; never
+        // write past cbData and never past the format size.
+        let len = len.min(data_size);
         if lpvData < 0x1000 || lpvData as usize + len > ctx.memory.bytes.len() {
             return DIERR_INVALIDPARAM;
         }
@@ -1512,6 +1521,87 @@ mod tests {
         assert_eq!(
             IDirectInputDevice::GetDeviceState(&mut ctx, 0x2300, 272, 0x3000),
             DI_OK
+        );
+    }
+
+    #[test]
+    fn get_device_state_honors_cbdata_and_data_size() {
+        let mut ctx = context();
+        lock().devices.insert(
+            0x2400,
+            Device {
+                kind: DeviceKind::Keyboard,
+                acquired: true,
+                guid: GUID_SysKeyboard,
+                properties: HashMap::new(),
+                refcount: 1,
+                data_size: 256,
+            },
+        );
+
+        // Press scan code 0 so the first byte of the keyboard state is 0x80.
+        user32::state().input.borrow_mut().on_key(
+            &host::KeyMessage {
+                scancode: 0,
+                vkey: 0x30,
+                extended: false,
+                repeat: false,
+            },
+            true,
+        );
+
+        // A cbData smaller than the negotiated 256-byte format should succeed
+        // and write only the requested cbData bytes, not the whole format.
+        ctx.memory.bytes[0x3000..0x3100].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceState(&mut ctx, 0x2400, 10, 0x3000),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.bytes[0x3000], 0x80);
+        assert!(ctx.memory.bytes[0x300a..0x3100].iter().all(|&b| b == 0xCD));
+
+        // A full-size read still works and does not overflow the buffer.
+        ctx.memory.bytes[0x3000..0x3100].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceState(&mut ctx, 0x2400, 256, 0x3000),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.bytes[0x3000], 0x80);
+        assert_eq!(ctx.memory.bytes[0x3000 + 0xc8], 0);
+        assert!(
+            ctx.memory.bytes[0x3000 + 256..0x3100]
+                .iter()
+                .all(|&b| b == 0xCD)
+        );
+
+        // Same clamping for mouse: a 10-byte buffer only receives 10 bytes.
+        lock().devices.insert(
+            0x2404,
+            Device {
+                kind: DeviceKind::Mouse,
+                acquired: true,
+                guid: GUID_SysMouse,
+                properties: HashMap::new(),
+                refcount: 1,
+                data_size: DIMOUSESTATE_SIZE as u32,
+            },
+        );
+        ctx.memory.bytes[0x3000..0x3100].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceState(&mut ctx, 0x2404, 10, 0x3000),
+            DI_OK
+        );
+        assert!(ctx.memory.bytes[0x300a..0x3010].iter().all(|&b| b == 0xCD));
+
+        // Release the key so later tests start from a clean input state.
+        user32::state().input.borrow_mut().on_key(
+            &host::KeyMessage {
+                scancode: 0,
+                vkey: 0x30,
+                extended: false,
+                repeat: false,
+            },
+            false,
         );
     }
 

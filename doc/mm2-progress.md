@@ -484,3 +484,16 @@ Suspects worth a look when the backlog is otherwise blocked:
   `0x26@45000` is tied to `THESEUS_FRAME_DUMP` slowing and `0x26@30000` is safer
   for fast runs. Check: `check.sh: OK (fmt 0 files, whitespace)`. Next: remaining
   backlog is external content (audio, UI bitmaps, LOD) or live display capture.
+- 2026-09-09 DirectInput GetDeviceState cbData clamping: What:
+  `GetDeviceState` ignored the caller's `cbData` and always wrote the full
+  `data_size` for keyboard/mouse, which overran the guest buffer when the game
+  passed smaller values (e.g. keyboard `cbData=100`, mouse `cbData=10` in the
+  race loop). Repro: unit test `get_device_state_honors_cbdata_and_data_size`
+  sets a keyboard key, calls `GetDeviceState(cbData=10)` and `cbData=256`,
+  and verifies bytes past the requested length are untouched. Change:
+  `GetDeviceState` now clamps `len` to `min(data_size, cbData)` for keyboard
+  and mouse; `Host::poll` uses `main_thread.try_get()` so unit tests that
+  happen on non-main threads do not panic from the SDL `SingleThreader`
+  (`dinput.rs`, `host/src/sdl.rs`). Check: `check.sh: OK (fmt 2 files,
+  clippy+test host winapi, build mm2, whitespace)`. Next: remaining backlog is
+  external content or a fresh display capture.
