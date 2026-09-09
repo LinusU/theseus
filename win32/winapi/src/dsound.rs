@@ -402,9 +402,26 @@ pub fn ordinal2(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> u32 {
 }
 
 #[win32_derive::dllexport]
-pub fn DirectSoundEnumerateA(_ctx: &mut Context, _lpCallback: u32, _lpContext: u32) -> u32 {
-    // Report no devices to enumerate; apps that care use the default device,
-    // which DirectSoundCreate always provides.
+pub fn DirectSoundEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> u32 {
+    // A null-page callback would dispatch to a missing block and halt.
+    if lpCallback < 0x1000 {
+        return DSERR_INVALIDPARAM;
+    }
+    let Some(desc) = crate::ddraw::alloc_string(ctx, "Primary Sound Driver\0") else {
+        return DSERR_OUTOFMEMORY;
+    };
+    let Some(module) = crate::ddraw::alloc_string(ctx, "dsound.dll\0") else {
+        kernel32::lock().process_heap.free(&mut ctx.memory, desc);
+        return DSERR_OUTOFMEMORY;
+    };
+    let callback = ctx.indirect(lpCallback);
+    // LPDSENUMCALLBACKA is (GUID*, desc, module, context); the primary
+    // sound driver's GUID is NULL. The strings only have to outlive the
+    // callback, so they are freed once it returns.
+    ctx.call32_x86(callback, vec![0, desc, module, lpContext]);
+    let kernel32 = kernel32::lock();
+    kernel32.process_heap.free(&mut ctx.memory, desc);
+    kernel32.process_heap.free(&mut ctx.memory, module);
     DS_OK
 }
 
@@ -1319,8 +1336,9 @@ impl WavWrite {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, DirectSoundCreate, E_NOINTERFACE,
-        IDirectSound, IDirectSoundBuffer, IID_IDIRECTSOUNDBUFFER, WaveFormat, init, lock,
+        Buffer, DS_OK, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, DirectSoundCreate,
+        DirectSoundEnumerateA, E_NOINTERFACE, IDirectSound, IDirectSoundBuffer,
+        IID_IDIRECTSOUNDBUFFER, WaveFormat, init, lock,
     };
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -1677,5 +1695,61 @@ mod tests {
         // At the floor a buffer is silent.
         let (left, right) = buffer(-10000, 0).gains();
         assert_eq!((left, right), (0.0, 0.0));
+    }
+
+    #[test]
+    fn direct_sound_enumerate_calls_the_callback() {
+        // The enumeration reports the emulated primary device: the callback
+        // receives (NULL GUID, "Primary Sound Driver", "dsound.dll",
+        // context), and the arg strings are freed once it returns.
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+
+        fn enum_cb(ctx: &mut Context) -> runtime::Cont {
+            let esp = ctx.cpu.regs.esp;
+            for i in 0..4u32 {
+                let arg = ctx.memory.read::<u32>(esp.wrapping_add(4 * (i + 1)));
+                ctx.memory.write::<u32>(0x3900 + i * 4, arg);
+            }
+            // Copy the strings into scratch memory; they are only valid
+            // for the duration of the call.
+            for (dst, k) in [(0x3920u32, 8u32), (0x3940u32, 12u32)] {
+                let src = ctx.memory.read::<u32>(esp.wrapping_add(k));
+                for j in 0..64u32 {
+                    let b = ctx.memory.read::<u8>(src.wrapping_add(j));
+                    ctx.memory.write::<u8>(dst + j, b);
+                    if b == 0 {
+                        break;
+                    }
+                }
+            }
+            ctx.cpu.regs.eax = 1;
+            ctx.ret32(16)
+        }
+        static BLOCKS: [(u32, runtime::ContFn); 2] = [
+            (0x2000, enum_cb),
+            (runtime::RETURN_FROM_X86_ADDR32, Context::return_from_x86),
+        ];
+        ctx.blocks = &BLOCKS;
+        ctx.cpu.regs.esp = 0x3e00;
+
+        assert_eq!(DirectSoundEnumerateA(&mut ctx, 0x2000, 0x5aba), DS_OK);
+        assert_eq!(ctx.memory.read::<u32>(0x3900), 0); // NULL device GUID
+        assert_eq!(ctx.memory.read::<u32>(0x390c), 0x5aba); // context
+        assert_eq!(
+            &ctx.memory.bytes[0x3920..0x3920 + 21],
+            b"Primary Sound Driver\0"
+        );
+        assert_eq!(&ctx.memory.bytes[0x3940..0x3940 + 11], b"dsound.dll\0");
+        // The arg strings were freed once the callback returned.
+        let desc = ctx.memory.read::<u32>(0x3904);
+        let module = ctx.memory.read::<u32>(0x3908);
+        let k32 = crate::kernel32::lock();
+        assert!(k32.process_heap.block_size(desc).is_none());
+        assert!(k32.process_heap.block_size(module).is_none());
     }
 }

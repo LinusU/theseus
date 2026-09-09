@@ -410,3 +410,18 @@ Suspects worth a look when the backlog is otherwise blocked:
   Next: remaining E_NOTIMPL sites are honest no-hardware answers
   (RunControlPanel, Escape, force feedback); survey another area or take a
   fresh defect report.
+- 2026-09-09 DirectSoundEnumerateA callback: What: `DirectSoundEnumerateA`
+  (dsound ordinal 2) returned `DS_OK` without invoking the callback, so the
+  game's device list stayed empty. Repro: a `winapi=info` trace of a
+  scripted London BLITZ run shows `ordinal2(lpCallback=5a4f90)` called at
+  boot and race init; reading the generated callback at `0x5a4f90` shows it
+  grows a GUID-keyed device list, tolerates a NULL lpGuid (compares a
+  static GUID), and `lstrcpy`s the description into its own record, so
+  heap strings need only outlive the call. Change: invoke the callback
+  once via `call32_x86` with (NULL, "Primary Sound Driver", "dsound.dll",
+  context), reject null-page callbacks, free the arg strings on return
+  (`dsound.rs`); new test `direct_sound_enumerate_calls_the_callback`.
+  Check: `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2,
+  whitespace)`; 40s headless smoke reached the lobby with the callback
+  exercised, no panic, no `missing.txt`. Next: survey the same trace for
+  other never-answered enumerations or take a fresh defect report.
