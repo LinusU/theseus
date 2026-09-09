@@ -162,15 +162,7 @@ pub fn stdcall_name(name: &str) -> String {
     if name.starts_with("weanetr::?GetPlayerInfo") {
         return "unsupported::stdcall2".into();
     }
-    let unsupported_dll = matches!(dll, Some("imm32" | "wsock32"))
-        || (matches!(dll, Some("qmixer"))
-            && !matches!(
-                name,
-                "qmixer::QSWaveMixGetDirectSound"
-                    | "qmixer::QSWaveMixInitEx"
-                    | "qmixer::QSWaveMixActivate"
-                    | "qmixer::QSWaveMixOpenChannel"
-            ));
+    let unsupported_dll = matches!(dll, Some("imm32" | "wsock32"));
     if valid && !unsupported_dll {
         format!("{name}_stdcall")
     } else {
