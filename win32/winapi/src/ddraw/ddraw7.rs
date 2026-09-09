@@ -96,12 +96,34 @@ pub mod IDirectDraw7 {
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        if iid == crate::ddraw::GUID::new(0, 0, 0, [0; 8]) || iid == IID_IDirectDraw7 {
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDirectDraw7
+        {
             ctx.memory.write::<u32>(ppv, _this);
             // QueryInterface AddRefs the returned interface pointer.
             if let Some(mut ddraw) = state().get_ddraw(_this) {
                 ddraw.refs += 1;
             }
+            return DD::OK;
+        }
+        if iid == crate::ddraw::ddraw1::IID_IDirectDraw {
+            // A cross-version QueryInterface hands out a new interface
+            // pointer to the same object; the alias keeps get_ddraw
+            // lookups working on it.
+            let Some(mut ddraw) = state().get_ddraw(_this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            let mut kernel32 = kernel32::lock();
+            let Some(addr) =
+                crate::ddraw::ddraw1::IDirectDraw::new(ctx, &mut kernel32.process_heap)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            drop(kernel32);
+            ddraw.aliases.push(addr);
+            ddraw.refs += 1;
+            ctx.memory.write::<u32>(ppv, addr);
             return DD::OK;
         }
         if iid == crate::ddraw::d3d7::IID_IDirect3D7 {
@@ -133,7 +155,8 @@ pub mod IDirectDraw7 {
         let Some(ddraw) = slot.as_mut() else {
             return 0;
         };
-        if ddraw.addr != this {
+        // Any interface pointer QueryInterface handed out releases the object.
+        if ddraw.addr != this && !ddraw.aliases.contains(&this) {
             return 0;
         }
         ddraw.refs = ddraw.refs.saturating_sub(1);

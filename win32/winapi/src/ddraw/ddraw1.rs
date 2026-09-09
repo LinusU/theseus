@@ -9,6 +9,13 @@ use crate::{
     user32::HWND,
 };
 
+pub const IID_IDirectDraw: GUID = GUID::new(
+    0x6c14db80,
+    0xa733,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+);
+
 pub mod IDirectDraw {
     use super::*;
 
@@ -65,15 +72,45 @@ pub mod IDirectDraw {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppvObject: u32) -> DD {
+        if !crate::ddraw::guest_range(ctx, ppvObject, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDirectDraw
+        {
+            ctx.memory.write::<u32>(ppvObject, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(mut ddraw) = state().get_ddraw(this) {
+                ddraw.refs += 1;
+            }
+            return DD::OK;
+        }
+        if iid == crate::ddraw::ddraw7::IID_IDirectDraw7 {
+            // The standard upgrade path: DirectDrawCreate hands out
+            // IDirectDraw and the game queries IID_IDirectDraw7 on it. The
+            // new interface pointer aliases the same object.
+            let Some(mut ddraw) = state().get_ddraw(this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            let mut kernel32 = kernel32::lock();
+            let Some(addr) =
+                crate::ddraw::ddraw7::IDirectDraw7::new(ctx, &mut kernel32.process_heap)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            drop(kernel32);
+            ddraw.aliases.push(addr);
+            ddraw.refs += 1;
+            ctx.memory.write::<u32>(ppvObject, addr);
+            return DD::OK;
+        }
         log::warn!("IDirectDraw::QueryInterface({iid:?}): not supported");
-        ctx.memory.write::<u32>(_ppvObject, 0);
+        ctx.memory.write::<u32>(ppvObject, 0);
         DD::E_NOINTERFACE
     }
 

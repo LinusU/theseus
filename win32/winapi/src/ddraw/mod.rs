@@ -260,7 +260,9 @@ impl State {
     /// was created or the COM `this` pointer isn't ours.
     pub fn get_ddraw(&self, ptr: u32) -> Option<RefMut<'_, DirectDraw>> {
         RefMut::filter_map(self.ddraw.borrow_mut(), |ddraw| {
-            ddraw.as_mut().filter(|ddraw| ddraw.addr == ptr)
+            ddraw
+                .as_mut()
+                .filter(|ddraw| ddraw.addr == ptr || ddraw.aliases.contains(&ptr))
         })
         .ok()
     }

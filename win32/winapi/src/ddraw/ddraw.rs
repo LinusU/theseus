@@ -12,7 +12,12 @@ use crate::{
 };
 
 pub struct DirectDraw {
+    /// The interface pointer the object was created with — its identity.
     pub addr: u32,
+    /// Additional interface pointers a cross-version `QueryInterface` handed
+    /// out for this same object (e.g. an `IDirectDraw7` vtable on an
+    /// `IDirectDraw` object). They share the object's lifetime.
+    pub aliases: Vec<u32>,
     /// COM reference count. An app that releases a DirectDraw object and
     /// creates a new one expects the old one's window binding to die with it.
     pub refs: u32,
@@ -727,6 +732,7 @@ pub fn DirectDrawCreateEx(
     let mut ddraw = state().ddraw.borrow_mut();
     *ddraw = Some(DirectDraw {
         addr,
+        aliases: Vec::new(),
         refs: 1,
         bytes_per_pixel: 4,
         window: None,
@@ -1663,6 +1669,7 @@ mod tests {
         // SetCooperativeLevel(NULL, DDSCL_NORMAL) unbinds the device window.
         let mut ddraw = DirectDraw {
             addr: 0x4321,
+            aliases: Vec::new(),
             refs: 1,
             bytes_per_pixel: 2,
             window: Some(test_window()),
@@ -1773,6 +1780,7 @@ mod tests {
         let mut ctx = context();
         *state().ddraw.borrow_mut() = Some(DirectDraw {
             addr: 0x4321,
+            aliases: Vec::new(),
             refs: 1,
             bytes_per_pixel: 2,
             window: None,
@@ -1795,6 +1803,7 @@ mod tests {
         const PPV: u32 = 0x1000;
         *state().ddraw.borrow_mut() = Some(DirectDraw {
             addr: DDRAW,
+            aliases: Vec::new(),
             refs: 1,
             bytes_per_pixel: 2,
             window: None,
@@ -1829,6 +1838,7 @@ mod tests {
         let ddraw_addr = 0x4321;
         *state().ddraw.borrow_mut() = Some(DirectDraw {
             addr: ddraw_addr,
+            aliases: Vec::new(),
             refs: 1,
             bytes_per_pixel: 2,
             window: None,
@@ -2221,9 +2231,10 @@ mod tests {
             DD::ERR_INVALIDPARAMS
         );
 
-        // The ddraw1 QueryInterface stubs also validate both pointers.
+        // The ddraw1 QueryInterface also validates both pointers; the
+        // unsupported IID at RIID + 0x20 is refused with a null output.
         assert_eq!(
-            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, THIS, RIID, PPV),
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, THIS, RIID + 0x20, PPV),
             DD::E_NOINTERFACE
         );
         assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0));
@@ -2295,5 +2306,134 @@ mod tests {
         );
 
         state().surf.borrow_mut().remove(&SURF);
+    }
+
+    /// A fresh process heap for the interface-pointer allocations these
+    /// tests make; returns the vtable values the `new` functions will write.
+    fn ddraw_test_heap() -> (u32, u32) {
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+        unsafe {
+            if crate::ddraw::IDirectDraw::VTABLE == 0 {
+                crate::ddraw::IDirectDraw::VTABLE = 0x1111;
+            }
+            if crate::ddraw::IDirectDraw7::VTABLE == 0 {
+                crate::ddraw::IDirectDraw7::VTABLE = 0x2222;
+            }
+            (
+                crate::ddraw::IDirectDraw::VTABLE,
+                crate::ddraw::IDirectDraw7::VTABLE,
+            )
+        }
+    }
+
+    #[test]
+    fn ddraw1_query_interface_upgrades_to_ddraw7() {
+        // The standard DX7 upgrade path: DirectDrawCreate hands out
+        // IDirectDraw and the game queries IID_IDirectDraw7 on it. The new
+        // interface pointer aliases the same object and shares its ref count.
+        let mut ctx = context();
+        let (v1, v7) = ddraw_test_heap();
+        let dd1 = {
+            let mut k32 = crate::kernel32::lock();
+            crate::ddraw::IDirectDraw::new(&mut ctx, &mut k32.process_heap).unwrap()
+        };
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: dd1,
+            aliases: Vec::new(),
+            refs: 1,
+            bytes_per_pixel: 4,
+            window: None,
+        });
+
+        const RIID: u32 = 0x8000;
+        const PPV: u32 = 0x9000;
+        ctx.memory
+            .write(RIID, crate::ddraw::ddraw7::IID_IDirectDraw7);
+        assert_eq!(
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, dd1, RIID, PPV),
+            DD::OK
+        );
+        let dd7 = ctx.memory.try_read::<u32>(PPV).unwrap();
+        assert_ne!(dd7, dd1);
+        assert_eq!(ctx.memory.try_read::<u32>(dd7), Some(v7));
+        let slot = state().ddraw.borrow();
+        let ddraw = slot.as_ref().unwrap();
+        assert_eq!(ddraw.refs, 2);
+        assert_eq!(ddraw.aliases, vec![dd7]);
+        drop(slot);
+
+        // The alias names the object: methods and the ref count find it.
+        assert!(state().get_ddraw(dd7).is_some());
+        assert_eq!(crate::ddraw::IDirectDraw7::Release(&mut ctx, dd7), 1);
+        assert_eq!(crate::ddraw::IDirectDraw::Release(&mut ctx, dd1), 0);
+        assert!(state().ddraw.borrow().is_none());
+
+        // The reverse direction works too: IID_IDirectDraw on a v7 object.
+        let dd7 = {
+            let mut k32 = crate::kernel32::lock();
+            crate::ddraw::IDirectDraw7::new(&mut ctx, &mut k32.process_heap).unwrap()
+        };
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: dd7,
+            aliases: Vec::new(),
+            refs: 1,
+            bytes_per_pixel: 4,
+            window: None,
+        });
+        ctx.memory
+            .write(RIID, crate::ddraw::ddraw1::IID_IDirectDraw);
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, dd7, RIID, PPV),
+            DD::OK
+        );
+        let dd1 = ctx.memory.try_read::<u32>(PPV).unwrap();
+        assert_ne!(dd1, dd7);
+        assert_eq!(ctx.memory.try_read::<u32>(dd1), Some(v1));
+        assert!(state().get_ddraw(dd1).is_some());
+        assert_eq!(state().ddraw.borrow().as_ref().unwrap().refs, 2);
+
+        // An unsupported IID still reports E_NOINTERFACE with a null output.
+        ctx.memory.write::<u32>(PPV, 0x42);
+        ctx.memory.write(
+            RIID,
+            crate::ddraw::GUID::new(0xdead_beef, 0xcafe, 0xbabe, [1, 2, 3, 4, 5, 6, 7, 8]),
+        );
+        assert_eq!(
+            crate::ddraw::IDirectDraw::QueryInterface(&mut ctx, dd1, RIID, PPV),
+            DD::E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0));
+
+        state().ddraw.borrow_mut().take();
+    }
+
+    #[test]
+    fn ddraw_query_interface_answers_canonical_iunknown() {
+        // QueryInterface(IID_IUnknown) returns the same interface pointer.
+        let mut ctx = context();
+        ddraw_test_heap();
+        *state().ddraw.borrow_mut() = Some(DirectDraw {
+            addr: 0x4321,
+            aliases: Vec::new(),
+            refs: 1,
+            bytes_per_pixel: 4,
+            window: None,
+        });
+
+        const RIID: u32 = 0x8000;
+        const PPV: u32 = 0x9000;
+        ctx.memory.write(RIID, crate::dplayx::IID_IUnknown);
+        assert_eq!(
+            crate::ddraw::IDirectDraw7::QueryInterface(&mut ctx, 0x4321, RIID, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(0x4321));
+        assert_eq!(state().ddraw.borrow().as_ref().unwrap().refs, 2);
+
+        state().ddraw.borrow_mut().take();
     }
 }

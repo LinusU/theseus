@@ -266,3 +266,18 @@ Suspects worth a look when the backlog is otherwise blocked:
   `Just before GameLoop` and `GameLoop` with no `out/mm2/missing.txt`; no d3d7
   COM regressions. The remaining blockers are external content
   (`.CHK`, `aud\\aud22\\*.22k`, DirectMusic, UI description bitmaps, LODs).
+- 2026-09-09 DirectDraw cross-version QueryInterface: What: the v1
+  `IDirectDraw::QueryInterface` returned E_NOINTERFACE for every IID — the
+  standard `DirectDrawCreate` + `QueryInterface(IID_IDirectDraw7)` upgrade
+  path (the `chillin` target calls v1 `DirectDrawCreate`) could never reach
+  the v7 interface — and no ddraw QI matched the canonical `IID_IUnknown`
+  ({00000000-0000-0000-C000-000000000046}). Repro: new test
+  `ddraw1_query_interface_upgrades_to_ddraw7` -> E_NOINTERFACE before the
+  fix. Change: `DirectDraw` gains `aliases` (extra interface pointers sharing
+  the object's ref count), `get_ddraw`/`Release` accept any of them
+  (`ddraw.rs`, `mod.rs`, `ddraw7.rs`); v1 QI answers IUnknown+IID_IDirectDraw
+  with `this` and IID_IDirectDraw7 with a new v7-vtable pointer, and
+  `IDirectDraw7::QI` answers IID_IDirectDraw symmetrically (`ddraw1.rs`,
+  `ddraw7.rs`); 2 new tests. Check: `check.sh: OK (fmt 4 files, clippy+test
+  winapi, build mm2, whitespace)`. Next: same treatment for surfaces
+  (`IDirectDrawSurface` v1 QI rejects everything) and palette ref counting.
