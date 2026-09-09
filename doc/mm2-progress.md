@@ -317,3 +317,16 @@ Suspects worth a look when the backlog is otherwise blocked:
   3 files, clippy+test winapi, build mm2, whitespace)`. Next: 30s headless
   smoke is clean (GameLoop, no missing.txt); remaining backlog is external
   content or needs live input.
+- 2026-09-09 DirectSound COM lifetimes: What: `IDirectSound::QueryInterface`
+  returned DSERR_INVALIDPARAM for every IID, `AddRef`/`Release` returned
+  constants, the object was never registered anywhere, and
+  `IDirectSoundBuffer::QueryInterface` refused even its own IID. Repro: new
+  tests `dsound_object_lifetime_addref_release`,
+  `buffer_query_interface_answers_its_iid`. Change: `dsound::State` gains an
+  `objects` ref map registered by `DirectSoundCreate`; both QIs answer
+  canonical+null IUnknown and their own IID (`IID_IDIRECTSOUND`,
+  `IID_IDIRECTSOUNDBUFFER`) with `this` +AddRef and E_NOINTERFACE otherwise;
+  `IDirectSound` AddRef/Release count real refs and the last Release frees
+  the interface block (`dsound.rs`). Check: `check.sh: OK (fmt 1 files,
+  clippy+test winapi, build mm2, whitespace)`. Next: audit
+  `IDirectInput`/`IDirectInputDevice` QI shape, then a live probe run.

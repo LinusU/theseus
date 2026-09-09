@@ -48,6 +48,21 @@ const WAVE_FORMAT_PCM: u16 = 1;
 const DSERR_NODRIVER: u32 = make_dserror(120);
 const DSERR_INVALIDPARAM: u32 = 0x80070057;
 const DSERR_OUTOFMEMORY: u32 = 0x8007000e;
+/// `E_NOINTERFACE` — QueryInterface's answer for an IID the object lacks.
+const E_NOINTERFACE: u32 = 0x8000_4002;
+
+const IID_IDIRECTSOUND: crate::ddraw::GUID = crate::ddraw::GUID::new(
+    0x279a_fa83,
+    0x4981,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+);
+const IID_IDIRECTSOUNDBUFFER: crate::ddraw::GUID = crate::ddraw::GUID::new(
+    0x279a_fa85,
+    0x4981,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+);
 
 /// Whether `addr..addr + bytes` is a range a guest may supply: outside the
 /// null page and fully inside emulated memory.
@@ -223,6 +238,8 @@ impl Buffer {
 }
 
 struct State {
+    /// IDirectSound interface pointers -> COM reference count.
+    objects: HashMap<u32, u32>,
     buffers: HashMap<u32, Buffer>,
     stream: Option<host::AudioStream>,
     /// Heap holding the buffers' PCM data.
@@ -241,6 +258,7 @@ fn init() {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if state.is_none() {
         *state = Some(State {
+            objects: HashMap::default(),
             buffers: HashMap::default(),
             stream: None,
             heap: None,
@@ -369,6 +387,7 @@ pub fn DirectSoundCreate(ctx: &mut Context, lpGuid: u32, ppDS: u32, pUnkOuter: u
     };
     drop(kernel32);
     ctx.memory.write(ppDS, addr);
+    lock().objects.insert(addr, 1);
     DS_OK
 }
 
@@ -407,17 +426,57 @@ pub mod IDirectSound {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> u32 {
-        DSERR_INVALIDPARAM
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+        if !usable_range(ctx, ppv, 4) {
+            return DSERR_INVALIDPARAM;
+        }
+        let Some(iid) = guest_read::<crate::ddraw::GUID>(ctx, riid) else {
+            return DSERR_INVALIDPARAM;
+        };
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDIRECTSOUND
+        {
+            ctx.memory.write::<u32>(ppv, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            init();
+            if let Some(refs) = lock().objects.get_mut(&this) {
+                *refs += 1;
+            }
+            return DS_OK;
+        }
+        ctx.memory.write::<u32>(ppv, 0);
+        E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        init();
+        let mut state = lock();
+        match state.objects.get_mut(&this) {
+            Some(refs) => {
+                *refs += 1;
+                *refs
+            }
+            None => 0,
+        }
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        init();
+        let mut state = lock();
+        let Some(refs) = state.objects.get_mut(&this) else {
+            return 0;
+        };
+        *refs = refs.saturating_sub(1);
+        let remaining = *refs;
+        if remaining > 0 {
+            return remaining;
+        }
+        state.objects.remove(&this);
+        drop(state);
+        kernel32::lock().process_heap.free(&mut ctx.memory, this);
         0
     }
 
@@ -650,8 +709,27 @@ pub mod IDirectSoundBuffer {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(_ctx: &mut Context, _this: u32, _riid: u32, _ppv: u32) -> u32 {
-        DSERR_INVALIDPARAM
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppv: u32) -> u32 {
+        if !usable_range(ctx, ppv, 4) {
+            return DSERR_INVALIDPARAM;
+        }
+        let Some(iid) = guest_read::<crate::ddraw::GUID>(ctx, riid) else {
+            return DSERR_INVALIDPARAM;
+        };
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDIRECTSOUNDBUFFER
+        {
+            ctx.memory.write::<u32>(ppv, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            init();
+            if let Some(buffer) = lock().buffers.get_mut(&this) {
+                buffer.refs += 1;
+            }
+            return DS_OK;
+        }
+        ctx.memory.write::<u32>(ppv, 0);
+        E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
@@ -1241,8 +1319,8 @@ impl WavWrite {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, IDirectSoundBuffer, WaveFormat, init,
-        lock,
+        Buffer, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, DirectSoundCreate, E_NOINTERFACE,
+        IDirectSound, IDirectSoundBuffer, IID_IDIRECTSOUNDBUFFER, WaveFormat, init, lock,
     };
     use runtime::{BlockCache, CPU, Context, Memory};
 
@@ -1284,6 +1362,86 @@ mod tests {
                 pan: 0,
             },
         );
+    }
+
+    #[test]
+    fn dsound_object_lifetime_addref_release() {
+        // The IDirectSound object answers IUnknown and its own IID with
+        // `this` +AddRef, counts real references, and frees the interface
+        // block on the last Release.
+        let mut ctx = context();
+        init();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+        unsafe {
+            if IDirectSound::VTABLE == 0 {
+                IDirectSound::VTABLE = 0x6666;
+            }
+        }
+
+        const PPV: u32 = 0x5000;
+        const RIID: u32 = 0x6000;
+        assert_eq!(DirectSoundCreate(&mut ctx, 0, PPV, 0), 0); // DS_OK
+        let ds = ctx.memory.read::<u32>(PPV);
+        assert_eq!(ctx.memory.read::<u32>(ds), 0x6666);
+        assert_eq!(lock().objects.get(&ds), Some(&1));
+
+        ctx.memory.write(RIID, crate::dplayx::IID_IUnknown);
+        assert_eq!(IDirectSound::QueryInterface(&mut ctx, ds, RIID, PPV + 4), 0);
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), ds);
+        assert_eq!(lock().objects.get(&ds), Some(&2));
+
+        ctx.memory
+            .write(RIID, crate::ddraw::GUID::new(0xdead, 0, 0, [0; 8]));
+        assert_eq!(
+            IDirectSound::QueryInterface(&mut ctx, ds, RIID, PPV + 4),
+            E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), 0);
+
+        assert_eq!(IDirectSound::AddRef(&mut ctx, ds), 3);
+        assert_eq!(IDirectSound::Release(&mut ctx, ds), 2);
+        assert_eq!(IDirectSound::Release(&mut ctx, ds), 1);
+        assert_eq!(IDirectSound::Release(&mut ctx, ds), 0);
+        assert!(!lock().objects.contains_key(&ds));
+    }
+
+    #[test]
+    fn buffer_query_interface_answers_its_iid() {
+        // A buffer's QueryInterface returns `this` +AddRef for IUnknown and
+        // IID_IDirectSoundBuffer, and E_NOINTERFACE for anything else.
+        let mut ctx = context();
+        insert_buffer(0xabcd, 0x8000, 0x100);
+
+        const PPV: u32 = 0x5000;
+        const RIID: u32 = 0x6000;
+        ctx.memory.write(RIID, IID_IDIRECTSOUNDBUFFER);
+        assert_eq!(
+            IDirectSoundBuffer::QueryInterface(&mut ctx, 0xabcd, RIID, PPV),
+            0
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV), 0xabcd);
+        assert_eq!(lock().buffers.get(&0xabcd).unwrap().refs, 2);
+
+        ctx.memory.write(RIID, crate::dplayx::IID_IUnknown);
+        assert_eq!(
+            IDirectSoundBuffer::QueryInterface(&mut ctx, 0xabcd, RIID, PPV),
+            0
+        );
+        assert_eq!(lock().buffers.get(&0xabcd).unwrap().refs, 3);
+
+        ctx.memory
+            .write(RIID, crate::ddraw::GUID::new(0xdead, 0, 0, [0; 8]));
+        assert_eq!(
+            IDirectSoundBuffer::QueryInterface(&mut ctx, 0xabcd, RIID, PPV),
+            E_NOINTERFACE
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV), 0);
+
+        lock().buffers.remove(&0xabcd);
     }
 
     #[test]
