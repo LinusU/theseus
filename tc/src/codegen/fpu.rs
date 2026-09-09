@@ -168,10 +168,7 @@ impl<'a> CodeGen<'a> {
             }
 
             Fprem => {
-                self.line(self.fpu_set_reg(
-                    0,
-                    format!("{} % {}", self.fpu_get_reg(0), self.fpu_get_reg(1)),
-                ));
+                self.line("ctx.cpu.fpu.prem();");
             }
 
             Fxam => {
