@@ -892,10 +892,21 @@ pub mod IDirectInputDevice {
         };
 
         if rgdod != 0 {
+            // The caller's buffer is `capacity * cbObjectData` bytes. Never
+            // write past that, and never write more than `cbObjectData` bytes
+            // per element even if it is smaller than our DIDEVICEOBJECTDATA.
+            let Some(buf_end) = (capacity as u64)
+                .checked_mul(cbObjectData as u64)
+                .and_then(|n| (rgdod as u64).checked_add(n))
+            else {
+                return DIERR_INVALIDPARAM;
+            };
+            let struct_bytes = std::mem::size_of::<DIDEVICEOBJECTDATA>();
+            let write_len = (cbObjectData as usize).min(struct_bytes);
+            if write_len == 0 {
+                return DIERR_INVALIDPARAM;
+            }
             for (i, event) in events.iter().enumerate() {
-                // The stride comes from the caller rather than from the struct,
-                // in case it passes the larger DirectInput 8 version. An entry
-                // address that does not fit is skipped rather than panicking.
                 let Some(addr) = (i as u64)
                     .checked_mul(cbObjectData as u64)
                     .and_then(|ofs| (rgdod as u64).checked_add(ofs))
@@ -903,26 +914,26 @@ pub mod IDirectInputDevice {
                 else {
                     continue;
                 };
-                if !crate::ddraw::guest_range(
-                    ctx,
-                    addr,
-                    std::mem::size_of::<DIDEVICEOBJECTDATA>() as u32,
-                ) {
+                if (addr as u64) + (write_len as u64) > buf_end {
                     continue;
                 }
-                if crate::Ptr::new(addr)
-                    .write(
-                        &mut ctx.memory,
-                        DIDEVICEOBJECTDATA {
-                            dwOfs: event.ofs,
-                            dwData: event.data,
-                            dwTimeStamp: event.time,
-                            dwSequence: event.sequence,
-                        },
-                    )
-                    .is_none()
-                {
+                if !crate::ddraw::guest_range(ctx, addr, write_len as u32) {
                     continue;
+                }
+                let value = DIDEVICEOBJECTDATA {
+                    dwOfs: event.ofs,
+                    dwData: event.data,
+                    dwTimeStamp: event.time,
+                    dwSequence: event.sequence,
+                };
+                let bytes = zerocopy::IntoBytes::as_bytes(&value);
+                if let Some(dst) = ctx
+                    .memory
+                    .bytes
+                    .get_mut(addr as usize..)
+                    .and_then(|b| b.get_mut(..write_len))
+                {
+                    dst.copy_from_slice(&bytes[..write_len]);
                 }
             }
         }
@@ -1594,6 +1605,100 @@ mod tests {
         assert!(ctx.memory.bytes[0x300a..0x3010].iter().all(|&b| b == 0xCD));
 
         // Release the key so later tests start from a clean input state.
+        user32::state().input.borrow_mut().on_key(
+            &host::KeyMessage {
+                scancode: 0,
+                vkey: 0x30,
+                extended: false,
+                repeat: false,
+            },
+            false,
+        );
+    }
+
+    #[test]
+    fn get_device_data_honors_cbObjectData_and_buffer() {
+        let mut ctx = context();
+
+        lock().devices.insert(
+            0x2500,
+            Device {
+                kind: DeviceKind::Keyboard,
+                acquired: true,
+                guid: GUID_SysKeyboard,
+                properties: HashMap::new(),
+                refcount: 1,
+                data_size: 256,
+            },
+        );
+
+        // Buffered input is only kept when the app sets a buffer size.
+        ctx.memory.write::<u32>(0x3200, 20); // dwSize
+        ctx.memory.write::<u32>(0x3204, 16); // dwHeaderSize
+        ctx.memory.write::<u32>(0x3208, 0); // dwObj
+        ctx.memory.write::<u32>(0x320c, 0); // dwHow
+        ctx.memory.write::<u32>(0x3210, 32); // dwData
+        assert_eq!(
+            IDirectInputDevice::SetProperty(&mut ctx, 0x2500, DIPROP_BUFFERSIZE, 0x3200),
+            DI_OK
+        );
+
+        // Push two fresh key-down events for scan codes 0 and 1.
+        for scancode in [0, 1] {
+            user32::state().input.borrow_mut().on_key(
+                &host::KeyMessage {
+                    scancode,
+                    vkey: 0x30,
+                    extended: false,
+                    repeat: false,
+                },
+                true,
+            );
+        }
+
+        // The caller asks for up to 2 events with a 10-byte element stride.
+        ctx.memory.write::<u32>(0x3100, 2);
+        ctx.memory.bytes[0x3000..0x3050].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceData(&mut ctx, 0x2500, 10, 0x3000, 0x3100, 0),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x3100), 2);
+
+        // Each event is 10 bytes, so two events occupy 0x3000..0x3014.
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0); // dwOfs
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0x80); // dwData
+        assert_eq!(ctx.memory.read::<u32>(0x300a), 1); // second dwOfs
+        assert_eq!(ctx.memory.read::<u32>(0x300a + 4), 0x80); // second dwData
+        assert!(ctx.memory.bytes[0x3014..0x3050].iter().all(|&b| b == 0xCD));
+
+        // cbObjectData=16 writes the full 16-byte DIDEVICEOBJECTDATA.
+        user32::state()
+            .input
+            .borrow_mut()
+            .take_events(true, usize::MAX, false);
+        user32::state().input.borrow_mut().on_key(
+            &host::KeyMessage {
+                scancode: 0,
+                vkey: 0x30,
+                extended: false,
+                repeat: false,
+            },
+            true,
+        );
+        ctx.memory.write::<u32>(0x3100, 1);
+        ctx.memory.bytes[0x3000..0x3050].fill(0xCD);
+        assert_eq!(
+            IDirectInputDevice::GetDeviceData(&mut ctx, 0x2500, 16, 0x3000, 0x3100, 0),
+            DI_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
+        assert_eq!(ctx.memory.read::<u32>(0x3004), 0x80);
+        // dwTimeStamp and dwSequence are host-dependent; just ensure they are
+        // written and the buffer is not touched beyond the 16-byte element.
+        assert!(ctx.memory.bytes[0x3010..0x3050].iter().all(|&b| b == 0xCD));
+
+        // Release the key to clear the dik bit.
         user32::state().input.borrow_mut().on_key(
             &host::KeyMessage {
                 scancode: 0,
