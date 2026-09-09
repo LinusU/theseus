@@ -133,12 +133,12 @@ fn objects() -> MutexGuard<'static, BTreeMap<u32, u32>> {
 }
 
 /// Register a freshly created interface pointer with its initial reference.
-fn register_object(addr: u32) {
+pub(crate) fn register_object(addr: u32) {
     objects().insert(addr, 1);
 }
 
 /// `IUnknown::AddRef`; 0 when `this` is not a live dplayx object.
-fn add_ref_object(this: u32) -> u32 {
+pub(crate) fn add_ref_object(this: u32) -> u32 {
     match objects().get_mut(&this) {
         Some(refs) => {
             *refs += 1;
@@ -150,7 +150,7 @@ fn add_ref_object(this: u32) -> u32 {
 
 /// `IUnknown::Release`; returns the remaining count. The entry is removed
 /// when the count reaches 0 so the caller can free the heap block.
-fn release_object(this: u32) -> u32 {
+pub(crate) fn release_object(this: u32) -> u32 {
     let mut objects = objects();
     let Some(refs) = objects.get_mut(&this) else {
         return 0;

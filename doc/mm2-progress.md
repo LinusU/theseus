@@ -384,3 +384,19 @@ Suspects worth a look when the backlog is otherwise blocked:
   clippy+test winapi, build mm2, whitespace)`. Next: survey a headless run
   for remaining warn-level stubs; dmusic objects are stubs but their
   content is missing anyway.
+- 2026-09-09 dmusic COM ref counting: What: every DirectMusic stub object
+  (performance, directmusic, port, music_object, persist_stream, segment,
+  loader, composer) had constant AddRef/Release (1/0), QueryInterface never
+  AddRefed, and `new_object` blocks were never freed — the game holds a
+  global IDirectMusicPerformance and calls it every frame. Repro: new tests
+  `stub_objects_count_real_references` and `custom_query_interfaces_addref_this`.
+  Change: `new_object` registers each object in the shared
+  `dplayx::OBJECTS` map (helpers now `pub(crate)`), the shared
+  `query_interface!` and the three hand-rolled QIs AddRef `this` on
+  success, and the per-module `stub!(AddRef/Release)` pairs became two
+  shared `AddRef_stub`/`Release_stub` fns that free the heap block at
+  refs=0 (`dmusic.rs`, `dplayx.rs`). Check: `check.sh: OK (fmt 2 files,
+  clippy+test winapi, build mm2, whitespace)`; 30s headless smoke reached
+  `Just before GameLoop` with only the known `.CHK`/aud22/nodeGetBitmap
+  warnings and no `missing.txt`. Next: ole32/registry or a fresh defect
+  report.

@@ -15,7 +15,10 @@ use runtime::{ContFn, Context, Memory};
 
 use crate::{
     ddraw::GUID,
-    dplayx::{IID_IUnknown, IID_NullUnknown, add_blocks, init_vtable, read_guid},
+    dplayx::{
+        IID_IUnknown, IID_NullUnknown, add_blocks, add_ref_object, init_vtable, read_guid,
+        register_object, release_object,
+    },
     kernel32,
 };
 
@@ -273,7 +276,34 @@ fn new_object(ctx: &mut Context, vtable: u32) -> Option<u32> {
     let addr = kernel32.process_heap.try_alloc(&mut ctx.memory, 4)?;
     drop(kernel32);
     ctx.memory.write(addr, vtable);
+    register_object(addr);
     Some(addr)
+}
+
+/// Shared `AddRef(this)` for the stub objects.
+#[allow(non_snake_case)]
+pub fn AddRef_stub(ctx: &mut Context) -> runtime::Cont {
+    let esp = ctx.cpu.regs.esp;
+    let return_addr = ctx.memory.read::<u32>(esp);
+    let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+    ctx.cpu.regs.eax = add_ref_object(this);
+    ctx.cpu.regs.esp = esp.wrapping_add(2 * 4);
+    ctx.indirect(return_addr)
+}
+
+/// Shared `Release(this)`: frees the heap block on the last reference.
+#[allow(non_snake_case)]
+pub fn Release_stub(ctx: &mut Context) -> runtime::Cont {
+    let esp = ctx.cpu.regs.esp;
+    let return_addr = ctx.memory.read::<u32>(esp);
+    let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+    let remaining = release_object(this);
+    if remaining == 0 {
+        kernel32::lock().process_heap.free(&mut ctx.memory, this);
+    }
+    ctx.cpu.regs.eax = remaining;
+    ctx.cpu.regs.esp = esp.wrapping_add(2 * 4);
+    ctx.indirect(return_addr)
 }
 
 /// Build a guest vtable once per interface and register its stubs.
@@ -364,6 +394,9 @@ macro_rules! query_interface {
                     Some(iid) if iid_matches(&iid, $iids) => {
                         if ppv.write(&mut ctx.memory, this).is_none() {
                             ret = E_POINTER;
+                        } else {
+                            // QueryInterface AddRefs the returned pointer.
+                            add_ref_object(this);
                         }
                     }
                     Some(_) => {
@@ -393,8 +426,6 @@ pub mod performance {
         QueryInterface_stub,
         &[IID_IDirectMusicPerformance, IID_IDirectMusicPerformance2]
     );
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     /// Init(this, ppDirectMusic, pDirectSound, hWnd): hands back an
     /// IDirectMusic stub so the game's port setup has something to call.
@@ -618,8 +649,6 @@ pub mod directmusic {
     use super::*;
 
     query_interface!(QueryInterface_stub, &[IID_IDirectMusic]);
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
     /// EnumPort(this, dwIndex, pPortCaps): report the one emulated
     /// software-synth port at index 0 and S_FALSE past the end of the
     /// list, which is how callers know enumeration is done.
@@ -726,8 +755,6 @@ pub mod port {
     use super::*;
 
     query_interface!(QueryInterface_stub, &[IID_IDirectMusicPort]);
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
     stub!(PlayBuffer_stub, 2);
     stub!(SetReadNotificationHandle_stub, 2);
     stub!(Read_stub, 2);
@@ -846,6 +873,8 @@ pub mod music_object {
                     .is_none()
                 {
                     ret = E_POINTER;
+                } else {
+                    add_ref_object(this);
                 }
             } else if iid_matches(
                 &iid,
@@ -876,9 +905,6 @@ pub mod music_object {
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
-
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     /// GetDescriptor(this, pDesc): report that this object is a segment.
     #[allow(non_snake_case)]
@@ -1055,6 +1081,8 @@ pub mod persist_stream {
                     .is_none()
                 {
                     ret = E_POINTER;
+                } else {
+                    add_ref_object(this);
                 }
             } else if iid_matches(
                 &iid,
@@ -1085,9 +1113,6 @@ pub mod persist_stream {
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
-
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     vtable!(
         PERSIST_STREAM_VTABLE,
@@ -1167,6 +1192,8 @@ pub mod segment {
                     .is_none()
                 {
                     ret = E_POINTER;
+                } else {
+                    add_ref_object(this);
                 }
             } else if iid == IID_IDirectMusicObject {
                 ret = super::music_object::create(ctx, riid, ppv);
@@ -1190,8 +1217,6 @@ pub mod segment {
         ctx.cpu.regs.esp = ctx.cpu.regs.esp.wrapping_add(4 * 4);
         ctx.indirect(return_addr)
     }
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     stub_out!(GetLength_stub, 2, 1, S_OK, u32);
     stub!(SetLength_stub, 2);
@@ -1352,8 +1377,6 @@ pub mod loader {
     use super::*;
 
     query_interface!(QueryInterface_stub, &[IID_IDirectMusicLoader]);
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     /// GetObject(this, pDesc, riid, ppv): create a dummy `IDirectMusicSegment`
     /// for segment requests so callers like `OpenSegmentFile` can proceed even
@@ -1478,8 +1501,6 @@ pub mod composer {
     use super::*;
 
     query_interface!(QueryInterface_stub, &[IID_IDirectMusicComposer]);
-    stub!(AddRef_stub, 1, 1);
-    stub!(Release_stub, 1, 0);
 
     // Every composition method needs a real composition engine, so they
     // fail explicitly after honoring the out-pointer contract.
@@ -1533,5 +1554,118 @@ pub mod composer {
 
     pub fn create(ctx: &mut Context, riid: u32, ppv: u32) -> u32 {
         super::create(ctx, riid, ppv, &[IID_IDirectMusicComposer], get_vtable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime::{BlockCache, CPU, Context, Memory};
+
+    fn context() -> Context {
+        Context {
+            cpu: CPU::default(),
+            thread_handle: 0,
+            thread_id: 0,
+            memory: Memory::leak_new(0x4000),
+            blocks: &[],
+            cache: BlockCache::default(),
+            recent: [Context::return_from_x86; 4],
+        }
+    }
+
+    fn test_heap() {
+        crate::kernel32::ensure_test_state();
+        let mut k32 = crate::kernel32::lock();
+        k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+    }
+
+    fn write_guid(ctx: &mut Context, addr: u32, guid: &GUID) {
+        ctx.memory.write::<GUID>(addr, *guid);
+    }
+
+    /// Call a raw vtable `ContFn` with a return address and args on a stack
+    /// in guest memory; the unknown return address lands on `halt`.
+    fn call_raw(ctx: &mut Context, f: ContFn, args: &[u32]) {
+        const ESP: u32 = 0x3e00;
+        ctx.cpu.regs.esp = ESP;
+        ctx.memory.write::<u32>(ESP, 0);
+        for (i, &arg) in args.iter().enumerate() {
+            ctx.memory.write::<u32>(ESP + 4 * (i as u32 + 1), arg);
+        }
+        f(ctx);
+    }
+
+    fn block_alive(addr: u32) -> bool {
+        crate::kernel32::lock()
+            .process_heap
+            .block_size(addr)
+            .is_some()
+    }
+
+    #[test]
+    fn stub_objects_count_real_references() {
+        // Objects created through CoCreateInstance start at refs=1,
+        // QueryInterface AddRefs the returned pointer, and the shared
+        // Release frees the heap block when the count reaches zero.
+        let mut ctx = context();
+        test_heap();
+
+        const PPV: u32 = 0x3000;
+        const RIID: u32 = 0x3800;
+        write_guid(&mut ctx, RIID, &IID_IDirectMusicPerformance);
+        assert_eq!(performance::create(&mut ctx, RIID, PPV), S_OK);
+        let perf = ctx.memory.read::<u32>(PPV);
+        assert_ne!(perf, 0);
+        assert!(block_alive(perf));
+
+        write_guid(&mut ctx, RIID, &IID_IUnknown);
+        call_raw(
+            &mut ctx,
+            performance::QueryInterface_stub,
+            &[perf, RIID, PPV + 4],
+        );
+        assert_eq!(ctx.cpu.regs.eax, S_OK);
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), perf);
+
+        call_raw(&mut ctx, AddRef_stub, &[perf]);
+        assert_eq!(ctx.cpu.regs.eax, 3);
+        call_raw(&mut ctx, Release_stub, &[perf]);
+        assert_eq!(ctx.cpu.regs.eax, 2);
+        call_raw(&mut ctx, Release_stub, &[perf]);
+        assert_eq!(ctx.cpu.regs.eax, 1);
+        call_raw(&mut ctx, Release_stub, &[perf]);
+        assert_eq!(ctx.cpu.regs.eax, 0);
+        assert!(!block_alive(perf));
+    }
+
+    #[test]
+    fn custom_query_interfaces_addref_this() {
+        // The hand-rolled QueryInterface bodies (music_object here) return
+        // `this` for their own IIDs and must AddRef it; the delegated
+        // `create` branches hand back a fresh registered object.
+        let mut ctx = context();
+        test_heap();
+
+        const PPV: u32 = 0x3000;
+        const RIID: u32 = 0x3800;
+        write_guid(&mut ctx, RIID, &IID_IDirectMusicObject);
+        assert_eq!(music_object::create(&mut ctx, RIID, PPV), S_OK);
+        let obj = ctx.memory.read::<u32>(PPV);
+        assert_ne!(obj, 0);
+
+        call_raw(
+            &mut ctx,
+            music_object::QueryInterface_stub,
+            &[obj, RIID, PPV + 4],
+        );
+        assert_eq!(ctx.cpu.regs.eax, S_OK);
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), obj);
+
+        call_raw(&mut ctx, Release_stub, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 1);
+        call_raw(&mut ctx, Release_stub, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 0);
+        assert!(!block_alive(obj));
     }
 }
