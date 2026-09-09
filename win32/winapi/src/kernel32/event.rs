@@ -55,7 +55,11 @@ pub fn CreateEventA(
     bInitialState: bool,
     lpName: Ptr<u8>,
 ) -> HANDLE {
-    let name = ctx.memory.read_str(lpName.addr);
+    let name = if lpName.addr != 0 {
+        ctx.memory.read_str(lpName.addr).to_string()
+    } else {
+        String::new()
+    };
     let event = Event {
         _name: name.to_string(),
         manual_reset: bManualReset,
