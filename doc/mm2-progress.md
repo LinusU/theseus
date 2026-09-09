@@ -253,3 +253,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   the heap block on the last `Release`; `QueryInterface` AddRefs for `IUnknown`
   or `IID_IDIRECT3DDEVICE7`. Check: `check.sh: OK (fmt 1 files, clippy+test
   winapi, build mm2, whitespace)`. Next: `IDirect3DVertexBuffer7` AddRef/Release.
+- 2026-09-09 IDirect3DVertexBuffer7 ref counting: What:
+  `IDirect3DVertexBuffer7::AddRef` and `Release` returned stub constants and
+  never freed the object or its vertex data. Repro: new unit test
+  `d3d7_vertex_buffer_lifetime_addref_release` in
+  `win32/winapi/src/ddraw/d3d7.rs`. Change: added `refs` to `VertexBuffer`, set
+  it to 1 in `CreateVertexBuffer`, AddRef/Release through
+  `d3d_state().vertex_buffers`, and free the vtable and data blocks on the last
+  `Release`; `QueryInterface` AddRefs for `IUnknown` or
+  `IID_IDIRECT3DVERTEXBUFFER7`. Check: `check.sh: OK (fmt 1 files, clippy+test
+  winapi, build mm2, whitespace)`. Next: run a headless race smoke to confirm no
+  new d3d7 COM leaks or regressions, then return to the main backlog.

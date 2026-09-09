@@ -410,6 +410,7 @@ impl Device {
 
 pub struct VertexBuffer {
     pub addr: u32,
+    pub refs: u32,
     pub desc: D3DVERTEXBUFFERDESC,
     pub data: u32,
     pub data_len: u32,
@@ -694,6 +695,7 @@ pub mod IDirect3D7 {
             addr,
             VertexBuffer {
                 addr,
+                refs: 1,
                 desc,
                 data,
                 data_len,
@@ -2068,6 +2070,9 @@ pub mod IDirect3DVertexBuffer7 {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
+        if !d3d_state().vertex_buffers.borrow().contains_key(&this) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
@@ -2085,17 +2090,44 @@ pub mod IDirect3DVertexBuffer7 {
         if out == 0 {
             return DD::E_NOINTERFACE;
         }
+        if let Some(vb) = d3d_state().vertex_buffers.borrow_mut().get_mut(&this) {
+            vb.refs += 1;
+        }
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        let mut buffers = d3d_state().vertex_buffers.borrow_mut();
+        let Some(vb) = buffers.get_mut(&this) else {
+            return 0;
+        };
+        vb.refs += 1;
+        vb.refs
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        0
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let (remaining, data) = {
+            let mut buffers = d3d_state().vertex_buffers.borrow_mut();
+            let Some(vb) = buffers.get_mut(&this) else {
+                return 0;
+            };
+            vb.refs = vb.refs.saturating_sub(1);
+            let remaining = vb.refs;
+            let data = if remaining == 0 { Some(vb.data) } else { None };
+            if remaining == 0 {
+                buffers.remove(&this);
+            }
+            (remaining, data)
+        };
+        if remaining == 0 {
+            if let Some(data) = data {
+                kernel32::lock().process_heap.free(&mut ctx.memory, data);
+            }
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
+        }
+        remaining
     }
 
     #[win32_derive::dllexport]
@@ -3757,5 +3789,73 @@ mod tests {
 
         // Releasing an unknown pointer is a no-op.
         assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 0);
+    }
+
+    #[test]
+    fn d3d7_vertex_buffer_lifetime_addref_release() {
+        // IDirect3DVertexBuffer7::QueryInterface/AddRef/Release now track a
+        // real ref count and free the vertex buffer data on the last release.
+        fn context() -> Context {
+            Context {
+                cpu: CPU::default(),
+                thread_handle: 0,
+                thread_id: 0,
+                memory: Memory::leak_new(0x20_000),
+                blocks: &[],
+                cache: BlockCache::default(),
+                recent: [Context::return_from_x86; 4],
+            }
+        }
+
+        let mut ctx = context();
+        d3d_state().vertex_buffers.borrow_mut().clear();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x10000);
+        }
+        unsafe {
+            IDirect3DVertexBuffer7::VTABLE = 0x1234;
+        }
+
+        const DESC: u32 = 0x1000;
+        const PPV: u32 = 0x2000;
+        ctx.memory.write(
+            DESC,
+            D3DVERTEXBUFFERDESC {
+                dwSize: std::mem::size_of::<D3DVERTEXBUFFERDESC>() as u32,
+                dwCaps: 0,
+                dwFVF: 0,
+                dwNumVertices: 1,
+            },
+        );
+        assert_eq!(
+            IDirect3D7::CreateVertexBuffer(&mut ctx, 0, DESC, PPV, 0),
+            crate::ddraw::DD::OK
+        );
+        let vb = ctx.memory.read::<u32>(PPV);
+        assert_ne!(vb, 0);
+        assert_eq!(d3d_state().vertex_buffers.borrow()[&vb].refs, 1);
+
+        const RIID: u32 = 0x3000;
+        const QI_PPV: u32 = 0x4000;
+        ctx.memory
+            .write(RIID, crate::ddraw::GUID::new(0, 0, 0, [0; 8]));
+        assert_eq!(
+            IDirect3DVertexBuffer7::QueryInterface(&mut ctx, vb, RIID, QI_PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(QI_PPV), Some(vb));
+        assert_eq!(d3d_state().vertex_buffers.borrow()[&vb].refs, 2);
+
+        // AddRef/Release round-trip to zero frees the object and its data.
+        assert_eq!(IDirect3DVertexBuffer7::AddRef(&mut ctx, vb), 3);
+        assert_eq!(IDirect3DVertexBuffer7::Release(&mut ctx, vb), 2);
+        assert_eq!(IDirect3DVertexBuffer7::Release(&mut ctx, vb), 1);
+        assert_eq!(IDirect3DVertexBuffer7::Release(&mut ctx, vb), 0);
+        assert!(!d3d_state().vertex_buffers.borrow().contains_key(&vb));
+
+        // Releasing an unknown pointer is a no-op.
+        assert_eq!(IDirect3DVertexBuffer7::Release(&mut ctx, vb), 0);
     }
 }
