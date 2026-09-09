@@ -471,3 +471,16 @@ Suspects worth a look when the backlog is otherwise blocked:
   stops at `Just before GameLoop: 12.2M`, now with `PeekMessageA` returning
   nothing rather than looping; diagnose whether it is waiting for a fresh
   input message, a timer, or a different event.
+- 2026-09-09 race input poll diagnosis: What: the `Just before GameLoop: 12.2M`
+  tail is the normal race input loop, not a stall; the game renders frames and
+  the car leaves the start line when the `VK_UP` throttle hold is active. Repro:
+  `RUST_LOG=warn THESEUS_HEADLESS=1 THESEUS_MISSING_ADDRS=out/mm2/missing.txt
+  THESEUS_FRAME_DUMP=/tmp/mm2frames/run.ppm THESEUS_FRAME_DUMP_EVERY=500
+  THESEUS_INJECT_AT_MS=5000 THESEUS_INJECT_VKEY=0x0d,0x0d,0x28,0x28,0x28,0x28,0x0d
+  THESEUS_INJECT_CLICK="540,450;530,440" THESEUS_INJECT_CLICK_MS=15000
+  THESEUS_INJECT_CLICK_GAP=2000 THESEUS_INJECT_HOLD=0x26@30000+90000 ./target/fast/mm2 game`
+  for 120s -> frames progress and the final frame shows the race (timer 00:59:48,
+  car on grass, minimap). Change: `doc/mm2-progress.md`; `doc/mm2.md` notes that
+  `0x26@45000` is tied to `THESEUS_FRAME_DUMP` slowing and `0x26@30000` is safer
+  for fast runs. Check: `check.sh: OK (fmt 0 files, whitespace)`. Next: remaining
+  backlog is external content (audio, UI bitmaps, LOD) or live display capture.

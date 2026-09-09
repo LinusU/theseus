@@ -117,8 +117,10 @@ QUICK RACE. Down-arrow taps move focus down that column and Enter
 activates it: `0x0d` picks CRASH COURSE, `0x28,0x0d` RACES,
 `0x28,0x28,0x0d` MULTIPLAYER, and `0x28,0x28,0x28,0x0d` QUICK RACE. The
 click sequence then goes through `SELECT VEHICLE` and `GO DRIVE`, and the
-hold is the accelerator (Up arrow) from 45s on. Without injection the game
-idles on the main menu.
+hold is the accelerator (Up arrow). The 45s start time in the example is
+chosen for `THESEUS_FRAME_DUMP`, which slows loading; without frame dumping
+the race loop is reached closer to 30s, so `0x26@30000` is a safer throttle
+hold. Without injection the game idles on the main menu.
 
 The SDL window is resizable: the guest keeps its logical client size while
 present letterboxes the frame into the window (or fullscreen) preserving
