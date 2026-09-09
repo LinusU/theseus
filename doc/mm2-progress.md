@@ -357,15 +357,18 @@ Suspects worth a look when the backlog is otherwise blocked:
   delivered at t≈3.5s, so window creation and macOS activation work on this
   display; window enumeration needs Accessibility permission, and no keys
   were physically pressed so the key path stays verified-but-not-reprobed.
-- 2026-09-09 IDirect3D7::EnumDevices callback args: What: the callback was
-  invoked with `(desc, name, hw-desc, context)` — `LPD3DENUMDEVICESCALLBACK7`
-  is `(GUID*, desc, name, hw-desc, hel-desc, context)` — so a device-picking
-  game read the name string as its GUID and matched against garbage. Repro:
-  code inspection of `call32_x86` arg order vs the d3d.h typedef (audited
-  every call32_x86 callback site; this and the DirectDrawEnumerateA shift
-  were the only mismatches). Change: each device now reports its real GUID,
-  and the D3DDEVICEDESC7 goes to the HW param for HAL/TnL devices or the HEL
-  param for RGB Emulation (d3d7.rs). Check: `check.sh: OK (fmt 1 files,
-  clippy+test winapi, build mm2, whitespace)`. Next: re-run a longer
-  windowed session to see whether device selection changes the in-race
-  renderer path.
+- 2026-09-09 IDirect3D7::EnumDevices callback — original was correct,
+  reverted: What: an earlier commit today "fixed" the callback to the
+  6-arg pre-DX7 `LPD3DENUMDEVICESCALLBACK` shape — wrong: DX7's
+  `LPD3DENUMDEVICESCALLBACK7` is `(desc, name, LPD3DDEVICEDESC7, context)`
+  (4 args, GUID lives in `D3DDEVICEDESC7::deviceGUID`). Repro: a headless
+  run halted at `return_from_x86 invoked unexpectedly` right after the
+  Detect line; the game's callback at `0x4ac3c0` is `ret 10h` (4 args) and
+  reads param2 as the devicedesc — `dwDevCaps & 0x10000` (HW T&L) plus the
+  `deviceGUID` compare at +0xC4, which `device_desc7` fills. Change:
+  restored the 4-arg call and noted the signature in a comment (d3d7.rs);
+  headless run reaches GameLoop again. Check: `check.sh: OK (fmt 1 files,
+  clippy+test winapi, build mm2, whitespace)`; smoke run reached `Heap
+  MemUsed (Just before GameLoop): 3.1M`. Lesson: verify callback arg counts
+  against the guest's `ret N` before "fixing" them. Next: continue COM
+  audit.
