@@ -2,6 +2,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use runtime::Context;
 
+mod compat;
+pub use compat::*;
 mod time;
 pub use time::*;
 mod wave;

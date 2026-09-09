@@ -8,8 +8,8 @@ pub mod comctl32;
 pub mod comdlg32;
 pub mod ddraw;
 pub mod dinput;
-pub mod dplayx;
 mod dllexport;
+pub mod dplayx;
 pub mod dsound;
 pub mod gdi32;
 mod handle;
@@ -84,6 +84,7 @@ pub fn load(exe: &EXEData) -> Context {
         thread_id: 1,
         memory,
         blocks: exe.blocks,
+        cache: Default::default(),
         recent: [Context::return_from_x86; 4],
     };
 

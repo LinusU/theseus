@@ -155,10 +155,15 @@ pub enum BlockType {
 }
 
 pub fn stdcall_name(name: &str) -> String {
-    let valid = name.split("::").all(|part| {
-        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    });
-    if valid {
+    let mut parts = name.split("::");
+    let dll = parts.next();
+    let valid = parts.next().is_some()
+        && parts.next().is_none()
+        && name.split("::").all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    let unsupported_dll = matches!(dll, Some("imm32" | "qmixer" | "wsock32"));
+    if valid && !unsupported_dll {
         format!("{name}_stdcall")
     } else {
         "unsupported::stdcall".into()

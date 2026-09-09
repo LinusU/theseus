@@ -236,10 +236,10 @@ fn class_name(ctx: &Context, lpClassName: u32) -> String {
 #[win32_derive::dllexport]
 pub fn CreateWindowExW(
     ctx: &mut Context,
-    dwExStyle: u32,        /* WINDOW_EX_STYLE */
-    lpClassName: Ptr<u16>, /* WSTR */
+    dwExStyle: u32,         /* WINDOW_EX_STYLE */
+    lpClassName: Ptr<u16>,  /* WSTR */
     lpWindowName: Ptr<u16>, /* WSTR */
-    dwStyle: u32,          /* WINDOW_STYLE */
+    dwStyle: u32,           /* WINDOW_STYLE */
     X: i32,
     Y: i32,
     nWidth: CW,
@@ -389,7 +389,10 @@ impl State {
             .iter()
             .position(|class| class.name.eq_ignore_ascii_case(&wnd_class.name))
         {
-            log::warn!("RegisterClass({:?}): replacing existing class", wnd_class.name);
+            log::warn!(
+                "RegisterClass({:?}): replacing existing class",
+                wnd_class.name
+            );
             classes[index] = wnd_class;
             return 0xc000 + index as u16;
         }
@@ -435,9 +438,7 @@ impl COLOR {
             INACTIVECAPTION => COLORREF::from_rgb(0x80, 0x80, 0x80),
             WINDOW => COLORREF::from_rgb(0xff, 0xff, 0xff),
             WINDOWFRAME | MENUTEXT | WINDOWTEXT | BTNTEXT => COLORREF::from_rgb(0, 0, 0),
-            MENU | BTNFACE | ACTIVEBORDER | INACTIVEBORDER => {
-                COLORREF::from_rgb(0xc0, 0xc0, 0xc0)
-            }
+            MENU | BTNFACE | ACTIVEBORDER | INACTIVEBORDER => COLORREF::from_rgb(0xc0, 0xc0, 0xc0),
             CAPTIONTEXT | HIGHLIGHTTEXT | BTNHIGHLIGHT => COLORREF::from_rgb(0xff, 0xff, 0xff),
             APPWORKSPACE | BTNSHADOW | GRAYTEXT => COLORREF::from_rgb(0x80, 0x80, 0x80),
             HIGHLIGHT => COLORREF::from_rgb(0x00, 0x00, 0x80),
@@ -456,7 +457,10 @@ pub fn RegisterClassA(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
 #[win32_derive::dllexport]
 pub fn RegisterClassW(ctx: &mut Context, lpWndClass: Ptr<WNDCLASS>) -> u16 {
     let wndclass = lpWndClass.read(&ctx.memory).unwrap();
-    let name = ctx.memory.read_wstr(wndclass.lpszClassName).to_string_lossy();
+    let name = ctx
+        .memory
+        .read_wstr(wndclass.lpszClassName)
+        .to_string_lossy();
     register_class(ctx, &wndclass, name)
 }
 

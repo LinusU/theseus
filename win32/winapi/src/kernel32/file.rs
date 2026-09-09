@@ -552,3 +552,174 @@ mod tests {
         }
     }
 }
+
+#[win32_derive::dllexport]
+pub fn GetFileSize(ctx: &mut Context, hFile: crate::HANDLE, lpFileSizeHigh: Ptr<u32>) -> u32 {
+    const INVALID_FILE_SIZE: u32 = 0xffff_ffff;
+    let mut kernel32 = lock();
+    let Some(Object::File(file)) = kernel32.objects.get_mut(hFile) else {
+        log::warn!("GetFileSize({hFile:?}): unknown handle");
+        return INVALID_FILE_SIZE;
+    };
+    let Ok(pos) = file.stream_position() else {
+        return INVALID_FILE_SIZE;
+    };
+    let Ok(len) = file.seek(SeekFrom::End(0)) else {
+        return INVALID_FILE_SIZE;
+    };
+    let _ = file.seek(SeekFrom::Start(pos));
+    drop(kernel32);
+    if lpFileSizeHigh.addr != 0 {
+        lpFileSizeHigh.write(&mut ctx.memory, (len >> 32) as u32);
+    }
+    len as u32
+}
+
+#[win32_derive::dllexport]
+pub fn GetFileTime(
+    ctx: &mut Context,
+    _hFile: crate::HANDLE,
+    lpCreationTime: Ptr<u64>,
+    lpLastAccessTime: Ptr<u64>,
+    lpLastWriteTime: Ptr<u64>,
+) -> bool {
+    for time in [lpCreationTime, lpLastAccessTime, lpLastWriteTime] {
+        if time.addr != 0 {
+            time.write(&mut ctx.memory, 0);
+        }
+    }
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn GetFullPathNameA(
+    ctx: &mut Context,
+    lpFileName: Ptr<u8>,
+    nBufferLength: u32,
+    lpBuffer: Ptr<u8>,
+    lpFilePart: Ptr<u32>,
+) -> u32 {
+    let name = ctx.memory.read_str(lpFileName.addr).to_string();
+    let full = if name.len() >= 2 && name.as_bytes()[1] == b':' {
+        name
+    } else if name.starts_with('\\') {
+        format!("C:{name}")
+    } else {
+        let tmp = lock().process_heap.alloc(&mut ctx.memory, 260);
+        GetCurrentDirectoryA(ctx, 260, Ptr::new(tmp));
+        let cur_str = ctx.memory.read_str(tmp).to_string();
+        lock().process_heap.free(&mut ctx.memory, tmp);
+        if cur_str.ends_with('\\') {
+            format!("{cur_str}{name}")
+        } else {
+            format!("{cur_str}\\{name}")
+        }
+    };
+    if (nBufferLength as usize) < full.len() + 1 {
+        return full.len() as u32 + 1;
+    }
+    let buf_addr = lpBuffer.addr;
+    crate::kernel32::write_cstr(ctx, lpBuffer, nBufferLength, full.as_bytes());
+    if lpFilePart.addr != 0 {
+        let last = full.rfind('\\').map_or(0, |i| i + 1);
+        lpFilePart.write(&mut ctx.memory, buf_addr + last as u32);
+    }
+    full.len() as u32
+}
+
+#[win32_derive::dllexport]
+pub fn LockFile(
+    _ctx: &mut Context,
+    _hFile: crate::HANDLE,
+    _dwFileOffsetLow: u32,
+    _dwFileOffsetHigh: u32,
+    _nNumberOfBytesToLockLow: u32,
+    _nNumberOfBytesToLockHigh: u32,
+) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn UnlockFile(
+    _ctx: &mut Context,
+    _hFile: crate::HANDLE,
+    _dwFileOffsetLow: u32,
+    _dwFileOffsetHigh: u32,
+    _nNumberOfBytesToUnlockLow: u32,
+    _nNumberOfBytesToUnlockHigh: u32,
+) -> bool {
+    true
+}
+
+const CDROM_DRIVE: u8 = b'D';
+
+fn is_cdrom_path(path: &str) -> bool {
+    path.as_bytes()
+        .first()
+        .is_some_and(|c| c.to_ascii_uppercase() == CDROM_DRIVE)
+}
+
+#[win32_derive::dllexport]
+pub fn GetLogicalDrives(_ctx: &mut Context) -> u32 {
+    (1 << (b'C' - b'A')) | (1 << (CDROM_DRIVE - b'A'))
+}
+
+#[win32_derive::dllexport]
+pub fn GetDriveTypeA(ctx: &mut Context, lpRootPathName: Ptr<u8>) -> u32 {
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_CDROM: u32 = 5;
+    if lpRootPathName.addr == 0 {
+        return DRIVE_FIXED;
+    }
+    let path = ctx.memory.read_str(lpRootPathName.addr);
+    if is_cdrom_path(path) {
+        DRIVE_CDROM
+    } else {
+        DRIVE_FIXED
+    }
+}
+
+fn cdrom_label() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    if let Ok(label) = std::env::var("THESEUS_CD_LABEL") {
+        return label;
+    }
+    "CDROM".to_string()
+}
+
+#[win32_derive::dllexport]
+pub fn GetVolumeInformationA(
+    ctx: &mut Context,
+    lpRootPathName: Ptr<u8>,
+    lpVolumeNameBuffer: Ptr<u8>,
+    nVolumeNameSize: u32,
+    lpVolumeSerialNumber: Ptr<u32>,
+    lpMaximumComponentLength: Ptr<u32>,
+    lpFileSystemFlags: Ptr<u32>,
+    lpFileSystemNameBuffer: Ptr<u8>,
+    nFileSystemNameSize: u32,
+) -> bool {
+    let cdrom = lpRootPathName.addr != 0 && is_cdrom_path(ctx.memory.read_str(lpRootPathName.addr));
+    let (label, fs) = if cdrom {
+        (cdrom_label(), "CDFS")
+    } else {
+        ("THESEUS".to_string(), "FAT")
+    };
+    crate::kernel32::write_cstr(ctx, lpVolumeNameBuffer, nVolumeNameSize, label.as_bytes());
+    crate::kernel32::write_cstr(
+        ctx,
+        lpFileSystemNameBuffer,
+        nFileSystemNameSize,
+        fs.as_bytes(),
+    );
+    if lpVolumeSerialNumber.addr != 0 {
+        lpVolumeSerialNumber.write(&mut ctx.memory, 0x1234_5678);
+    }
+    if lpMaximumComponentLength.addr != 0 {
+        lpMaximumComponentLength.write(&mut ctx.memory, 255);
+    }
+    if lpFileSystemFlags.addr != 0 {
+        lpFileSystemFlags.write(&mut ctx.memory, 0);
+    }
+    true
+}

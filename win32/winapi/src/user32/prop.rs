@@ -22,7 +22,11 @@ fn prop_name(ctx: &Context, lpString: Ptr<u8>) -> String {
 #[win32_derive::dllexport]
 pub fn SetPropA(ctx: &mut Context, hWnd: HWND, lpString: Ptr<u8>, hData: u32) -> bool {
     let key = (hWnd.to_raw(), prop_name(ctx, lpString));
-    PROPS.lock().unwrap().get_or_insert_with(Default::default).insert(key, hData);
+    PROPS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(key, hData);
     true
 }
 

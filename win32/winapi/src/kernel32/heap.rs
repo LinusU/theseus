@@ -163,3 +163,52 @@ pub fn GlobalUnlock(_ctx: &mut Context, _hMem: u32) -> bool {
 pub fn GlobalHandle(_ctx: &mut Context, pMem: u32) -> u32 {
     pMem
 }
+
+fn process_heap_realloc(ctx: &mut Context, addr: u32, new_size: u32, zero_init: bool) -> u32 {
+    let kernel32 = lock();
+    let heap = &kernel32.process_heap;
+    let old_size = heap.size(&mut ctx.memory, addr);
+    let new_addr = heap.alloc(&mut ctx.memory, new_size);
+    let copy = old_size.min(new_size) as usize;
+    ctx.memory
+        .bytes
+        .copy_within(addr as usize..addr as usize + copy, new_addr as usize);
+    if zero_init && new_size > old_size {
+        ctx.memory[new_addr + old_size..new_addr + new_size].fill(0);
+    }
+    heap.free(&mut ctx.memory, addr);
+    new_addr
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalReAlloc(ctx: &mut Context, hMem: u32, dwBytes: u32, uFlags: GMEM) -> u32 {
+    if uFlags.bits() & 0x80 != 0 {
+        return hMem;
+    }
+    process_heap_realloc(ctx, hMem, dwBytes, uFlags.contains(GMEM::ZEROINIT))
+}
+
+#[win32_derive::dllexport]
+pub fn LocalAlloc(ctx: &mut Context, uFlags: u32, uBytes: u32) -> u32 {
+    let flags = GMEM::from_bits_retain(uFlags & !GMEM::MOVEABLE.bits());
+    GlobalAlloc(ctx, flags, uBytes)
+}
+
+#[win32_derive::dllexport]
+pub fn LocalReAlloc(ctx: &mut Context, hMem: u32, uBytes: u32, uFlags: u32) -> u32 {
+    let flags = GMEM::from_bits_retain(uFlags & !GMEM::MOVEABLE.bits());
+    GlobalReAlloc(ctx, hMem, uBytes, flags)
+}
+
+#[win32_derive::dllexport]
+pub fn LocalFree(ctx: &mut Context, hMem: Ptr<()>) -> u32 {
+    if hMem.addr == 0 {
+        return 0;
+    }
+    GlobalFree(ctx, hMem)
+}
+
+#[win32_derive::dllexport]
+pub fn GlobalFlags(_ctx: &mut Context, _hMem: u32) -> u32 {
+    0
+}

@@ -347,7 +347,13 @@ pub fn SystemParametersInfoA(
 }
 
 #[win32_derive::dllexport]
-pub fn WinHelpA(_ctx: &mut Context, _hWndMain: HWND, _lpszHelp: Ptr<u8>, _uCommand: u32, _dwData: u32) -> bool {
+pub fn WinHelpA(
+    _ctx: &mut Context,
+    _hWndMain: HWND,
+    _lpszHelp: Ptr<u8>,
+    _uCommand: u32,
+    _dwData: u32,
+) -> bool {
     false
 }
 
@@ -369,4 +375,61 @@ pub fn GetCapture(_ctx: &mut Context) -> HWND {
 #[win32_derive::dllexport]
 pub fn UnregisterClassA(_ctx: &mut Context, _lpClassName: Ptr<u8>, _hInstance: u32) -> bool {
     true
+}
+
+#[win32_derive::dllexport]
+pub fn CloseClipboard(_ctx: &mut Context) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn GetClipboardData(_ctx: &mut Context, _uFormat: u32) -> u32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn GetDoubleClickTime(_ctx: &mut Context) -> u32 {
+    500
+}
+
+#[win32_derive::dllexport]
+pub fn GetKeyboardLayout(_ctx: &mut Context, _idThread: u32) -> u32 {
+    0
+}
+
+#[win32_derive::dllexport]
+pub fn GetKeyboardType(_ctx: &mut Context, _nTypeFlag: i32) -> i32 {
+    4
+}
+
+#[win32_derive::dllexport]
+pub fn IsClipboardFormatAvailable(_ctx: &mut Context, _format: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn OpenClipboard(_ctx: &mut Context, _hWndNewOwner: HWND) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn SetDlgItemTextA(
+    _ctx: &mut Context,
+    _hDlg: HWND,
+    _nIDDlgItem: i32,
+    _lpString: Ptr<u8>,
+) -> bool {
+    true
+}
+
+#[win32_derive::dllexport]
+pub fn CreateDialogParamA(
+    _ctx: &mut Context,
+    _hInstance: HINSTANCE,
+    _lpTemplateName: u32,
+    _hWndParent: HWND,
+    _lpDialogFunc: u32,
+    _dwInitParam: u32,
+) -> HWND {
+    HWND::null()
 }

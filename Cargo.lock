@@ -236,6 +236,7 @@ dependencies = [
  "bitflags",
  "console_error_panic_hook",
  "js-sys",
+ "log",
  "logger",
  "sdl3-sys",
  "wasm-bindgen",

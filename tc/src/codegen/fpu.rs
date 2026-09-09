@@ -176,10 +176,9 @@ impl<'a> CodeGen<'a> {
                 self.line(self.fpu_set_reg(0, format!("{}.abs()", self.fpu_get_reg(0))));
             }
             Frndint => {
-                self.line(self.fpu_set_reg(
-                    0,
-                    format!("ctx.cpu.fpu.round({})", self.fpu_get_reg(0)),
-                ));
+                self.line(
+                    self.fpu_set_reg(0, format!("ctx.cpu.fpu.round({})", self.fpu_get_reg(0))),
+                );
             }
             Fscale => {
                 // st0 *= 2^trunc(st1)
@@ -197,7 +196,11 @@ impl<'a> CodeGen<'a> {
             }
             Fyl2x | Fyl2xp1 => {
                 // st1 = st1 * log2(st0 [+ 1]); pop
-                let plus = if instr.mnemonic() == Fyl2xp1 { " + 1.0" } else { "" };
+                let plus = if instr.mnemonic() == Fyl2xp1 {
+                    " + 1.0"
+                } else {
+                    ""
+                };
                 self.line(format!(
                     "let t = {} * ({}{plus}).log2();",
                     self.fpu_get_reg(1),
@@ -317,10 +320,7 @@ impl<'a> CodeGen<'a> {
 
             Fldcw => {
                 assert_eq!(instr.op_count(), 1);
-                self.line(format!(
-                    "ctx.cpu.fpu.control = {};",
-                    self.get_op(instr, 0)
-                ));
+                self.line(format!("ctx.cpu.fpu.control = {};", self.get_op(instr, 0)));
             }
 
             Fpatan => {

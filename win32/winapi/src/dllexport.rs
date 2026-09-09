@@ -24,6 +24,12 @@ impl From<u16> for ABIReturn {
     }
 }
 
+impl From<i16> for ABIReturn {
+    fn from(value: i16) -> Self {
+        Self(value as u32)
+    }
+}
+
 impl From<bool> for ABIReturn {
     fn from(value: bool) -> Self {
         Self(if value { 1 } else { 0 })
