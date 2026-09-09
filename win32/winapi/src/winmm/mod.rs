@@ -8,6 +8,8 @@ mod wave;
 pub use wave::*;
 mod misc;
 pub use misc::*;
+mod mci;
+pub use mci::*;
 mod mmio;
 pub use mmio::*;
 mod joystick;
@@ -20,6 +22,7 @@ pub struct State {
     timer: Option<Timer>,
     wave: Option<wave::State>,
     mmio: Option<mmio::State>,
+    mci: Option<mci::State>,
 }
 
 impl State {
@@ -28,12 +31,18 @@ impl State {
     pub fn mmio(&mut self) -> &mut mmio::State {
         self.mmio.get_or_insert_with(Default::default)
     }
+
+    /// The MCI device state, created on first use.
+    pub fn mci(&mut self) -> &mut mci::State {
+        self.mci.get_or_insert_with(Default::default)
+    }
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
     timer: None,
     wave: None,
     mmio: None,
+    mci: None,
 });
 
 pub fn state() -> MutexGuard<'static, State> {

@@ -479,6 +479,7 @@ pub mod IDirectDrawSurface7 {
         // A frame flip is the one thing a game does every frame no matter what
         // it's doing, so it's where we keep the audio mixer fed.
         crate::dsound::pump(ctx);
+        crate::winmm::pump();
         DD::OK
     }
 
