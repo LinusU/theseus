@@ -342,26 +342,30 @@ pub mod IDirectDraw {
         if dwFlags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumSurfacesCallback < 0x1000 {
             return DD::OK;
         }
-        let addrs: Vec<u32> = state().surf.borrow().keys().cloned().collect();
-        for addr in addrs {
-            let desc = {
-                let surfaces = state().surf.borrow();
-                let Some(surface) = surfaces.get(&addr) else {
-                    continue; // released by an earlier callback
-                };
+        // Snapshot one entry per object — a surface queried for another
+        // interface version has multiple map keys — and the callback may
+        // release surfaces mid-walk.
+        for surface in crate::ddraw::ddraw::live_surfaces() {
+            let (addr, desc) = {
                 let surface = surface.borrow();
+                if surface.refs == 0 {
+                    continue; // released by an earlier callback
+                }
                 // The surface records its declared format at creation (or a
                 // byte-depth fallback), which GetPixelFormat also reports.
                 let pixel_format = surface.pixel_format.clone();
-                DDSURFACEDESC {
-                    dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
-                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
-                    dwWidth: surface.width,
-                    dwHeight: surface.height,
-                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
-                    ddpfPixelFormat: pixel_format,
-                    ..DDSURFACEDESC::default()
-                }
+                (
+                    surface.addr,
+                    DDSURFACEDESC {
+                        dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+                        dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                        dwWidth: surface.width,
+                        dwHeight: surface.height,
+                        lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                        ddpfPixelFormat: pixel_format,
+                        ..DDSURFACEDESC::default()
+                    },
+                )
             };
             let Some(desc_addr) = kernel32::lock()
                 .process_heap

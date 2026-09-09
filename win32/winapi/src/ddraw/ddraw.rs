@@ -924,6 +924,21 @@ pub(crate) fn release_surface(ctx: &mut Context, this: u32) -> u32 {
     0
 }
 
+/// Snapshot the live surface objects — one entry per object regardless of
+/// how many interface pointers `QueryInterface` handed out for it. Callers
+/// re-check `refs` before use: an enumeration callback may release a
+/// surface mid-walk.
+pub(crate) fn live_surfaces() -> Vec<Rc<RefCell<Surface>>> {
+    let mut out: Vec<Rc<RefCell<Surface>>> = Vec::new();
+    for surface in state().surf.borrow().values() {
+        if out.iter().any(|s| Rc::ptr_eq(s, surface)) {
+            continue;
+        }
+        out.push(surface.clone());
+    }
+    out
+}
+
 /// Shared body for surface `SetPalette`: attaches the palette object behind
 /// `lpDDPalette`, holding a reference on it for the attachment's lifetime
 /// and dropping the reference on any palette it replaces.
@@ -1723,7 +1738,7 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 mod tests {
     use super::{
         ColorKey, DirectDraw, PALETTEENTRY, Palette, PixelFmt, RECT, Surface, Target,
-        expand_palettized, lock_offset, write_blit, write_blit_convert,
+        expand_palettized, live_surfaces, lock_offset, write_blit, write_blit_convert,
     };
     use crate::{
         Ptr,
@@ -2724,5 +2739,29 @@ mod tests {
         assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 1);
         assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 0);
         assert!(!state().palette.borrow().contains_key(&pal));
+    }
+
+    #[test]
+    fn live_surfaces_dedupes_interface_aliases() {
+        // A surface object reachable through several interface pointers is
+        // enumerated once — map keys are per-pointer, objects are shared.
+        let before = live_surfaces().len();
+        let surface = Rc::new(RefCell::new(surf16(
+            DDPIXELFORMAT::default(),
+            test_window(),
+        )));
+        state().surf.borrow_mut().insert(0x5000, surface.clone());
+        state().surf.borrow_mut().insert(0x6000, surface);
+        state().surf.borrow_mut().insert(
+            0x7000,
+            Rc::new(RefCell::new(surf16(
+                DDPIXELFORMAT::default(),
+                test_window(),
+            ))),
+        );
+        assert_eq!(live_surfaces().len(), before + 2);
+        for key in [0x5000, 0x6000, 0x7000] {
+            state().surf.borrow_mut().remove(&key);
+        }
     }
 }

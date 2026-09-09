@@ -306,3 +306,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   IID_IDirectDrawPalette; `GetPalette` AddRefs (`ddraw1.rs`, `ddraw7.rs`).
   Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build mm2,
   whitespace)`. Next: survey a headless run for remaining warn-level stubs.
+- 2026-09-09 EnumSurfaces dedupes interface aliases: What: `EnumSurfaces`
+  walked `state().surf` keys, and after the cross-version QI change one
+  object can hold several keys, so it would be enumerated once per interface
+  pointer. Repro: new test `live_surfaces_dedupes_interface_aliases` -> 3
+  entries for 2 objects. Change: shared `live_surfaces()` snapshots one entry
+  per object (`Rc::ptr_eq` dedup) and both `EnumSurfaces` report the
+  canonical `surface.addr` while still skipping objects a callback released
+  mid-walk (`ddraw.rs`, `ddraw1.rs`, `ddraw7.rs`). Check: `check.sh: OK (fmt
+  3 files, clippy+test winapi, build mm2, whitespace)`. Next: 30s headless
+  smoke is clean (GameLoop, no missing.txt); remaining backlog is external
+  content or needs live input.

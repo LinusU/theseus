@@ -393,24 +393,27 @@ pub mod IDirectDraw7 {
         if flags & DDENUMSURFACES_DOESEXIST == 0 || lpEnumCallback < 0x1000 {
             return DD::OK;
         }
-        // Snapshot the list: the callback may release surfaces mid-walk.
-        let addrs: Vec<u32> = state().surf.borrow().keys().copied().collect();
-        for addr in addrs {
-            let desc = {
-                let surfaces = state().surf.borrow();
-                let Some(surface) = surfaces.get(&addr) else {
-                    continue;
-                };
+        // Snapshot one entry per object — a surface queried for another
+        // interface version has multiple map keys — and the callback may
+        // release surfaces mid-walk.
+        for surface in crate::ddraw::ddraw::live_surfaces() {
+            let (addr, desc) = {
                 let surface = surface.borrow();
-                DDSURFACEDESC2 {
-                    dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
-                    dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
-                    dwHeight: surface.height,
-                    dwWidth: surface.width,
-                    lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
-                    ddpfPixelFormat: surface.pixel_format.clone(),
-                    ..Default::default()
+                if surface.refs == 0 {
+                    continue; // released by an earlier callback
                 }
+                (
+                    surface.addr,
+                    DDSURFACEDESC2 {
+                        dwSize: std::mem::size_of::<DDSURFACEDESC2>() as u32,
+                        dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                        dwHeight: surface.height,
+                        dwWidth: surface.width,
+                        lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
+                        ddpfPixelFormat: surface.pixel_format.clone(),
+                        ..Default::default()
+                    },
+                )
             };
             let Some(desc_addr) = kernel32::lock().process_heap.try_alloc(
                 &mut ctx.memory,
