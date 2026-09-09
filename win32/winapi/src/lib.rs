@@ -55,7 +55,7 @@ macro_rules! stub {
         $arg
     }};
 }
-use runtime::{CPU, Context, EXEData, Mappings, Memory};
+use runtime::{CPU, Context, EXEData, Memory};
 pub(crate) use stub;
 
 #[cfg(target_family = "wasm")]
@@ -72,7 +72,7 @@ pub fn load(exe: &EXEData) -> Context {
     host::init();
     crate::trace::init(&thesesus_trace());
 
-    let memory_size = 64 << 20;
+    let memory_size = 256 << 20;
     let memory = Memory::leak_new(memory_size);
 
     kernel32::init_state(exe.image_base, exe.resources.clone());
