@@ -11976,7 +11976,7 @@ pub fn x4b30d6(ctx: &mut Context) -> Cont {
 
 pub fn x4b30df(ctx: &mut Context) -> Cont {
     // 004b30df fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 004b30e1 jmp short 004B30E8h
     Cont(x4b30e8)
 }
@@ -19730,4 +19730,11 @@ pub fn x4b4a51(ctx: &mut Context) -> Cont {
     sub(ctx.cpu.regs.edi, 0xbu32, &mut ctx.cpu.flags);
     // 004b4a54 je short 004B4A5Bh
     ctx.je(Cont(x4b4a56), Cont(x4b4a5b))
+}
+
+pub fn x4b4a56(ctx: &mut Context) -> Cont {
+    // 004b4a56 cmp edi,4
+    sub(ctx.cpu.regs.edi, 0x4u32, &mut ctx.cpu.flags);
+    // 004b4a59 jne short 004B4A6Eh
+    ctx.jne(Cont(x4b4a5b), Cont(x4b4a6e))
 }

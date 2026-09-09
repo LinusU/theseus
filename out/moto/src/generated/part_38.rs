@@ -7,13 +7,6 @@
 
 use super::*;
 
-pub fn x4b4a56(ctx: &mut Context) -> Cont {
-    // 004b4a56 cmp edi,4
-    sub(ctx.cpu.regs.edi, 0x4u32, &mut ctx.cpu.flags);
-    // 004b4a59 jne short 004B4A6Eh
-    ctx.jne(Cont(x4b4a5b), Cont(x4b4a6e))
-}
-
 pub fn x4b4a5b(ctx: &mut Context) -> Cont {
     // 004b4a5b mov eax,[esp+14h]
     ctx.cpu.regs.eax = ctx

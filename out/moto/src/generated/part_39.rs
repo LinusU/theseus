@@ -7324,7 +7324,7 @@ pub fn x4ba87e(ctx: &mut Context) -> Cont {
     ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(1));
     ctx.cpu.fpu.set(1, t);
     // 004ba8b4 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 004ba8b6 fstp tbyte ptr [esp+28h]
     runtime::fpu::write_f80(
         &mut ctx.memory,
@@ -7498,7 +7498,7 @@ pub fn x4ba944(ctx: &mut Context) -> Cont {
         .fpu
         .push(runtime::fpu::read_f80(&ctx.memory, 0x4f3424u32));
     // 004ba958 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 004ba95a fstp st(0)
     ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0));
     ctx.cpu.fpu.pop();
@@ -7536,7 +7536,7 @@ pub fn x4ba970(ctx: &mut Context) -> Cont {
         ctx.cpu.regs.esp.wrapping_add(0x28u32),
     ));
     // 004ba978 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     Cont(x4ba97a)
 }
 
@@ -7820,7 +7820,7 @@ pub fn x4baa82(ctx: &mut Context) -> Cont {
 
 pub fn x4baa87(ctx: &mut Context) -> Cont {
     // 004baa87 fprem
-    ctx.cpu.fpu.set(0, ctx.cpu.fpu.get(0) % ctx.cpu.fpu.get(1));
+    ctx.cpu.fpu.prem();
     // 004baa89 add esp,30h
     ctx.cpu.regs.esp = add(ctx.cpu.regs.esp, 0x30u32, &mut ctx.cpu.flags);
     // 004baa8c pop edx
