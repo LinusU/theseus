@@ -425,3 +425,16 @@ Suspects worth a look when the backlog is otherwise blocked:
   whitespace)`; 40s headless smoke reached the lobby with the callback
   exercised, no panic, no `missing.txt`. Next: survey the same trace for
   other never-answered enumerations or take a fresh defect report.
+- 2026-09-09 D3D7 getter AddRefs: What: `IDirect3DDevice7::GetDirect3D`,
+  `GetRenderTarget`, and `GetTexture` returned interface pointers without
+  AddRef, breaking the COM contract that `GetDDInterface`/`GetPalette`
+  already document — a caller balancing Get/Release would free the object
+  or surface early. Repro: audit found the missing AddRefs; the MM2 trace
+  shows none of the three are called today, so this is contract
+  correctness, not an observed failure. Change: each getter AddRefs the
+  returned object's entry in `d3d7_objects`/`state().surf` before writing
+  the out pointer (`d3d7.rs`); new test
+  `device_getters_addref_returned_interfaces` covers all three. Check:
+  `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
+  Next: continue the getter/setter contract sweep (SetTexture/SetRenderTarget
+  ownership) or take a fresh defect report.

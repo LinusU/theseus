@@ -991,8 +991,14 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        let d3d = device.d3d;
+        drop(devices);
+        // The returned interface is AddRefed to match COM lifetime rules.
+        if let Some(refs) = d3d_state().d3d7_objects.borrow_mut().get_mut(&d3d) {
+            *refs += 1;
+        }
         if crate::Ptr::<u32>::new(lplpD3D)
-            .write(&mut ctx.memory, device.d3d)
+            .write(&mut ctx.memory, d3d)
             .is_none()
         {
             return DD::ERR_INVALIDPARAMS;
@@ -1028,8 +1034,13 @@ pub mod IDirect3DDevice7 {
         let Some(device) = devices.get(&this) else {
             return DD::ERR_INVALIDPARAMS;
         };
-        ctx.memory
-            .write::<u32>(lplpRenderTarget, device.render_target);
+        let render_target = device.render_target;
+        drop(devices);
+        // The returned interface is AddRefed to match COM lifetime rules.
+        if let Some(surface) = state().surf.borrow_mut().get(&render_target) {
+            surface.borrow_mut().refs += 1;
+        }
+        ctx.memory.write::<u32>(lplpRenderTarget, render_target);
         DD::OK
     }
 
@@ -1707,6 +1718,11 @@ pub mod IDirect3DDevice7 {
             return DD::ERR_INVALIDPARAMS;
         };
         let texture = *device.textures.get(&dwStage).unwrap_or(&0);
+        drop(devices);
+        // The returned interface is AddRefed to match COM lifetime rules.
+        if let Some(surface) = state().surf.borrow_mut().get(&texture) {
+            surface.borrow_mut().refs += 1;
+        }
         if crate::Ptr::<u32>::new(lplpTexture)
             .write(&mut ctx.memory, texture)
             .is_none()
@@ -3791,6 +3807,106 @@ mod tests {
 
         // Releasing an unknown pointer is a no-op.
         assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 0);
+    }
+
+    #[test]
+    fn device_getters_addref_returned_interfaces() {
+        // GetDirect3D, GetRenderTarget, and GetTexture return interface
+        // pointers that are AddRefed, matching the COM contract.
+        fn context() -> Context {
+            Context {
+                cpu: CPU::default(),
+                thread_handle: 0,
+                thread_id: 0,
+                memory: Memory::leak_new(0x20_000),
+                blocks: &[],
+                cache: BlockCache::default(),
+                recent: [Context::return_from_x86; 4],
+            }
+        }
+
+        let mut ctx = context();
+        const D3D: u32 = 0x5000;
+        const DEV: u32 = 0x6000;
+        const SURF: u32 = 0x7000;
+        const PPV: u32 = 0x3000;
+
+        d3d_state().d3d7_objects.borrow_mut().insert(D3D, 1);
+        let mut device = Device::new(DEV, D3D, SURF);
+        device.textures.insert(0, SURF);
+        d3d_state().devices.borrow_mut().insert(DEV, device);
+
+        let window = std::rc::Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: crate::user32::HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: false,
+            title: "Test".into(),
+            enabled: true,
+            visible: true,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            host: unsafe { std::mem::zeroed() },
+            pixels: None,
+            surface: None,
+        }));
+        state().surf.borrow_mut().insert(
+            SURF,
+            std::rc::Rc::new(RefCell::new(crate::ddraw::Surface {
+                addr: SURF,
+                refs: 1,
+                width: 2,
+                height: 2,
+                bytes_per_pixel: 2,
+                target: crate::ddraw::Target::Window(window),
+                primary: None,
+                attached: None,
+                attachments: Vec::new(),
+                pixels: None,
+                palette: None,
+                clipper: None,
+                src_color_key: None,
+                dst_color_key: None,
+                caps: Default::default(),
+                pixel_format: DDPIXELFORMAT::default(),
+                private_data: Default::default(),
+                uniqueness: 1,
+                priority: 0,
+                max_lod: 0,
+            })),
+        );
+
+        assert_eq!(
+            IDirect3DDevice7::GetDirect3D(&mut ctx, DEV, PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV), D3D);
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&D3D], 2);
+
+        assert_eq!(
+            IDirect3DDevice7::GetRenderTarget(&mut ctx, DEV, PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV), SURF);
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+
+        assert_eq!(
+            IDirect3DDevice7::GetTexture(&mut ctx, DEV, 0, PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV), SURF);
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 3);
+
+        state().surf.borrow_mut().clear();
+        d3d_state().devices.borrow_mut().clear();
+        d3d_state().d3d7_objects.borrow_mut().clear();
     }
 
     #[test]
