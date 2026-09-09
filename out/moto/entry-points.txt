@@ -1,0 +1,6 @@
+# Code addresses the translator's scan missed, found by running the game:
+# a panic "jmp to unknown addr" names one (or set THESEUS_MISSING_ADDRS to
+# collect them). One hex address per line.
+
+# C++ catch continuation (jumped to by _JumpToContinuation) in MFC code.
+4c98ed
