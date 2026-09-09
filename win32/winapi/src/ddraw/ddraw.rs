@@ -593,6 +593,9 @@ impl Surface {
 
 pub struct Palette {
     pub entries: Vec<PALETTEENTRY>,
+    /// COM reference count. Surfaces hold a reference for the time a palette
+    /// is attached, so an app releasing its own pointer must not kill it.
+    pub refs: u32,
 }
 
 /// Shared body for `IDirectDraw::CreatePalette`/`IDirectDraw7::CreatePalette`:
@@ -647,7 +650,7 @@ pub fn create_palette(
     state()
         .palette
         .borrow_mut()
-        .insert(ptr, Rc::new(RefCell::new(Palette { entries })));
+        .insert(ptr, Rc::new(RefCell::new(Palette { entries, refs: 1 })));
     ctx.memory.write::<u32>(lplp_pal, ptr);
     DD::OK
 }
@@ -903,14 +906,71 @@ pub(crate) fn release_surface(ctx: &mut Context, this: u32) -> u32 {
     }
     // Games recreate surfaces when changing screens, so returning the
     // pixels keeps the heap from growing without bound.
-    if let Some(pixels) = surface.borrow_mut().pixels.take() {
+    let (pixels, palette) = {
+        let mut surface = surface.borrow_mut();
+        (surface.pixels.take(), surface.palette.take())
+    };
+    if let Some(pixels) = pixels {
         kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
+    }
+    // The surface's palette attachment held a reference on the object.
+    if let Some(palette) = palette {
+        release_palette_ref(ctx, &palette);
     }
     state()
         .surf
         .borrow_mut()
         .retain(|_, s| !Rc::ptr_eq(s, &surface));
     0
+}
+
+/// Shared body for surface `SetPalette`: attaches the palette object behind
+/// `lpDDPalette`, holding a reference on it for the attachment's lifetime
+/// and dropping the reference on any palette it replaces.
+pub(crate) fn set_palette(ctx: &mut Context, this: u32, lpDDPalette: u32) -> DD {
+    let palette = {
+        let palettes = state().palette.borrow();
+        match palettes.get(&lpDDPalette) {
+            Some(palette) => palette.clone(),
+            None => return DD::ERR_INVALIDPARAMS,
+        }
+    };
+    let surface = {
+        let surfaces = state().surf.borrow();
+        match surfaces.get(&this) {
+            Some(surface) => surface.clone(),
+            None => return DD::ERR_INVALIDPARAMS,
+        }
+    };
+    palette.borrow_mut().refs += 1;
+    let old = surface.borrow_mut().palette.replace(palette);
+    if let Some(old) = old {
+        release_palette_ref(ctx, &old);
+    }
+    DD::OK
+}
+
+/// Drop one object reference on `palette` held by a surface attachment:
+/// when the count reaches zero the palette's map entry and interface
+/// block are freed.
+pub(crate) fn release_palette_ref(ctx: &mut Context, palette: &Rc<RefCell<Palette>>) {
+    let remaining = {
+        let mut palette = palette.borrow_mut();
+        palette.refs = palette.refs.saturating_sub(1);
+        palette.refs
+    };
+    if remaining > 0 {
+        return;
+    }
+    let addr = state()
+        .palette
+        .borrow()
+        .iter()
+        .find_map(|(&addr, p)| Rc::ptr_eq(p, palette).then_some(addr));
+    if let Some(addr) = addr {
+        state().palette.borrow_mut().remove(&addr);
+        kernel32::lock().process_heap.free(&mut ctx.memory, addr);
+    }
 }
 
 /// Copy a rect between two surfaces (which may be the same one; the copy
@@ -1662,8 +1722,8 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ColorKey, DirectDraw, PALETTEENTRY, PixelFmt, RECT, Surface, Target, expand_palettized,
-        lock_offset, write_blit, write_blit_convert,
+        ColorKey, DirectDraw, PALETTEENTRY, Palette, PixelFmt, RECT, Surface, Target,
+        expand_palettized, lock_offset, write_blit, write_blit_convert,
     };
     use crate::{
         Ptr,
@@ -2586,5 +2646,83 @@ mod tests {
         assert!(!surfaces.contains_key(&surf7));
         assert!(!surfaces.contains_key(&surf1));
         assert!(!surfaces.contains_key(&surf7b));
+    }
+
+    #[test]
+    fn palette_lifetime_addref_release_and_attachment() {
+        // A palette tracks real references: QueryInterface, AddRef,
+        // GetPalette, and a surface attachment each hold one, and the object
+        // is freed only when the last of them is released.
+        let mut ctx = context();
+        ddraw_test_heap();
+        unsafe {
+            if crate::ddraw::IDirectDrawPalette::VTABLE == 0 {
+                crate::ddraw::IDirectDrawPalette::VTABLE = 0x5555;
+            }
+        }
+        let pal = {
+            let mut k32 = crate::kernel32::lock();
+            crate::ddraw::IDirectDrawPalette::new(&mut ctx, &mut k32.process_heap).unwrap()
+        };
+        state().palette.borrow_mut().insert(
+            pal,
+            Rc::new(RefCell::new(Palette {
+                entries: vec![],
+                refs: 1,
+            })),
+        );
+
+        const SURF: u32 = 0x6000;
+        const RIID: u32 = 0x8000;
+        const PPV: u32 = 0x9000;
+        let mut surface = surf16(DDPIXELFORMAT::default(), test_window());
+        surface.addr = SURF;
+        state()
+            .surf
+            .borrow_mut()
+            .insert(SURF, Rc::new(RefCell::new(surface)));
+
+        // SetPalette attaches the palette and holds a reference on it.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::SetPalette(&mut ctx, SURF, pal),
+            DD::OK
+        );
+        assert_eq!(state().palette.borrow()[&pal].borrow().refs, 2);
+
+        // Releasing the app's own pointer leaves the attachment's reference.
+        assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 1);
+        assert!(state().palette.borrow().contains_key(&pal));
+
+        // GetPalette returns the interface pointer and AddRefs it.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::GetPalette(&mut ctx, SURF, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(pal));
+        assert_eq!(state().palette.borrow()[&pal].borrow().refs, 2);
+
+        // QueryInterface on the palette's own IID returns `this` +AddRef.
+        ctx.memory
+            .write(RIID, crate::ddraw::ddraw1::IID_IDirectDrawPalette);
+        assert_eq!(
+            crate::ddraw::IDirectDrawPalette::QueryInterface(&mut ctx, pal, RIID, PPV),
+            DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(pal));
+        assert_eq!(state().palette.borrow()[&pal].borrow().refs, 3);
+        assert_eq!(crate::ddraw::IDirectDrawPalette::AddRef(&mut ctx, pal), 4);
+
+        // Releasing the surface drops the attachment's reference.
+        assert_eq!(
+            crate::ddraw::IDirectDrawSurface7::Release(&mut ctx, SURF),
+            0
+        );
+        assert_eq!(state().palette.borrow()[&pal].borrow().refs, 3);
+
+        // The last release frees the object and its interface block.
+        assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 2);
+        assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 1);
+        assert_eq!(crate::ddraw::IDirectDrawPalette::Release(&mut ctx, pal), 0);
+        assert!(!state().palette.borrow().contains_key(&pal));
     }
 }

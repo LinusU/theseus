@@ -23,6 +23,13 @@ pub const IID_IDirectDrawSurface: GUID = GUID::new(
     [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
 );
 
+pub const IID_IDirectDrawPalette: GUID = GUID::new(
+    0x6c14db84,
+    0xa733,
+    0x11ce,
+    [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
+);
+
 pub mod IDirectDraw {
     use super::*;
 
@@ -1068,18 +1075,8 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetPalette(_ctx: &mut Context, this: u32, lpPalette: u32) -> DD {
-        let state = state();
-        let surfaces = state.surf.borrow_mut();
-        let Some(surface) = surfaces.get(&this) else {
-            return DD::ERR_INVALIDPARAMS;
-        };
-        let palettes = state.palette.borrow();
-        let Some(palette) = palettes.get(&lpPalette) else {
-            return DD::ERR_INVALIDPARAMS;
-        };
-        surface.borrow_mut().palette = Some(palette.clone());
-        DD::OK
+    pub fn SetPalette(ctx: &mut Context, this: u32, lpPalette: u32) -> DD {
+        crate::ddraw::ddraw::set_palette(ctx, this, lpPalette)
     }
 
     #[win32_derive::dllexport]
@@ -1173,25 +1170,55 @@ pub mod IDirectDrawPalette {
     ];
 
     #[win32_derive::dllexport]
-    pub fn QueryInterface(ctx: &mut Context, _this: u32, riid: u32, _ppvObject: u32) -> DD {
-        if !crate::ddraw::guest_range(ctx, _ppvObject, 4) {
+    pub fn QueryInterface(ctx: &mut Context, this: u32, riid: u32, ppvObject: u32) -> DD {
+        if !crate::ddraw::guest_range(ctx, ppvObject, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
+        if iid == crate::dplayx::IID_IUnknown
+            || iid == crate::dplayx::IID_NullUnknown
+            || iid == IID_IDirectDrawPalette
+        {
+            ctx.memory.write::<u32>(ppvObject, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            if let Some(palette) = state().palette.borrow().get(&this) {
+                palette.borrow_mut().refs += 1;
+            }
+            return DD::OK;
+        }
         log::warn!("IDirectDrawPalette::QueryInterface({iid:?}): not supported");
-        ctx.memory.write::<u32>(_ppvObject, 0);
+        ctx.memory.write::<u32>(ppvObject, 0);
         DD::E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        match state().palette.borrow().get(&this) {
+            Some(palette) => {
+                let mut palette = palette.borrow_mut();
+                palette.refs += 1;
+                palette.refs
+            }
+            None => 0,
+        }
     }
 
     #[win32_derive::dllexport]
     pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let remaining = {
+            let palettes = state().palette.borrow();
+            let Some(palette) = palettes.get(&this) else {
+                return 0;
+            };
+            let mut palette = palette.borrow_mut();
+            palette.refs = palette.refs.saturating_sub(1);
+            palette.refs
+        };
+        if remaining > 0 {
+            return remaining;
+        }
         // Surfaces hold their own reference to the palette, so dropping it from
         // the table doesn't disturb anything still displaying it.
         state().palette.borrow_mut().remove(&this);

@@ -1443,6 +1443,10 @@ pub mod IDirectDrawSurface7 {
             .iter()
             .find_map(|(&addr, p)| Rc::ptr_eq(p, &palette).then_some(addr))
             .unwrap_or(0);
+        // GetPalette AddRefs the returned interface pointer.
+        if let Some(palette) = state().palette.borrow().get(&addr) {
+            palette.borrow_mut().refs += 1;
+        }
         ctx.memory.write::<u32>(lplpDDPalette, addr);
         DD::OK
     }
@@ -1669,18 +1673,8 @@ pub mod IDirectDrawSurface7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetPalette(_ctx: &mut Context, this: u32, lpDDPalette: u32) -> DD {
-        let state = state();
-        let palettes = state.palette.borrow();
-        let Some(palette) = palettes.get(&lpDDPalette) else {
-            return DD::ERR_INVALIDPARAMS;
-        };
-        let surfaces = state.surf.borrow_mut();
-        let Some(surface) = surfaces.get(&this) else {
-            return DD::ERR_INVALIDPARAMS;
-        };
-        surface.borrow_mut().palette = Some(palette.clone());
-        DD::OK
+    pub fn SetPalette(ctx: &mut Context, this: u32, lpDDPalette: u32) -> DD {
+        crate::ddraw::ddraw::set_palette(ctx, this, lpDDPalette)
     }
 
     #[win32_derive::dllexport]

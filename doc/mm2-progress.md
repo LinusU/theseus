@@ -294,3 +294,15 @@ Suspects worth a look when the backlog is otherwise blocked:
   `ddraw7.rs`). Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build
   mm2, whitespace)`. Next: `IDirectDrawPalette` has no ref counting at all —
   `AddRef` returns a constant 1 and `Release` frees unconditionally.
+- 2026-09-09 palette ref counting: What: `IDirectDrawPalette` ignored COM
+  lifetimes — `AddRef` returned a constant 1, `Release` freed the object
+  unconditionally, `QueryInterface` refused even its own IID, `GetPalette`
+  did not AddRef, and `SetPalette` did not hold a reference so an app
+  releasing its own pointer killed a palette a surface still used. Repro:
+  new test `palette_lifetime_addref_release_and_attachment`. Change:
+  `Palette` gains `refs`; shared `set_palette`/`release_palette_ref` helpers
+  in `ddraw.rs` hold/drop the attachment reference (dropped on replace and
+  on surface death in `release_surface`); palette QI answers IUnknown and
+  IID_IDirectDrawPalette; `GetPalette` AddRefs (`ddraw1.rs`, `ddraw7.rs`).
+  Check: `check.sh: OK (fmt 3 files, clippy+test winapi, build mm2,
+  whitespace)`. Next: survey a headless run for remaining warn-level stubs.
