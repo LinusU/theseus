@@ -3,6 +3,11 @@
 //! The MM2 target only reaches the lobby through `CoCreateInstance`, so the
 //! COM object lives here and answers the `IDirectPlayLobby3A` vtable.
 
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, MutexGuard},
+};
+
 use runtime::{ContFn, Context};
 
 use crate::{Ptr, ddraw::GUID, heap::Heap, kernel32};
@@ -118,6 +123,46 @@ pub(crate) fn add_blocks(ctx: &mut Context, mut blocks: Vec<(u32, ContFn)>) {
     ctx.blocks = Box::leak(blocks.into_boxed_slice());
 }
 
+/// `this` -> COM reference count for the objects this module hands out.
+/// Both `IDirectPlayLobby3A` and `directplay` objects are 4-byte
+/// vtable-pointer blocks on the process heap and share this map.
+static OBJECTS: Mutex<BTreeMap<u32, u32>> = Mutex::new(BTreeMap::new());
+
+fn objects() -> MutexGuard<'static, BTreeMap<u32, u32>> {
+    OBJECTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Register a freshly created interface pointer with its initial reference.
+fn register_object(addr: u32) {
+    objects().insert(addr, 1);
+}
+
+/// `IUnknown::AddRef`; 0 when `this` is not a live dplayx object.
+fn add_ref_object(this: u32) -> u32 {
+    match objects().get_mut(&this) {
+        Some(refs) => {
+            *refs += 1;
+            *refs
+        }
+        None => 0,
+    }
+}
+
+/// `IUnknown::Release`; returns the remaining count. The entry is removed
+/// when the count reaches 0 so the caller can free the heap block.
+fn release_object(this: u32) -> u32 {
+    let mut objects = objects();
+    let Some(refs) = objects.get_mut(&this) else {
+        return 0;
+    };
+    *refs = refs.saturating_sub(1);
+    let remaining = *refs;
+    if remaining == 0 {
+        objects.remove(&this);
+    }
+    remaining
+}
+
 pub mod IDirectPlayLobby3A {
     use super::*;
 
@@ -219,6 +264,7 @@ pub mod IDirectPlayLobby3A {
                 return E_OUTOFMEMORY;
             };
             drop(kernel32);
+            register_object(addr);
             ctx.memory.write::<u32>(ppv, addr);
             S_OK
         } else {
@@ -249,6 +295,8 @@ pub mod IDirectPlayLobby3A {
             || iid == IID_IDirectPlayLobby3A
         {
             ctx.memory.write::<u32>(ppv, this);
+            // QueryInterface AddRefs the returned interface pointer.
+            add_ref_object(this);
             S_OK
         } else {
             ctx.memory.write::<u32>(ppv, 0);
@@ -257,13 +305,17 @@ pub mod IDirectPlayLobby3A {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        add_ref_object(this)
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        0
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let remaining = release_object(this);
+        if remaining == 0 {
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
+        }
+        remaining
     }
 
     #[win32_derive::dllexport]
@@ -568,6 +620,9 @@ pub mod directplay {
                 {
                     if ppv.write(&mut ctx.memory, this).is_none() {
                         ret = E_POINTER;
+                    } else {
+                        // QueryInterface AddRefs the returned interface pointer.
+                        add_ref_object(this);
                     }
                 }
                 Some(_) => {
@@ -604,8 +659,30 @@ pub mod directplay {
         ctx.indirect(return_addr)
     }
 
-    dp_stub!(AddRef, 1, 1);
-    dp_stub!(Release, 1, 0);
+    /// AddRef(this).
+    pub fn AddRef(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        ctx.cpu.regs.eax = add_ref_object(this);
+        ctx.cpu.regs.esp = esp.wrapping_add(2 * 4);
+        ctx.indirect(return_addr)
+    }
+
+    /// Release(this): frees the interface block on the last reference.
+    pub fn Release(ctx: &mut Context) -> runtime::Cont {
+        let esp = ctx.cpu.regs.esp;
+        let return_addr = ctx.memory.read::<u32>(esp);
+        let this = ctx.memory.read::<u32>(esp.wrapping_add(4));
+        let remaining = release_object(this);
+        if remaining == 0 {
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
+        }
+        ctx.cpu.regs.eax = remaining;
+        ctx.cpu.regs.esp = esp.wrapping_add(2 * 4);
+        ctx.indirect(return_addr)
+    }
+
     dp_stub!(Close, 1, DP_OK);
     dp_stub!(EnumSessions, 6, DP_OK);
     dp_stub!(EnumConnections, 5, DP_OK);
@@ -771,6 +848,7 @@ pub mod directplay {
         if ppv_ptr.write(&mut ctx.memory, obj).is_none() {
             return E_POINTER;
         }
+        register_object(obj);
         S_OK
     }
 }
@@ -856,5 +934,88 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(0x3000), 0);
 
         assert_eq!(IDirectPlayLobby3A::Connect(&mut ctx, 0, 0, 0, 0), E_FAIL);
+    }
+
+    /// Call a raw vtable `ContFn` with a return address and args on a stack
+    /// in guest memory; the unknown return address lands on `halt`.
+    fn call_raw(ctx: &mut Context, f: ContFn, args: &[u32]) {
+        const ESP: u32 = 0x3e00;
+        ctx.cpu.regs.esp = ESP;
+        ctx.memory.write::<u32>(ESP, 0);
+        for (i, &arg) in args.iter().enumerate() {
+            ctx.memory.write::<u32>(ESP + 4 * (i as u32 + 1), arg);
+        }
+        f(ctx);
+    }
+
+    #[test]
+    fn lobby_object_lifetime_addref_release() {
+        // create() registers the object at refs=1, QueryInterface AddRefs
+        // the returned pointer, and the last Release frees the heap block.
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+
+        const PPV: u32 = 0x3000;
+        const RIID: u32 = 0x3800;
+        write_guid(&mut ctx, RIID, &IID_IDirectPlayLobby3A);
+        assert_eq!(IDirectPlayLobby3A::create(&mut ctx, RIID, PPV), S_OK);
+        let obj = ctx.memory.read::<u32>(PPV);
+        assert_ne!(obj, 0);
+        assert_eq!(objects().get(&obj), Some(&1));
+
+        write_guid(&mut ctx, RIID, &IID_IUnknown);
+        assert_eq!(
+            IDirectPlayLobby3A::QueryInterface(&mut ctx, obj, RIID, PPV + 4),
+            S_OK
+        );
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), obj);
+        assert_eq!(objects().get(&obj), Some(&2));
+
+        assert_eq!(IDirectPlayLobby3A::AddRef(&mut ctx, obj), 3);
+        assert_eq!(IDirectPlayLobby3A::Release(&mut ctx, obj), 2);
+        assert_eq!(IDirectPlayLobby3A::Release(&mut ctx, obj), 1);
+        assert_eq!(IDirectPlayLobby3A::Release(&mut ctx, obj), 0);
+        assert!(!objects().contains_key(&obj));
+    }
+
+    #[test]
+    fn directplay_object_lifetime_addref_release() {
+        // The CoCreateInstance(CLSID_DirectPlay) object counts real
+        // references through its raw vtable thunks and frees the interface
+        // block on the last Release.
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+
+        const PPV: u32 = 0x3000;
+        const RIID: u32 = 0x3800;
+        write_guid(&mut ctx, RIID, &IID_IDirectPlay4A);
+        assert_eq!(directplay::create(&mut ctx, RIID, PPV), S_OK);
+        let obj = ctx.memory.read::<u32>(PPV);
+        assert_ne!(obj, 0);
+        assert_eq!(objects().get(&obj), Some(&1));
+
+        write_guid(&mut ctx, RIID, &IID_IUnknown);
+        call_raw(&mut ctx, directplay::QueryInterface, &[obj, RIID, PPV + 4]);
+        assert_eq!(ctx.cpu.regs.eax, S_OK);
+        assert_eq!(ctx.memory.read::<u32>(PPV + 4), obj);
+        assert_eq!(objects().get(&obj), Some(&2));
+
+        call_raw(&mut ctx, directplay::AddRef, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 3);
+        call_raw(&mut ctx, directplay::Release, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 2);
+        call_raw(&mut ctx, directplay::Release, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 1);
+        call_raw(&mut ctx, directplay::Release, &[obj]);
+        assert_eq!(ctx.cpu.regs.eax, 0);
+        assert!(!objects().contains_key(&obj));
     }
 }
