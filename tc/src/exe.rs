@@ -91,6 +91,10 @@ fn is_data(dll: &str, func: &str) -> bool {
     if dll == "msvcrt" {
         return matches!(func, "_adjust_fdiv" | "_acmdln");
     }
+    // C++ mangled data symbols end in @@3 (constant) or @@A (global).
+    if func.ends_with("@@3") || func.ends_with("@@A") {
+        return true;
+    }
     false
 }
 

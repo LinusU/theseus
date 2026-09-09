@@ -159,9 +159,19 @@ pub fn stdcall_name(name: &str) -> String {
         && name.split("::").all(|part| {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-    if name.starts_with("weanetr::?GetPlayerInfo") {
-        return "unsupported::stdcall2".into();
+
+    // weanetr.dll is a C++ DLL with __thiscall methods.  We don't
+    // implement MLDPlay, but we route each call to a stub that pops the
+    // correct number of stack arguments so the caller's stack is not
+    // corrupted.
+    if let Some(func) = name.strip_prefix("weanetr::") {
+        if let Some(method) = weanetr_method_name(func) {
+            if let Some(n) = weanetr_arg_count(&method) {
+                return format!("weanetr::thunk_{n}_stdcall");
+            }
+        }
     }
+
     let unsupported_dll = matches!(dll, Some("imm32" | "wsock32"));
     if valid && !unsupported_dll {
         format!("{name}_stdcall")
@@ -169,6 +179,32 @@ pub fn stdcall_name(name: &str) -> String {
         "unsupported::stdcall".into()
     }
 }
+
+fn weanetr_method_name(func: &str) -> Option<String> {
+    // Mangled method names look like "?StartupNetwork@MLDPlay@@QAEH...".
+    if func.starts_with('?') {
+        if let Some(at) = func.find("@MLDPlay") {
+            return Some(func[1..at].to_string());
+        }
+    }
+    None
+}
+
+fn weanetr_arg_count(method: &str) -> Option<u8> {
+    match method {
+        // MLDPlay methods imported by Populous.  Counts are stack-only
+        // arguments; the 'this' pointer is passed in ECX.
+        "ShutdownNetwork" | "DestroySession" | "GetCurrentMs" => Some(0),
+        "StartupNetwork" | "SendMSResults" | "EnableNewPlayers" | "GetPlayerInfo" => Some(1),
+        "EnumerateServices" | "EnumerateNetworkMediums" => Some(2),
+        "SetupConnection" => Some(3),
+        "EnumerateSessions" | "JoinSession" | "SendChat" | "CreateNetworkAddress" => Some(4),
+        "CreateSession" | "SendData" => Some(5),
+        "AreWeLobbied" => Some(8),
+        _ => None,
+    }
+}
+
 
 impl Block {
     pub fn name(&self) -> String {

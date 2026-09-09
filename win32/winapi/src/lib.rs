@@ -24,6 +24,7 @@ mod ptr;
 mod rect;
 pub mod qmixer;
 pub mod shell32;
+pub mod weanetr;
 pub mod trace;
 pub mod unsupported;
 pub mod user32;
