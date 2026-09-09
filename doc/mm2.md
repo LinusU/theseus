@@ -198,47 +198,51 @@ Debug environment knobs, all optional:
   `warn`/`error`.
 
 Known non-blocking noise: missing `.CHK` checksum caches (including the
-game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced), absent
-`aud\aud22`/`aud\dmusic` content, `nodeGetBitmap` art misses, LOD warnings,
+game's own `MM2AUD.CHKHK` name-mangling bug, faithfully reproduced),
+`nodeGetBitmap` art misses, LOD warnings,
 the `london` room-count version warning, `datParser::Read` warnings for
 unrecognized race/city tokens like `Approach` and `Ocean`, `DMusicObject`
 scan failures for missing segment directories, and benign `SelectObject`
 diagnostics for game-internal handles.
 
-## External prerequisites that cannot be filled from this repo
+## What the installation ships, and what it does not
 
-Several categories of content are intentionally owned by the original game
-installation and are not present in the checked-in `game/` tree. They cause
-warnings in the run log but are outside the scope of the shared port code:
+A retail installation is complete: `mm2aud.ar` (120 MB) holds the whole
+`aud/aud22/*.22k.wav` bank plus `aud/dmusic/*.sgt`, `.sty`, and `.dls`
+DirectMusic content; `mm2audex.ar` holds the 11 kHz variants; `mm2core.ar`
+holds every vehicle `.pkg` with its LODs inside; `mm2tex.ar` holds the
+textures. The `aud\aud22\` directory on disk is empty on a real install
+too; the game reads the banks out of the archive. Before attributing a
+warning to missing content, grep the archive directory:
+`head -c 4000000 game/mm2aud.ar | strings | grep -i <name>`.
 
-- A complete `aud\aud22\*` 22kHz sound bank for UI, vehicle, ambient,
-  creature, and surface audio. The `mm2aud.ar` archive ships the `.22k.wav`
-  source files, but the game expects pre-compiled `.22k` banks in
-  `aud\aud22\`; this installation has an empty `aud\aud22\` directory, so
-  `CreateBankManager` cannot build the banks and the game logs
-  `Could not create ... .22k for agesound` for every referenced sample.
-- DirectMusic content under the paths the game scans (`.dmusic`/`.wav`
-  segments referenced by the `DMusicObject::ScanDirectory` path).
+Warnings that really are content or game-side:
+
 - `.CHK` checksum caches next to the `.AR` archives, which the loader looks
-  for but does not require.
-- Medium and low LOD meshes for many vehicle and prop models; only the
-  highest LOD is present in the local installation.
-- Description bitmaps for several UI nodes (`ulock_amvpcab`, `vpcab_desc`,
-  `ama_rank_desc`), which the game requests through `nodeGetBitmap()`. The
-  current `mm2tex.ar` does ship `texture/*_DESC.tga` for some vehicles
-  (`VPBUG`, `VPBULLET`, `VPBUS`, `VPCADDIE`, `VPCOP`, `VPFORD`, `VPMUSTANG99`,
-  `VPPANOZGT`, `VPPANOZG`, `VPPANOZ`, `VPSEMI`) but not for others, so the
-  SELECT VEHICLE description panel works for e.g. the Mustang but cannot render
-  labels that depend on the missing `*_DESC` assets.
-- `datParser` race/city configuration tokens that the game's own parser does not
-  recognize, such as `Approach` and `Ocean`. These tokens are logged and skipped
-  by the parser; they may come from a data format or patch revision that differs
-  from the executable's parser table.
+  for but does not require (including the game's own `MM2AUD.CHKHK`
+  name-mangling bug).
+- `aud\aud22\UIreplay.22k`: the one sample the game asks for that the
+  archive does not contain.
+- `nodeGetBitmap` misses for `ulock_amvpcab`, `vpcab_desc`, and
+  `ama_rank_desc`: those bitmaps are absent from `mm2tex.ar`, but the game
+  then draws the panel text itself with `DrawTextA` into a DirectDraw
+  surface DC (see below), so the empty panels are a Theseus gap, not a
+  content gap.
+- `datParser` tokens the game's own parser does not recognize (`Approach`,
+  `Ocean`), logged and skipped.
 
-The missing `nodeGetBitmap` assets are the direct cause of the translucent
-overlay panels not showing their text labels, and the absent audio/DirectMusic
-content is the source of most of the runtime warnings. The port handles the
-missing files gracefully and the race loop is otherwise stable.
+Warnings that were wrongly filed as missing content until 2026-09-09:
+
+- `Could not create aud\aud22\*.22k for agesound` for every sample. The game
+  enumerates DirectSound devices, rates each named entry, and never opened
+  a device while the emulation listed only the NULL-GUID primary driver.
+  `DirectSoundEnumerateA` now also reports a named device with its own
+  GUID, and sound plays.
+- `DMusicObject` scan failures. The segments are in `mm2aud.ar`; the game
+  does not create any DirectMusic object during the first 25 s of a run, so
+  the in-race music path is still to be traced.
+- LOD warnings. The `.pkg` files carry all LODs; treat a LOD warning as a
+  loader or renderer question.
 
 The current target can be fully regenerated from the cracked
 `game/Midtown2.exe`. A decrypted `MIDTOWN2.ICD` PE image with valid imports is

@@ -18,10 +18,12 @@ User-requested priority backlog, in order. Open items outrank every audit:
 1. Single-click input: DONE. Root cause was macOS never activating the
    process plus a leaked first window; user-confirmed 2026-09-08.
 2. Arrow-key driving: DONE, same fix, user-confirmed 2026-09-08.
-3. Missing UI text: BLOCKED, external content. `nodeGetBitmap` assets
-   `vpcab_desc`, `ulock_amvpcab`, `ama_rank_desc` are absent from
-   `mm2tex.ar` (see `doc/mm2.md`). Reopen only if a screen loses text for
-   an asset that does ship.
+3. Missing UI text: OPEN, Theseus gap. The bitmaps are absent, but the
+   game then draws the text itself: `CreateFontA`, `GetTextExtentPoint32A`
+   and `DrawTextA` into a DirectDraw surface DC (9 `DrawTextA` calls at
+   startup). `user32::DrawTextA` only measures; it never rasterizes glyphs
+   into the DC's bitmap. Next: draw glyphs (a built-in bitmap font is
+   enough) in `DrawTextA`/`TextOutA` so the surface gets pixels.
 4. In-race graphical glitches: PARTIAL. `FOGENABLE` gating fixed the
    washed-out screen. A 2026-09-08 frame survey of the scripted London
    crash-course race found no non-content defect: the dominant artifact
@@ -31,8 +33,12 @@ User-requested priority backlog, in order. Open items outrank every audit:
    whose panel contents are the known missing `nodeGetBitmap` assets; the
    bare horizon is the missing-LOD gap. Remaining: a live capture on a
    display while a human drives, to catch anything scripted input misses.
-5. Sound: BLOCKED, external content. `aud\aud22\*.22k` banks are missing;
-   the DirectSound path is verified end to end with `THESEUS_DSOUND_WAV`.
+5. Sound: DONE 2026-09-09. The banks were always in `mm2aud.ar`; the game
+   never opened DirectSound because enumeration listed only the NULL-GUID
+   primary driver. UI clicks now produce audio (mixer WAV peaks at the
+   click times). Only `UIreplay.22k` is genuinely absent. Music is a
+   separate lead: `aud/dmusic` content ships, but no DirectMusic object is
+   created in the first 25 s; trace the in-race path.
 6. Window resolutions and fullscreen: DONE, live-verified 2026-09-08.
    Resize to 1024x707, Alt+Enter into 1440x900 and back, and
    `THESEUS_FULLSCREEN=1` at launch all hold; a real click at the window
@@ -44,6 +50,10 @@ Shared-code audits (pointer validation, arithmetic, QueryInterface,
 `Ptr::write` sweeps, `runtime::ops`, `tc` gather/codegen, `dos`) were
 completed on 2026-09-07. Do not repeat them. Revisit a file only when a
 reproduced failure points at it.
+
+Before calling anything "missing content", grep the archive directories
+(`head -c 4000000 game/mm2aud.ar | strings | grep -i <name>`); the retail
+install is complete, and every such claim so far has been a Theseus gap.
 
 Suspects worth a look when the backlog is otherwise blocked:
 
@@ -499,3 +509,14 @@ Suspects worth a look when the backlog is otherwise blocked:
   clippy+test winapi, build mm2, whitespace)`; 90s headless race still renders
   the London Blitz scene. Next: remaining backlog is external content or a
   fresh display capture.
+- 2026-09-09 sound root cause: What: the "missing .22k banks" were in
+  `mm2aud.ar` all along; the game seeks to the sample's data offset, then
+  gives up because no DirectSound object exists. `DirectSoundEnumerateA`
+  listed only the NULL-GUID primary and the game never called
+  `DirectSoundCreate`. Repro: `THESEUS_TRACE=winapi` showed `ordinal2` then
+  no dsound calls. Change: enumerate a named device with a fixed GUID and
+  accept that GUID (or the null GUID) in `DirectSoundCreate`
+  (`win32/winapi/src/dsound.rs`); two dsound tests de-raced (shared handle,
+  shared process heap). Check: `.devin/check.sh` OK; live run: 3x
+  `DirectSoundCreate`, 42 buffers, warnings 42 -> 1, mixer WAV non-silent at
+  the click times. Next: #3 (`DrawTextA` glyphs) or music trace.

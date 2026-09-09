@@ -366,10 +366,33 @@ pub fn pump(ctx: &mut Context) {
     }
 }
 
+/// GUID of the one emulated output device, as enumerated after the primary
+/// driver. Any fixed value works; it only has to round-trip through the
+/// app's device list back into DirectSoundCreate.
+const DEVICE_GUID: [u8; 16] = [
+    0x10, 0x2a, 0x3e, 0x7f, 0x5c, 0x91, 0x4b, 0x40, 0x9a, 0x1e, 0x54, 0x68, 0x65, 0x73, 0x65, 0x75,
+];
+
+/// Whether `lpGuid` selects a device we have: null, the null GUID, or the
+/// emulated device's GUID all mean the default output.
+fn is_known_device(ctx: &Context, lpGuid: u32) -> bool {
+    if lpGuid == 0 {
+        return true;
+    }
+    let Some(guid) = ctx
+        .memory
+        .bytes
+        .get(lpGuid as usize..)
+        .and_then(|b| b.get(..16))
+    else {
+        return false;
+    };
+    lpGuid >= 0x1000 && (guid == DEVICE_GUID || guid.iter().all(|&b| b == 0))
+}
+
 #[win32_derive::dllexport]
 pub fn DirectSoundCreate(ctx: &mut Context, lpGuid: u32, ppDS: u32, pUnkOuter: u32) -> u32 {
-    if lpGuid != 0 {
-        // The emulated device table holds only the default (null) device.
+    if !is_known_device(ctx, lpGuid) {
         return DSERR_NODRIVER;
     }
     if pUnkOuter != 0 {
@@ -419,7 +442,43 @@ pub fn DirectSoundEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32)
     // sound driver's GUID is NULL. The strings only have to outlive the
     // callback, so they are freed once it returns.
     ctx.call32_x86(callback, vec![0, desc, module, lpContext]);
+    let keep_going = ctx.cpu.regs.eax != 0;
     let kernel32 = kernel32::lock();
+    kernel32.process_heap.free(&mut ctx.memory, desc);
+    kernel32.process_heap.free(&mut ctx.memory, module);
+    drop(kernel32);
+    if !keep_going {
+        return DS_OK;
+    }
+
+    // Windows follows the primary driver with every real device under its
+    // own GUID. Apps commonly rate or select only from those named entries
+    // (Midtown Madness 2 never opened DirectSound at all with a list that
+    // held just the primary), so enumerate one emulated device too.
+    let Some(guid) = kernel32::lock().process_heap.try_alloc(&mut ctx.memory, 16) else {
+        return DSERR_OUTOFMEMORY;
+    };
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(guid as usize..)
+        .and_then(|b| b.get_mut(..16))
+    {
+        dst.copy_from_slice(&DEVICE_GUID);
+    }
+    let Some(desc) = crate::ddraw::alloc_string(ctx, "Theseus Audio Device\0") else {
+        kernel32::lock().process_heap.free(&mut ctx.memory, guid);
+        return DSERR_OUTOFMEMORY;
+    };
+    let Some(module) = crate::ddraw::alloc_string(ctx, "dsound.dll\0") else {
+        let kernel32 = kernel32::lock();
+        kernel32.process_heap.free(&mut ctx.memory, guid);
+        kernel32.process_heap.free(&mut ctx.memory, desc);
+        return DSERR_OUTOFMEMORY;
+    };
+    ctx.call32_x86(callback, vec![guid, desc, module, lpContext]);
+    let kernel32 = kernel32::lock();
+    kernel32.process_heap.free(&mut ctx.memory, guid);
     kernel32.process_heap.free(&mut ctx.memory, desc);
     kernel32.process_heap.free(&mut ctx.memory, module);
     DS_OK
@@ -1336,11 +1395,19 @@ impl WavWrite {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, DS_OK, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, DirectSoundCreate,
-        DirectSoundEnumerateA, E_NOINTERFACE, IDirectSound, IDirectSoundBuffer,
+        Buffer, DEVICE_GUID, DS_OK, DSBCAPS_FLAGS, DSBLOCK, DSERR_INVALIDPARAM, DSERR_NODRIVER,
+        DirectSoundCreate, DirectSoundEnumerateA, E_NOINTERFACE, IDirectSound, IDirectSoundBuffer,
         IID_IDIRECTSOUNDBUFFER, WaveFormat, init, lock,
     };
     use runtime::{BlockCache, CPU, Context, Memory};
+
+    /// The kernel32 process heap is global; tests that replace it must not
+    /// overlap, or one test frees and reuses blocks another is checking.
+    static HEAP_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn heap_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        HEAP_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn context() -> Context {
         Context {
@@ -1387,6 +1454,7 @@ mod tests {
         // The IDirectSound object answers IUnknown and its own IID with
         // `this` +AddRef, counts real references, and frees the interface
         // block on the last Release.
+        let _heap = heap_test_guard();
         let mut ctx = context();
         init();
         crate::kernel32::ensure_test_state();
@@ -1465,13 +1533,13 @@ mod tests {
     #[test]
     fn lock_wraps_a_region_past_the_buffer_end() {
         let mut ctx = context();
-        insert_buffer(0xabcd, 0x8000, 0x100);
+        insert_buffer(0xabce, 0x8000, 0x100);
 
         // Lock 0x30 bytes at offset 0xe0 in a 0x100-byte buffer: 0x20 up to
         // the end and 0x10 wrapped around to the start.
         let result = IDirectSoundBuffer::Lock(
             &mut ctx,
-            0xabcd,
+            0xabce,
             0xe0,
             0x30,
             0x4000,
@@ -1486,7 +1554,7 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(0x4008), 0x8000);
         assert_eq!(ctx.memory.read::<u32>(0x400c), 0x10);
 
-        lock().buffers.remove(&0xabcd);
+        lock().buffers.remove(&0xabce);
     }
 
     #[test]
@@ -1702,6 +1770,7 @@ mod tests {
         // The enumeration reports the emulated primary device: the callback
         // receives (NULL GUID, "Primary Sound Driver", "dsound.dll",
         // context), and the arg strings are freed once it returns.
+        let _heap = heap_test_guard();
         let mut ctx = context();
         crate::kernel32::ensure_test_state();
         {
@@ -1710,14 +1779,19 @@ mod tests {
         }
 
         fn enum_cb(ctx: &mut Context) -> runtime::Cont {
+            // Each call records its args in its own scratch area: the
+            // primary driver at 0x3900, the named device at 0x3980.
+            let call = ctx.memory.read::<u32>(0x3910);
+            ctx.memory.write::<u32>(0x3910, call + 1);
+            let base = if call == 0 { 0x3900 } else { 0x3980 };
             let esp = ctx.cpu.regs.esp;
             for i in 0..4u32 {
                 let arg = ctx.memory.read::<u32>(esp.wrapping_add(4 * (i + 1)));
-                ctx.memory.write::<u32>(0x3900 + i * 4, arg);
+                ctx.memory.write::<u32>(base + i * 4, arg);
             }
-            // Copy the strings into scratch memory; they are only valid
-            // for the duration of the call.
-            for (dst, k) in [(0x3920u32, 8u32), (0x3940u32, 12u32)] {
+            // Copy the strings (and the GUID) into scratch memory; they are
+            // only valid for the duration of the call.
+            for (dst, k) in [(base + 0x20, 8u32), (base + 0x40, 12u32)] {
                 let src = ctx.memory.read::<u32>(esp.wrapping_add(k));
                 for j in 0..64u32 {
                     let b = ctx.memory.read::<u8>(src.wrapping_add(j));
@@ -1725,6 +1799,13 @@ mod tests {
                     if b == 0 {
                         break;
                     }
+                }
+            }
+            let guid = ctx.memory.read::<u32>(esp.wrapping_add(4));
+            if guid != 0 {
+                for j in 0..16u32 {
+                    let b = ctx.memory.read::<u8>(guid.wrapping_add(j));
+                    ctx.memory.write::<u8>(base + 0x60 + j, b);
                 }
             }
             ctx.cpu.regs.eax = 1;
@@ -1745,11 +1826,53 @@ mod tests {
             b"Primary Sound Driver\0"
         );
         assert_eq!(&ctx.memory.bytes[0x3940..0x3940 + 11], b"dsound.dll\0");
-        // The arg strings were freed once the callback returned.
-        let desc = ctx.memory.read::<u32>(0x3904);
-        let module = ctx.memory.read::<u32>(0x3908);
+
+        // Windows lists every real device after the primary driver, each
+        // under its own GUID, and apps may pick only from those.
+        assert_eq!(ctx.memory.read::<u32>(0x3910), 2);
+        assert_ne!(ctx.memory.read::<u32>(0x3980), 0);
+        assert_eq!(&ctx.memory.bytes[0x39e0..0x39f0], &DEVICE_GUID);
+        assert_eq!(ctx.memory.read::<u32>(0x398c), 0x5aba);
+        assert_eq!(
+            &ctx.memory.bytes[0x39a0..0x39a0 + 21],
+            b"Theseus Audio Device\0"
+        );
+        assert_eq!(&ctx.memory.bytes[0x39c0..0x39c0 + 11], b"dsound.dll\0");
+
+        // The arg strings and GUID were freed once each callback returned.
         let k32 = crate::kernel32::lock();
-        assert!(k32.process_heap.block_size(desc).is_none());
-        assert!(k32.process_heap.block_size(module).is_none());
+        for addr in [0x3904, 0x3908, 0x3980, 0x3984, 0x3988] {
+            let block = ctx.memory.read::<u32>(addr);
+            assert!(k32.process_heap.block_size(block).is_none(), "{addr:#x}");
+        }
+    }
+
+    /// The GUID handed out by enumeration must open the device again, as
+    /// must the null GUID; an unknown GUID has no driver behind it.
+    #[test]
+    fn direct_sound_create_accepts_the_enumerated_device_guid() {
+        let _heap = heap_test_guard();
+        let mut ctx = context();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x1000);
+        }
+        ctx.memory.bytes[0x3000..0x3010].copy_from_slice(&DEVICE_GUID);
+        assert_eq!(DirectSoundCreate(&mut ctx, 0x3000, 0x3800, 0), DS_OK);
+        assert_ne!(ctx.memory.read::<u32>(0x3800), 0);
+
+        ctx.memory.bytes[0x3100..0x3110].fill(0);
+        assert_eq!(DirectSoundCreate(&mut ctx, 0x3100, 0x3804, 0), DS_OK);
+
+        let mut other = DEVICE_GUID;
+        other[0] ^= 1;
+        ctx.memory.bytes[0x3200..0x3210].copy_from_slice(&other);
+        assert_eq!(
+            DirectSoundCreate(&mut ctx, 0x3200, 0x3808, 0),
+            DSERR_NODRIVER
+        );
+        // A low, unreadable GUID pointer is not a device either.
+        assert_eq!(DirectSoundCreate(&mut ctx, 0x10, 0x380c, 0), DSERR_NODRIVER);
     }
 }
