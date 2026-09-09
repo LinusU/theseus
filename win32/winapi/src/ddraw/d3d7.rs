@@ -648,6 +648,14 @@ pub mod IDirect3D7 {
             .devices
             .borrow_mut()
             .insert(addr, Device::new(addr, this, lpDDS));
+        // The device holds references on its Direct3D object and the
+        // render-target surface it was created with.
+        if let Some(refs) = d3d_state().d3d7_objects.borrow_mut().get_mut(&this) {
+            *refs += 1;
+        }
+        if let Some(surface) = state().surf.borrow_mut().get(&lpDDS) {
+            surface.borrow_mut().refs += 1;
+        }
         ctx.memory.write::<u32>(lplpD3DDevice, addr);
         DD::OK
     }
@@ -906,7 +914,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn Release(ctx: &mut Context, this: u32) -> u32 {
-        let remaining = {
+        let (remaining, held_surfs, held_d3d) = {
             let mut devices = d3d_state().devices.borrow_mut();
             let Some(device) = devices.get_mut(&this) else {
                 return 0;
@@ -914,11 +922,26 @@ pub mod IDirect3DDevice7 {
             device.refs = device.refs.saturating_sub(1);
             let remaining = device.refs;
             if remaining == 0 {
-                devices.remove(&this);
+                let device = devices.remove(&this).unwrap();
+                let mut held: Vec<u32> = device.textures.into_values().collect();
+                if device.render_target != 0 {
+                    held.push(device.render_target);
+                }
+                (remaining, held, device.d3d)
+            } else {
+                (remaining, Vec::new(), 0)
             }
-            remaining
         };
         if remaining == 0 {
+            // The device held a reference on every bound texture, on the
+            // render target, and on its Direct3D object; drop them all
+            // along with the interface block.
+            for surface in held_surfs {
+                crate::ddraw::ddraw::release_surface(ctx, surface);
+            }
+            if held_d3d != 0 {
+                IDirect3D7::Release(ctx, held_d3d);
+            }
             kernel32::lock().process_heap.free(&mut ctx.memory, this);
         }
         remaining
@@ -1008,7 +1031,7 @@ pub mod IDirect3DDevice7 {
 
     #[win32_derive::dllexport]
     pub fn SetRenderTarget(
-        _ctx: &mut Context,
+        ctx: &mut Context,
         this: u32,
         lpNewRenderTarget: u32,
         _dwFlags: u32,
@@ -1016,12 +1039,22 @@ pub mod IDirect3DDevice7 {
         if !state().surf.borrow().contains_key(&lpNewRenderTarget) {
             return DD::ERR_INVALIDPARAMS;
         }
-        let mut devices = d3d_state().devices.borrow_mut();
-        let Some(device) = devices.get_mut(&this) else {
-            return DD::ERR_INVALIDPARAMS;
+        let previous = {
+            let mut devices = d3d_state().devices.borrow_mut();
+            let Some(device) = devices.get_mut(&this) else {
+                return DD::ERR_INVALIDPARAMS;
+            };
+            log::debug!("SetRenderTarget: dev={this:#x} rt={lpNewRenderTarget:#x}");
+            std::mem::replace(&mut device.render_target, lpNewRenderTarget)
         };
-        log::debug!("SetRenderTarget: dev={this:#x} rt={lpNewRenderTarget:#x}");
-        device.render_target = lpNewRenderTarget;
+        // The device holds a reference on the render target: AddRef the new
+        // binding and release the one it replaced.
+        if let Some(surface) = state().surf.borrow_mut().get(&lpNewRenderTarget) {
+            surface.borrow_mut().refs += 1;
+        }
+        if previous != 0 {
+            crate::ddraw::ddraw::release_surface(ctx, previous);
+        }
         DD::OK
     }
 
@@ -1733,23 +1766,35 @@ pub mod IDirect3DDevice7 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetTexture(_ctx: &mut Context, this: u32, dwStage: u32, lpTexture: u32) -> DD {
-        let mut devices = d3d_state().devices.borrow_mut();
-        let Some(device) = devices.get_mut(&this) else {
+    pub fn SetTexture(ctx: &mut Context, this: u32, dwStage: u32, lpTexture: u32) -> DD {
+        if lpTexture != 0 && !state().surf.borrow().contains_key(&lpTexture) {
             return DD::ERR_INVALIDPARAMS;
-        };
-        if lpTexture == 0 {
-            device.textures.remove(&dwStage);
-        } else {
-            if !state().surf.borrow().contains_key(&lpTexture) {
+        }
+        if lpTexture != 0 && dwStage != 0 && d3d_state().seen_stages.borrow_mut().insert(dwStage) {
+            log::warn!(
+                "SetTexture: stage {dwStage} is bound but the rasterizer samples stage 0 only"
+            );
+        }
+        let previous = {
+            let mut devices = d3d_state().devices.borrow_mut();
+            let Some(device) = devices.get_mut(&this) else {
                 return DD::ERR_INVALIDPARAMS;
+            };
+            if lpTexture == 0 {
+                device.textures.remove(&dwStage).unwrap_or(0)
+            } else {
+                device.textures.insert(dwStage, lpTexture).unwrap_or(0)
             }
-            if dwStage != 0 && d3d_state().seen_stages.borrow_mut().insert(dwStage) {
-                log::warn!(
-                    "SetTexture: stage {dwStage} is bound but the rasterizer samples stage 0 only"
-                );
-            }
-            device.textures.insert(dwStage, lpTexture);
+        };
+        // The device holds a reference on the bound texture: AddRef the new
+        // binding and release the one it replaced.
+        if lpTexture != 0
+            && let Some(surface) = state().surf.borrow_mut().get(&lpTexture)
+        {
+            surface.borrow_mut().refs += 1;
+        }
+        if previous != 0 {
+            crate::ddraw::ddraw::release_surface(ctx, previous);
         }
         DD::OK
     }
@@ -3829,12 +3874,16 @@ mod tests {
         const D3D: u32 = 0x5000;
         const DEV: u32 = 0x6000;
         const SURF: u32 = 0x7000;
+        const SURF2: u32 = 0x7100;
         const PPV: u32 = 0x3000;
 
-        d3d_state().d3d7_objects.borrow_mut().insert(D3D, 1);
-        let mut device = Device::new(DEV, D3D, SURF);
-        device.textures.insert(0, SURF);
-        d3d_state().devices.borrow_mut().insert(DEV, device);
+        // One reference for the caller, one for the device's hold — as
+        // CreateDevice leaves it.
+        d3d_state().d3d7_objects.borrow_mut().insert(D3D, 2);
+        d3d_state()
+            .devices
+            .borrow_mut()
+            .insert(DEV, Device::new(DEV, D3D, 0));
 
         let window = std::rc::Rc::new(RefCell::new(crate::user32::Window {
             hwnd: crate::user32::HWND::from_raw(1),
@@ -3857,46 +3906,59 @@ mod tests {
             pixels: None,
             surface: None,
         }));
-        state().surf.borrow_mut().insert(
-            SURF,
-            std::rc::Rc::new(RefCell::new(crate::ddraw::Surface {
-                addr: SURF,
-                refs: 1,
-                width: 2,
-                height: 2,
-                bytes_per_pixel: 2,
-                target: crate::ddraw::Target::Window(window),
-                primary: None,
-                attached: None,
-                attachments: Vec::new(),
-                pixels: None,
-                palette: None,
-                clipper: None,
-                src_color_key: None,
-                dst_color_key: None,
-                caps: Default::default(),
-                pixel_format: DDPIXELFORMAT::default(),
-                private_data: Default::default(),
-                uniqueness: 1,
-                priority: 0,
-                max_lod: 0,
-            })),
-        );
+        for addr in [SURF, SURF2] {
+            state().surf.borrow_mut().insert(
+                addr,
+                std::rc::Rc::new(RefCell::new(crate::ddraw::Surface {
+                    addr,
+                    refs: 1,
+                    width: 2,
+                    height: 2,
+                    bytes_per_pixel: 2,
+                    target: crate::ddraw::Target::Window(window.clone()),
+                    primary: None,
+                    attached: None,
+                    attachments: Vec::new(),
+                    pixels: None,
+                    palette: None,
+                    clipper: None,
+                    src_color_key: None,
+                    dst_color_key: None,
+                    caps: Default::default(),
+                    pixel_format: DDPIXELFORMAT::default(),
+                    private_data: Default::default(),
+                    uniqueness: 1,
+                    priority: 0,
+                    max_lod: 0,
+                })),
+            );
+        }
 
+        // SetTexture/SetRenderTarget take a reference on the binding.
+        assert_eq!(
+            IDirect3DDevice7::SetTexture(&mut ctx, DEV, 0, SURF),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+        assert_eq!(
+            IDirect3DDevice7::SetRenderTarget(&mut ctx, DEV, SURF2, 0),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(state().surf.borrow()[&SURF2].borrow().refs, 2);
+
+        // The getters AddRef what they return.
         assert_eq!(
             IDirect3DDevice7::GetDirect3D(&mut ctx, DEV, PPV),
             crate::ddraw::DD::OK
         );
         assert_eq!(ctx.memory.read::<u32>(PPV), D3D);
-        assert_eq!(d3d_state().d3d7_objects.borrow()[&D3D], 2);
-
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&D3D], 3);
         assert_eq!(
             IDirect3DDevice7::GetRenderTarget(&mut ctx, DEV, PPV),
             crate::ddraw::DD::OK
         );
-        assert_eq!(ctx.memory.read::<u32>(PPV), SURF);
-        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
-
+        assert_eq!(ctx.memory.read::<u32>(PPV), SURF2);
+        assert_eq!(state().surf.borrow()[&SURF2].borrow().refs, 3);
         assert_eq!(
             IDirect3DDevice7::GetTexture(&mut ctx, DEV, 0, PPV),
             crate::ddraw::DD::OK
@@ -3904,8 +3966,28 @@ mod tests {
         assert_eq!(ctx.memory.read::<u32>(PPV), SURF);
         assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 3);
 
+        // Rebinding releases the replaced reference.
+        assert_eq!(
+            IDirect3DDevice7::SetTexture(&mut ctx, DEV, 0, SURF2),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+        assert_eq!(state().surf.borrow()[&SURF2].borrow().refs, 4);
+        assert_eq!(
+            IDirect3DDevice7::SetTexture(&mut ctx, DEV, 0, 0),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(state().surf.borrow()[&SURF2].borrow().refs, 3);
+
+        // The last device Release drops the texture, render-target, and
+        // Direct3D references it held.
+        assert_eq!(IDirect3DDevice7::Release(&mut ctx, DEV), 0);
+        assert!(!d3d_state().devices.borrow().contains_key(&DEV));
+        assert_eq!(state().surf.borrow()[&SURF].borrow().refs, 2);
+        assert_eq!(state().surf.borrow()[&SURF2].borrow().refs, 2);
+        assert_eq!(d3d_state().d3d7_objects.borrow()[&D3D], 2);
+
         state().surf.borrow_mut().clear();
-        d3d_state().devices.borrow_mut().clear();
         d3d_state().d3d7_objects.borrow_mut().clear();
     }
 

@@ -438,3 +438,22 @@ Suspects worth a look when the backlog is otherwise blocked:
   `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
   Next: continue the getter/setter contract sweep (SetTexture/SetRenderTarget
   ownership) or take a fresh defect report.
+- 2026-09-09 D3D7 setter ownership + surface block free: What: three leaks
+  in the COM surface lifetime — `SetTexture`/`SetRenderTarget`/`CreateDevice`
+  stored bound surfaces without AddRef, device `Release` never dropped the
+  held texture/render-target/Direct3D references, and `release_surface`
+  dropped the `state().surf` alias entries without freeing their
+  heap-allocated interface blocks (each cross-version QI allocates one).
+  Repro: audit of the ref paths against the `release_surface` implementation;
+  extended `surface_query_interface_crosses_versions` now proves all three
+  alias blocks are freed. Change: `release_surface` collects and frees every
+  alias block via `Rc::ptr_eq`; `SetTexture`/`SetRenderTarget`/`CreateDevice`
+  AddRef the binding and release the replaced one; device `Release` at 0
+  releases held textures, the render target, and `IDirect3D7::Release`es the
+  parent object (`d3d7.rs`, `ddraw.rs`). Extended
+  `device_getters_addref_returned_interfaces` covers bind/get/rebind/free.
+  Check: `check.sh: OK (fmt 2 files, clippy+test winapi, build mm2,
+  whitespace)`; 45s headless smoke reached the lobby with only known
+  missing-content warnings and no `missing.txt`. Next: the remaining
+  SetTexture hot path is contract-correct now; take a fresh defect report
+  or survey `dplayx`/`dmusic` for unimplemented methods the game hits.

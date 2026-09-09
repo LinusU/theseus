@@ -904,10 +904,22 @@ pub(crate) fn release_surface(ctx: &mut Context, this: u32) -> u32 {
     if let Some(palette) = palette {
         release_palette_ref(ctx, &palette);
     }
+    // Free every interface-pointer block that names the dead surface; a
+    // cross-version QueryInterface may have created several aliases.
+    let aliases: Vec<u32> = state()
+        .surf
+        .borrow()
+        .iter()
+        .filter_map(|(&addr, s)| Rc::ptr_eq(s, &surface).then_some(addr))
+        .collect();
     state()
         .surf
         .borrow_mut()
         .retain(|_, s| !Rc::ptr_eq(s, &surface));
+    let kernel32 = kernel32::lock();
+    for alias in aliases {
+        kernel32.process_heap.free(&mut ctx.memory, alias);
+    }
     0
 }
 
@@ -2716,6 +2728,12 @@ mod tests {
         assert!(!surfaces.contains_key(&surf7));
         assert!(!surfaces.contains_key(&surf1));
         assert!(!surfaces.contains_key(&surf7b));
+        drop(surfaces);
+        // The interface-pointer blocks are freed along with the object.
+        let k32 = crate::kernel32::lock();
+        assert!(k32.process_heap.block_size(surf7).is_none());
+        assert!(k32.process_heap.block_size(surf1).is_none());
+        assert!(k32.process_heap.block_size(surf7b).is_none());
     }
 
     #[test]
