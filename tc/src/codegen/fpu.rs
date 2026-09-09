@@ -160,10 +160,7 @@ impl<'a> CodeGen<'a> {
             }
 
             Fprem => {
-                self.line(self.fpu_set_reg(
-                    0,
-                    format!("{} % {}", self.fpu_get_reg(0), self.fpu_get_reg(1)),
-                ));
+                self.line("ctx.cpu.fpu.prem();");
             }
 
             Fchs => {
@@ -197,6 +194,9 @@ impl<'a> CodeGen<'a> {
                     "ctx.cpu.fpu.cmp = {}.total_cmp(&({}));",
                     arg0, arg1
                 ));
+                // A comparison's result supersedes any condition codes an
+                // earlier fprem left behind.
+                self.line("ctx.cpu.fpu.prem_cc = None;");
                 if instr.mnemonic() == Fcomp {
                     self.line("ctx.cpu.fpu.pop();");
                 }

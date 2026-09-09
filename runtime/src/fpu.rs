@@ -18,6 +18,12 @@ pub struct FPU {
     pub st_top: usize,
     /// The result of the last fcmp, used to generate status word.
     pub cmp: std::cmp::Ordering,
+    /// Condition codes left by fprem (its quotient bits, and C2 clear since
+    /// we always reduce in one step): `cmp` alone can't represent them, so
+    /// this overrides it in `status()` until the next comparison clears it
+    /// back to `None`. Stays `None` for programs whose generated code
+    /// predates fprem's condition-code support and never touches it.
+    pub prem_cc: Option<Status>,
     /// Control word, as managed by fldcw/fnstcw. We only round-trip the value;
     /// precision/rounding control bits are not honored.
     pub control: u16,
@@ -29,6 +35,7 @@ impl Default for FPU {
             st: [0.; 8],
             st_top: 8,
             cmp: std::cmp::Ordering::Equal,
+            prem_cc: None,
             control: 0x037f,
         }
     }
@@ -91,14 +98,43 @@ impl FPU {
         self.st[self.st_offset(ofs)] = val;
     }
 
+    /// fprem: replace st(0) with the IEEE remainder of st(0) / st(1) and set
+    /// the condition codes as hardware does for a *complete* reduction: C2
+    /// clear, and C0/C3/C1 set to bits 2/1/0 of the truncated quotient
+    /// respectively (Intel SDM Vol. 1 8.3.5 / the FPREM1 flags table). Real
+    /// x87 FPREM can leave a partial result with C2 set when the operands'
+    /// exponents differ by more than 63, requiring the caller to loop; we
+    /// always reduce fully in one step, so a caller's `fnstsw`/`jp` retry
+    /// loop must see C2 clear or it spins forever (as happened before this
+    /// was implemented: nothing updated the status word after fprem).
+    pub fn prem(&mut self) {
+        let st0 = self.get(0);
+        let st1 = self.get(1);
+        let quotient = (st0 / st1).trunc() as i64;
+        self.set(0, st0 % st1);
+        let mut cc = Status::empty();
+        if quotient & 0b100 != 0 {
+            cc |= Status::C0; // Q2
+        }
+        if quotient & 0b010 != 0 {
+            cc |= Status::C3; // Q1
+        }
+        if quotient & 0b001 != 0 {
+            cc |= Status::C1; // Q0
+        }
+        self.prem_cc = Some(cc);
+    }
+
     pub fn status(&self) -> u16 {
-        let status = match self.cmp {
-            std::cmp::Ordering::Less => Status::C0,
-            std::cmp::Ordering::Equal => Status::C3,
-            std::cmp::Ordering::Greater => Status::empty(),
+        let mut status = match &self.prem_cc {
+            Some(cc) => cc.bits(),
+            None => match self.cmp {
+                std::cmp::Ordering::Less => Status::C0.bits(),
+                std::cmp::Ordering::Equal => Status::C3.bits(),
+                std::cmp::Ordering::Greater => Status::empty().bits(),
+            },
         };
         // Our status register impl doesn't include st_top so include it here.
-        let mut status = status.bits();
         status |= (self.st_top as u16 & 0b111) << 11;
         status
     }
