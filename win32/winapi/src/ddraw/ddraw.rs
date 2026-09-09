@@ -775,7 +775,9 @@ pub fn DirectDrawEnumerateA(ctx: &mut Context, lpCallback: u32, lpContext: u32) 
         return DD::ERR_OUTOFMEMORY;
     };
     let callback = ctx.indirect(lpCallback);
-    ctx.call32_x86(callback, vec![desc, name, lpContext]);
+    // LPDDENUMCALLBACK is (GUID*, desc, name, context); the primary display
+    // driver's GUID is NULL.
+    ctx.call32_x86(callback, vec![0, desc, name, lpContext]);
     DD::OK
 }
 
@@ -790,24 +792,9 @@ pub fn DirectDrawEnumerateExA(
     if lpCallback < 0x1000 {
         return DD::ERR_GENERIC;
     }
-    let Some(guid_addr) = ({
-        let kernel32 = kernel32::lock();
-        let addr = kernel32
-            .process_heap
-            .try_alloc(&mut ctx.memory, std::mem::size_of::<GUID>() as u32);
-        drop(kernel32);
-        addr
-    }) else {
+    let Some(guid_addr) = alloc_zeroed_guid(ctx) else {
         return DD::ERR_OUTOFMEMORY;
     };
-    let guid_size = std::mem::size_of::<GUID>();
-    if let Some(dst) = ctx
-        .memory
-        .bytes
-        .get_mut(guid_addr as usize..guid_addr as usize + guid_size)
-    {
-        dst.fill(0);
-    }
     let Some(desc) = alloc_string(ctx, "Primary Display Driver\0") else {
         kernel32::lock()
             .process_heap
@@ -1704,18 +1691,85 @@ pub fn get_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
     DD::OK
 }
 
+/// Allocate a NUL-terminated UTF-16 string on the process heap, for the
+/// *W enumeration callbacks.
+fn alloc_wstring(ctx: &mut Context, s: &str) -> Option<u32> {
+    let units: Vec<u16> = s.encode_utf16().chain(std::iter::once(0)).collect();
+    let addr = kernel32::lock()
+        .process_heap
+        .try_alloc(&mut ctx.memory, units.len() as u32 * 2)?;
+    for (i, unit) in units.into_iter().enumerate() {
+        ctx.memory.write::<u16>(addr + i as u32 * 2, unit);
+    }
+    Some(addr)
+}
+
+/// Allocate a zeroed GUID on the process heap: what the enumerate-ex
+/// callbacks receive for the primary display driver.
+fn alloc_zeroed_guid(ctx: &mut Context) -> Option<u32> {
+    let guid_size = std::mem::size_of::<GUID>();
+    let addr = kernel32::lock()
+        .process_heap
+        .try_alloc(&mut ctx.memory, guid_size as u32)?;
+    if let Some(dst) = ctx
+        .memory
+        .bytes
+        .get_mut(addr as usize..addr as usize + guid_size)
+    {
+        dst.fill(0);
+    }
+    Some(addr)
+}
+
 #[win32_derive::dllexport]
-pub fn DirectDrawEnumerateW(_ctx: &mut Context, _lpCallback: u32, _lpContext: u32) -> DD {
+pub fn DirectDrawEnumerateW(ctx: &mut Context, lpCallback: u32, lpContext: u32) -> DD {
+    // A null-page callback would dispatch to a missing block and halt.
+    if lpCallback < 0x1000 {
+        return DD::ERR_GENERIC;
+    }
+    let Some(desc) = alloc_wstring(ctx, "Primary Display Driver") else {
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let Some(name) = alloc_wstring(ctx, "DISPLAY") else {
+        kernel32::lock().process_heap.free(&mut ctx.memory, desc);
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let callback = ctx.indirect(lpCallback);
+    // LPDDENUMCALLBACKW is (GUID*, desc, name, context); the primary display
+    // driver's GUID is NULL.
+    ctx.call32_x86(callback, vec![0, desc, name, lpContext]);
     DD::OK
 }
 
 #[win32_derive::dllexport]
 pub fn DirectDrawEnumerateExW(
-    _ctx: &mut Context,
-    _lpCallback: u32,
-    _lpContext: u32,
+    ctx: &mut Context,
+    lpCallback: u32,
+    lpContext: u32,
     _dwFlags: u32,
 ) -> DD {
+    // A null-page callback would dispatch to a missing block and halt.
+    if lpCallback < 0x1000 {
+        return DD::ERR_GENERIC;
+    }
+    let Some(guid_addr) = alloc_zeroed_guid(ctx) else {
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let Some(desc) = alloc_wstring(ctx, "Primary Display Driver") else {
+        kernel32::lock()
+            .process_heap
+            .free(&mut ctx.memory, guid_addr);
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let Some(name) = alloc_wstring(ctx, "DISPLAY") else {
+        let kernel32 = kernel32::lock();
+        kernel32.process_heap.free(&mut ctx.memory, guid_addr);
+        kernel32.process_heap.free(&mut ctx.memory, desc);
+        drop(kernel32);
+        return DD::ERR_OUTOFMEMORY;
+    };
+    let callback = ctx.indirect(lpCallback);
+    ctx.call32_x86(callback, vec![guid_addr, desc, name, lpContext, 0]);
     DD::OK
 }
 
@@ -1738,12 +1792,13 @@ pub fn GetDXVB(_ctx: &mut Context) -> u32 {
 mod tests {
     use super::{
         ColorKey, DirectDraw, PALETTEENTRY, Palette, PixelFmt, RECT, Surface, Target,
-        expand_palettized, live_surfaces, lock_offset, write_blit, write_blit_convert,
+        alloc_wstring, alloc_zeroed_guid, expand_palettized, live_surfaces, lock_offset,
+        write_blit, write_blit_convert,
     };
     use crate::{
         Ptr,
         ddraw::{
-            state,
+            GUID, state,
             types::{DD, DDPIXELFORMAT, DDSCAPS2, DDSD, DDSURFACEDESC2},
         },
         user32::{HWND, Window},
@@ -2763,5 +2818,32 @@ mod tests {
         for key in [0x5000, 0x6000, 0x7000] {
             state().surf.borrow_mut().remove(&key);
         }
+    }
+
+    #[test]
+    fn alloc_wstring_writes_nul_terminated_utf16() {
+        // The *W enumeration callbacks receive LPWSTRs: little-endian
+        // u16 units ending in a double nul.
+        let mut ctx = context();
+        ddraw_test_heap();
+        let addr = alloc_wstring(&mut ctx, "DISPLAY").unwrap();
+        let units: Vec<u16> = (0..8)
+            .map(|i| ctx.memory.try_read::<u16>(addr + i * 2).unwrap())
+            .collect();
+        assert_eq!(String::from_utf16(&units[..7]).unwrap(), "DISPLAY");
+        assert_eq!(units[7], 0);
+    }
+
+    #[test]
+    fn alloc_zeroed_guid_writes_a_null_guid() {
+        // Enumerate-ex callbacks get a pointer to a zeroed GUID for the
+        // primary display driver.
+        let mut ctx = context();
+        ddraw_test_heap();
+        let addr = alloc_zeroed_guid(&mut ctx).unwrap();
+        assert_eq!(
+            crate::Ptr::<GUID>::new(addr).read(&ctx.memory),
+            Some(GUID::default())
+        );
     }
 }

@@ -340,3 +340,20 @@ Suspects worth a look when the backlog is otherwise blocked:
   interface block (`dinput.rs`). Check: `check.sh: OK (fmt 1 files,
   clippy+test winapi, build mm2, whitespace)`. Next: live
   `out/mm2/probe-input.sh` run — a display is available in this session.
+- 2026-09-09 DirectDrawEnumerate callback args + W variants: What:
+  `DirectDrawEnumerateA` invoked `LPDDENUMCALLBACK` with only 3 args —
+  `(desc, name, context)` where the signature is `(GUID*, desc, name,
+  context)` — so the callback read its arguments shifted by one; and
+  `DirectDrawEnumerateW`/`DirectDrawEnumerateExW` returned OK without ever
+  calling the callback, so a W-variant enumeration saw zero adapters. Repro:
+  code inspection against the `call32_x86` arg order and
+  `LPDDENUMCALLBACK[A/W]` typedefs. Change: the A callback now gets the NULL
+  GUID leading arg; W variants share `alloc_wstring` (UTF-16 heap strings)
+  and `alloc_zeroed_guid` helpers and invoke their callbacks with the
+  primary-display description/name (ddraw.rs); 2 new tests for the helpers.
+  Check: `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2,
+  whitespace)`. Next: `out/mm2/probe-input.sh 20` ran live — `frontmost=mm2`
+  for the whole run and WM_ACTIVATEAPP/WM_ACTIVATE/WM_SETFOCUS were
+  delivered at t≈3.5s, so window creation and macOS activation work on this
+  display; window enumeration needs Accessibility permission, and no keys
+  were physically pressed so the key path stays verified-but-not-reprobed.
