@@ -10,6 +10,7 @@ fi
 args=(
     --exe "$exe"
     --out out/poptb
+    --entry-points-file out/poptb/entry-points.txt
 )
 cargo run -p tc -- "${args[@]}"
 echo "cargo build --profile fast -p poptb"
