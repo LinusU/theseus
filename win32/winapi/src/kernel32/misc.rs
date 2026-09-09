@@ -343,3 +343,20 @@ pub fn VirtualProtect(
     }
     true
 }
+
+#[win32_derive::dllexport]
+pub fn FormatMessageA(
+    _ctx: &mut Context,
+    dwFlags: u32,
+    _lpSource: u32,
+    dwMessageId: u32,
+    _dwLanguageId: u32,
+    _lpBuffer: u32,
+    _nSize: u32,
+    _Arguments: u32,
+) -> u32 {
+    // Used to turn error codes into text for error dialogs; report failure
+    // (no characters written) and let the caller show the code instead.
+    log::warn!("FormatMessageA(flags={dwFlags:#x}, id={dwMessageId:#x}): unsupported");
+    0
+}

@@ -732,3 +732,29 @@ pub fn GetVolumeInformationA(
     }
     true
 }
+
+#[win32_derive::dllexport]
+pub fn GetFileAttributesA(ctx: &mut Context, lpFileName: Ptr<u8>) -> u32 {
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x20;
+    const INVALID_FILE_ATTRIBUTES: u32 = 0xffff_ffff;
+    let name = ctx.memory.read_str(lpFileName.addr).to_string();
+    let path = resolve_path(&name);
+    if !host::fs::exists(&path) {
+        return INVALID_FILE_ATTRIBUTES;
+    }
+    if host::fs::read_dir(&path).is_ok() {
+        FILE_ATTRIBUTE_DIRECTORY
+    } else {
+        FILE_ATTRIBUTE_ARCHIVE
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn SetFileAttributesA(
+    _ctx: &mut Context,
+    _lpFileName: Ptr<u8>,
+    _dwFileAttributes: u32,
+) -> bool {
+    true // read-only and the like aren't modelled
+}
