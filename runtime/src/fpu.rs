@@ -122,9 +122,10 @@ impl FPU {
     }
 
     /// fprem: replace st(0) with the IEEE remainder of st(0) / st(1) and set
-    /// the condition codes as hardware does for a *complete* reduction (C2
-    /// clear, C0/C1/C3 the low 3 bits of the truncated quotient). Real x87
-    /// FPREM can leave a partial result with C2 set when the operands'
+    /// the condition codes as hardware does for a *complete* reduction: C2
+    /// clear, and C0/C3/C1 set to bits 2/1/0 of the truncated quotient
+    /// respectively (Intel SDM Vol. 1 8.3.5 / the FPREM1 flags table). Real
+    /// x87 FPREM can leave a partial result with C2 set when the operands'
     /// exponents differ by more than 63, requiring the caller to loop; we
     /// always reduce fully in one step, so a caller's `fnstsw`/`jp` retry
     /// loop must see C2 clear or it spins forever (as happened before this
@@ -136,13 +137,13 @@ impl FPU {
         self.set(0, st0 % st1);
         let mut cc = Status::empty();
         if quotient & 0b100 != 0 {
-            cc |= Status::C0;
+            cc |= Status::C0; // Q2
         }
         if quotient & 0b010 != 0 {
-            cc |= Status::C1;
+            cc |= Status::C3; // Q1
         }
         if quotient & 0b001 != 0 {
-            cc |= Status::C3;
+            cc |= Status::C1; // Q0
         }
         self.cc = cc;
     }
