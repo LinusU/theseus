@@ -457,3 +457,17 @@ Suspects worth a look when the backlog is otherwise blocked:
   missing-content warnings and no `missing.txt`. Next: the remaining
   SetTexture hot path is contract-correct now; take a fresh defect report
   or survey `dplayx`/`dmusic` for unimplemented methods the game hits.
+- 2026-09-09 message paint loop: What: long headless race smokes reach
+  `Just before GameLoop: 12.2M` and then the message trace showed a tight
+  `PeekMessageA` loop with no `Translate`/`Dispatch`. Repro: `RUST_LOG=warn
+  THESEUS_HEADLESS=1 ... 240s headless race (doc/mm2.md line 212 schedule)`
+  -> repeated `PeekMessageA` at the end. Change: `paint_msg` is only
+  synthesized for a visible dirty window, `pop_filtered` retires the update
+  region with the removed message, and `peek`/`pop` check due timers before
+  paint; added `paint_message_retires_on_pop_not_peek` and
+  `timers_take_priority_over_synthetic_paint` tests
+  (`win32/winapi/src/user32/message.rs`). Check: `check.sh: OK (fmt 1
+  files, clippy+test winapi, build mm2, whitespace)`. Next: the run still
+  stops at `Just before GameLoop: 12.2M`, now with `PeekMessageA` returning
+  nothing rather than looping; diagnose whether it is waiting for a fresh
+  input message, a timer, or a different event.

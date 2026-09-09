@@ -298,22 +298,36 @@ pub fn WaitMessage(_ctx: &mut Context) -> bool {
 }
 
 impl MessageQueue {
-    fn paint_msg(&self) -> Option<MSG> {
-        let window = self.window.as_ref()?.borrow();
-        // A hidden window is not sent WM_PAINT; its update region waits
-        // until it is shown again.
-        if !window.dirty || !window.visible {
-            return None;
-        }
+    /// Synthesize a `WM_PAINT` message when the window is visible and has an
+    /// outstanding update region. When a `PeekMessage`/`GetMessage` removes
+    /// the synthesized message, the update region is retired with it so the
+    /// message pump does not spin on an ignored paint.
+    fn paint_msg(&mut self, remove: bool, filter: &MsgFilter) -> Option<MSG> {
+        let (msg, clear) = {
+            let window = self.window.as_ref()?.borrow();
+            // A hidden window is not sent WM_PAINT; its update region waits
+            // until it is shown again.
+            if !window.dirty || !window.visible {
+                return None;
+            }
 
-        Some(MSG {
-            hwnd: window.hwnd,
-            message: WM::PAINT as u32,
-            wParam: 0,
-            lParam: 0,
-            time: 0,
-            pt: POINT::default(),
-        })
+            let msg = MSG {
+                hwnd: window.hwnd,
+                message: WM::PAINT as u32,
+                wParam: 0,
+                lParam: 0,
+                time: 0,
+                pt: POINT::default(),
+            };
+            if !filter.matches(&msg) {
+                return None;
+            }
+            (msg, remove)
+        };
+        if clear {
+            self.window.as_ref()?.borrow_mut().dirty = false;
+        }
+        Some(msg)
     }
 
     /// WM_TIMER, like WM_PAINT, is generated when the queue is otherwise
@@ -367,9 +381,11 @@ impl MessageQueue {
             // delivered regardless of the hWnd or message-range filter.
             self.quit
         } else {
-            self.paint_msg()
-                .filter(|msg| filter.matches(msg))
-                .or_else(|| self.timer_msg(false, now, filter))
+            // WM_TIMER and WM_PAINT are synthesized when the queue is empty.
+            // Timers are checked first so a due timer is not hidden behind a
+            // paint message the guest may not dispatch.
+            self.timer_msg(false, now, filter)
+                .or_else(|| self.paint_msg(false, filter))
         }
     }
 
@@ -383,9 +399,8 @@ impl MessageQueue {
         } else if self.quit.is_some() {
             self.quit.take()
         } else {
-            self.paint_msg()
-                .filter(|msg| filter.matches(msg))
-                .or_else(|| self.timer_msg(true, now, filter))
+            self.timer_msg(true, now, filter)
+                .or_else(|| self.paint_msg(true, filter))
         }
     }
 
@@ -987,6 +1002,89 @@ mod tests {
             queue.timer_msg(false, 100, &any).unwrap().message,
             WM::TIMER as u32
         );
+    }
+
+    #[test]
+    fn paint_message_retires_on_pop_not_peek() {
+        let mut queue = MessageQueue::default();
+        let window = Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: true,
+            title: String::new(),
+            enabled: true,
+            visible: false,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            pixels: None,
+            host: unsafe { std::mem::zeroed() },
+            surface: None,
+        }));
+        queue.window = Some(window.clone());
+        let any = MsgFilter::new(HWND::null(), 0, 0);
+
+        // A hidden window does not get WM_PAINT.
+        assert!(queue.peek_filtered(0, &any).is_none());
+
+        window.borrow_mut().visible = true;
+        assert_eq!(
+            queue.peek_filtered(0, &any).unwrap().message,
+            WM::PAINT as u32
+        );
+        // Peeking leaves the update region in place.
+        assert!(window.borrow().dirty);
+
+        assert_eq!(
+            queue.pop_filtered(0, &any).unwrap().message,
+            WM::PAINT as u32
+        );
+        // Removing the synthesized message retires the update region.
+        assert!(!window.borrow().dirty);
+        assert!(queue.pop_filtered(0, &any).is_none());
+    }
+
+    #[test]
+    fn timers_take_priority_over_synthetic_paint() {
+        let mut queue = MessageQueue::default();
+        let window = Rc::new(RefCell::new(crate::user32::Window {
+            hwnd: HWND::from_raw(1),
+            style: 0,
+            ex_style: 0,
+            dirty: true,
+            title: String::new(),
+            enabled: true,
+            visible: true,
+            user_data: 0,
+            hinstance: 0,
+            id: 0,
+            subclass_proc: None,
+            paint_dc: None,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            pixels: None,
+            host: unsafe { std::mem::zeroed() },
+            surface: None,
+        }));
+        queue.window = Some(window);
+        queue.set_timer(HWND::from_raw(1), 0, 50, 0, 1000);
+        let any = MsgFilter::new(HWND::null(), 0, 0);
+
+        // A due timer is delivered before a synthetic paint.
+        assert_eq!(
+            queue.pop_filtered(1100, &any).unwrap().message,
+            WM::TIMER as u32
+        );
+        assert!(queue.pop_filtered(1100, &any).is_some());
     }
 
     /// Drain the shared message queue, retrying a transient concurrent
