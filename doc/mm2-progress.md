@@ -262,5 +262,7 @@ Suspects worth a look when the backlog is otherwise blocked:
   `d3d_state().vertex_buffers`, and free the vtable and data blocks on the last
   `Release`; `QueryInterface` AddRefs for `IUnknown` or
   `IID_IDIRECT3DVERTEXBUFFER7`. Check: `check.sh: OK (fmt 1 files, clippy+test
-  winapi, build mm2, whitespace)`. Next: run a headless race smoke to confirm no
-  new d3d7 COM leaks or regressions, then return to the main backlog.
+  winapi, build mm2, whitespace)`. Next: a 90s headless race smoke reached
+  `Just before GameLoop` and `GameLoop` with no `out/mm2/missing.txt`; no d3d7
+  COM regressions. The remaining blockers are external content
+  (`.CHK`, `aud\\aud22\\*.22k`, DirectMusic, UI description bitmaps, LODs).
