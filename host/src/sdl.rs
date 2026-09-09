@@ -264,7 +264,7 @@ impl MainThread {
             check(sdl::init::SDL_Init(if headless {
                 sdl::init::SDL_INIT_EVENTS
             } else {
-                sdl::init::SDL_INIT_VIDEO | sdl::init::SDL_INIT_AUDIO
+                sdl::init::SDL_INIT_VIDEO
             }));
         }
         Self {
@@ -486,6 +486,14 @@ impl Host {
 
     pub fn create_audio_stream(&self, spec: host::AudioSpec) -> AudioStream {
         unsafe {
+            // Audio is initialized here rather than up front: a program that
+            // never makes a sound shouldn't need a working audio device, and a
+            // headless run (which has no video either) still should get one.
+            if !sdl::init::SDL_InitSubSystem(sdl::init::SDL_INIT_AUDIO) {
+                let err = std::ffi::CStr::from_ptr(sdl::error::SDL_GetError());
+                log::warn!("no audio output: {}", err.to_string_lossy());
+                return AudioStream(std::ptr::null_mut());
+            }
             let stream = sdl::audio::SDL_OpenAudioDeviceStream(
                 sdl::audio::SDL_AudioDeviceID::DEFAULT_PLAYBACK,
                 &sdl::audio::SDL_AudioSpec {
