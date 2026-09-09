@@ -18,6 +18,7 @@ mod ptr;
 mod rect;
 pub mod shell32;
 pub mod trace;
+pub mod unsupported;
 pub mod user32;
 pub mod winmm;
 

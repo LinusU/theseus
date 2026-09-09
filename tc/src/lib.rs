@@ -145,6 +145,17 @@ pub enum BlockType {
     Extern(u32), // TODO: use ip instead
 }
 
+pub fn stdcall_name(name: &str) -> String {
+    let valid = name.split("::").all(|part| {
+        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+    if valid {
+        format!("{name}_stdcall")
+    } else {
+        "unsupported::stdcall".into()
+    }
+}
+
 impl Block {
     pub fn name(&self) -> String {
         if let Some(name) = &self.name {
@@ -155,7 +166,7 @@ impl Block {
                 IP::Flat(addr) => format!("x{:x}", addr),
                 IP::Seg(addr) => format!("x{:04x}_{:04x}", addr.seg, addr.ofs),
             },
-            BlockType::Stdcall(func) => format!("{}_stdcall", func),
+            BlockType::Stdcall(func) => stdcall_name(func),
             BlockType::Extern(ip) => format!("x{:x}", ip),
         }
     }

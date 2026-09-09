@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use runtime::SegOfs;
 
-use crate::{AddrInfo, Block, BlockType, Import, Instr, Module, State, memory::Memory};
+use crate::{
+    AddrInfo, Block, BlockType, Import, Instr, Module, State, memory::Memory, stdcall_name,
+};
 
 /// If the instruction looks like
 ///   foo [x]
@@ -320,7 +322,7 @@ impl<'a> Traverse<'a> {
                             if let Some(addr) = is_abs_memory_ref(&instr) {
                                 if let Some(imp) = self.iat_refs.get(&addr) {
                                     new_instr.hint =
-                                        Some(format!("{}::{}_stdcall", imp.dll, imp.func));
+                                        Some(stdcall_name(&format!("{}::{}", imp.dll, imp.func)));
                                     if instr.mnemonic() == iced_x86::Mnemonic::Call {
                                         continue; // don't end block here
                                     }
