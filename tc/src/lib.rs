@@ -20,14 +20,14 @@ pub struct DOSModule {
     pub stack_segment: u16,
     pub stack_pointer: u16,
     pub entry_point: u16,
-    pub code_memory: std::ops::Range<u32>,
+    pub code_memory: Vec<std::ops::Range<u32>>,
 }
 
 #[derive(Default)]
 pub struct WindowsModule {
     pub image_base: u32,
     pub entry_point: u32,
-    pub code_memory: std::ops::Range<u32>,
+    pub code_memory: Vec<std::ops::Range<u32>>,
     pub resources: Option<std::ops::Range<u32>>,
     pub imports: Vec<Import>,
     pub vtables: Vec<(String, u32)>,
@@ -92,11 +92,15 @@ impl Module {
         }
     }
 
-    fn code_memory(&self) -> std::ops::Range<u32> {
+    pub fn code_memory(&self) -> &[std::ops::Range<u32>] {
         match self {
-            Module::DOS(m) => m.code_memory.clone(),
-            Module::Windows(m) => m.code_memory.clone(),
+            Module::DOS(m) => &m.code_memory,
+            Module::Windows(m) => &m.code_memory,
         }
+    }
+
+    pub fn code_contains(&self, addr: u32) -> bool {
+        self.code_memory().iter().any(|r| r.contains(&addr))
     }
 }
 

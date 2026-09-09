@@ -379,7 +379,7 @@ impl<'a> Traverse<'a> {
     /// Cheap validation for scanned code address candidates: the bytes must
     /// decode as plausible instructions.
     fn looks_like_code(&self, addr: u32) -> bool {
-        if !self.module.code_memory().contains(&addr) {
+        if !self.module.code_contains(addr) {
             return false;
         }
         let data = self.mem.slice_all(addr);
@@ -446,7 +446,6 @@ impl<'a> Traverse<'a> {
         direction: i32,
         known_len: Option<usize>,
     ) -> usize {
-        let code = self.module.code_memory();
         let limit = known_len.unwrap_or(2048);
         let mut addr = table;
         let mut count = 0;
@@ -462,7 +461,7 @@ impl<'a> Traverse<'a> {
                 break;
             }
             let target = self.mem.read::<u32>(addr);
-            let valid = code.contains(&target) && self.looks_like_code(target);
+            let valid = self.module.code_contains(target) && self.looks_like_code(target);
             if !valid && known_len.is_none() {
                 break;
             }
@@ -501,7 +500,7 @@ impl<'a> Traverse<'a> {
             return;
         }
         let target = self.mem.read::<u32>(slot);
-        if self.module.code_memory().contains(&target) {
+        if self.module.code_contains(target) {
             self.add_candidate(target);
         }
     }
@@ -560,7 +559,7 @@ impl<'a> Traverse<'a> {
                 for i in 0..instr.op_count() {
                     if instr.op_kind(i) == iced_x86::OpKind::Immediate32 {
                         let imm = instr.immediate32();
-                        if self.module.code_memory().contains(&imm) {
+                        if self.module.code_contains(imm) {
                             log::info!("{imm:x} looks like a code pointer");
                             assert!(!self.module.segment_addressed());
                             found_imms.push(imm);
@@ -664,11 +663,10 @@ impl<'a> Traverse<'a> {
             log::warn!("--scan-memory not supported for segmented (DOS) modules");
             return;
         }
-        let code = self.module.code_memory();
         let mut found = Vec::new();
         for mapping in self.mem.mappings.vec() {
             if mapping.addr == 0
-                || mapping.addr == code.start
+                || self.module.code_contains(mapping.addr)
                 || mapping.desc == ".text"
                 || mapping.desc == "CSEG"
             {
@@ -679,7 +677,7 @@ impl<'a> Traverse<'a> {
             for ofs in 0..data.len().saturating_sub(4) {
                 let value =
                     u32::from_le_bytes([data[ofs], data[ofs + 1], data[ofs + 2], data[ofs + 3]]);
-                if code.contains(&value) {
+                if self.module.code_contains(value) {
                     found.push(value);
                 }
             }
@@ -714,26 +712,28 @@ impl<'a> Traverse<'a> {
 
     /// Uncovered ranges within the code section.
     fn gaps(&self) -> Vec<std::ops::Range<u32>> {
-        let code = self.module.code_memory();
         let mut gaps = Vec::new();
-        let mut pos = code.start;
-        for r in self.covered_ranges() {
-            if r.end <= code.start {
-                continue;
+        let covered = self.covered_ranges();
+        for code in self.module.code_memory() {
+            let mut pos = code.start;
+            for r in &covered {
+                if r.end <= code.start {
+                    continue;
+                }
+                if r.start >= code.end {
+                    break;
+                }
+                if r.start > pos {
+                    gaps.push(pos..r.start.min(code.end));
+                }
+                pos = pos.max(r.end);
+                if pos >= code.end {
+                    break;
+                }
             }
-            if r.start >= code.end {
-                break;
+            if pos < code.end {
+                gaps.push(pos..code.end);
             }
-            if r.start > pos {
-                gaps.push(pos..r.start.min(code.end));
-            }
-            pos = pos.max(r.end);
-            if pos >= code.end {
-                break;
-            }
-        }
-        if pos < code.end {
-            gaps.push(pos..code.end);
         }
         gaps
     }
@@ -764,16 +764,18 @@ impl<'a> Traverse<'a> {
 
     fn report_coverage(&self) {
         let code = self.module.code_memory();
-        let total = code.end - code.start;
+        let total: u32 = code.iter().map(|r| r.end - r.start).sum();
         if total == 0 {
             return;
         }
         let mut covered = 0u32;
         for r in self.covered_ranges() {
-            let start = r.start.max(code.start);
-            let end = r.end.min(code.end);
-            if start < end {
-                covered += end - start;
+            for c in code {
+                let start = r.start.max(c.start);
+                let end = r.end.min(c.end);
+                if start < end {
+                    covered += end - start;
+                }
             }
         }
         let blocks = self

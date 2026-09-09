@@ -32,7 +32,7 @@ fn load_dos(mem: &mut Memory, buf: &[u8], dos: exe::DOS) -> DOSModule {
         stack_segment: load_segment + dos.header.e_ss,
         stack_pointer: dos.header.e_sp,
         entry_point: dos.header.e_ip,
-        code_memory: (load_addr..data.len() as u32),
+        code_memory: vec![load_addr..load_addr + data.len() as u32],
     }
 }
 
@@ -42,7 +42,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
     let image_base = f.opt_header.ImageBase;
     mem.reserve("exe header".into(), image_base, 0x1000);
     mem.put(image_base, &buf[..0x1000.min(buf.len())]);
-    let mut code_range = None;
+    let mut code_ranges: Vec<std::ops::Range<u32>> = Vec::new();
     for sec in &f.sections {
         let addr = image_base + sec.VirtualAddress;
         let size = runtime::round_to_page(sec.SizeOfRawData.max(sec.VirtualSize));
@@ -57,13 +57,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
             mem.put(addr, data);
         }
         if flags.contains(IMAGE_SCN::CODE) || flags.contains(IMAGE_SCN::MEM_EXECUTE) {
-            match &mut code_range {
-                None => code_range = Some(addr..addr + sec.SizeOfRawData),
-                Some(range) => {
-                    range.start = range.start.min(addr);
-                    range.end = range.end.max(addr + sec.SizeOfRawData);
-                }
-            }
+            code_ranges.push(addr..addr + sec.SizeOfRawData);
         }
     }
 
@@ -80,7 +74,7 @@ fn load_pe(mem: &mut Memory, buf: &[u8], f: exe::PE) -> WindowsModule {
         imports,
         image_base,
         entry_point: image_base + f.opt_header.AddressOfEntryPoint,
-        code_memory: code_range.unwrap(),
+        code_memory: code_ranges,
         resources,
         vtables: Default::default(),
         dynamic_exports: Default::default(),
