@@ -15,6 +15,7 @@ members = [
   "out/mine",
   "out/mofo",
   "out/mofo-unpack",
+  "out/poptb",
   "out/sbaitso/read",
   "out/sbaitso/sbtalker",
   "out/thread",
