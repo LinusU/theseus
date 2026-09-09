@@ -322,9 +322,12 @@ impl Surface {
         };
 
         let mut back = self.attached.as_ref().unwrap().borrow_mut();
-        if self.palette.is_some() {
-            back.update_texture(mem, &self.palette);
-        }
+        // A palette is only needed to expand indexed (8-bit) pixels; 16/32bpp
+        // buffers convert without one, so gating this on `palette.is_some()`
+        // left 16bpp games (Moto Racer's RGB565) re-presenting a stale
+        // texture every flip while the guest-memory back buffer kept
+        // updating correctly underneath -- refresh unconditionally instead.
+        back.update_texture(mem, &self.palette);
         if dumping_frames() {
             if let Some(pixels) = back.to_rgba(mem, &self.palette) {
                 dump_frame(&pixels, back.width, back.height);
