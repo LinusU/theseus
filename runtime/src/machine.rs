@@ -83,7 +83,7 @@ impl Context {
     }
 
     /// Look up the x86 address for a registered continuation, if any.
-    fn cont_addr(&self, func: ContFn) -> Option<u32> {
+    pub fn cont_addr(&self, func: ContFn) -> Option<u32> {
         self.blocks
             .iter()
             .find(|&(_, f)| std::ptr::fn_addr_eq(*f, func))

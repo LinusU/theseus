@@ -25,7 +25,7 @@ impl<T> Ptr<T> {
 impl<T: zerocopy::FromBytes> Ptr<T> {
     pub fn read(&self, memory: &Memory) -> Option<T> {
         if self.addr < 0x1000 {
-            memory.null_ptr();
+            memory.null_ptr(self.addr);
             return None;
         }
         let bytes = &memory[self.addr..][..std::mem::size_of::<T>()];
@@ -42,7 +42,7 @@ impl<T: zerocopy::FromBytes + zerocopy::Immutable + zerocopy::KnownLayout> Ptr<T
 impl<T: zerocopy::IntoBytes + zerocopy::Immutable> Ptr<T> {
     pub fn write(&self, memory: &mut Memory, value: T) -> Option<()> {
         if self.addr < 0x1000 {
-            memory.null_ptr();
+            memory.null_ptr(self.addr);
             return None;
         }
         let bytes = &mut memory[self.addr..][..std::mem::size_of::<T>()];

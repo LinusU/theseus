@@ -74,6 +74,15 @@ pub fn log_missing_addr(addr: u32) {
     }
 }
 
+use std::cell::RefCell;
+
+thread_local! {
+    /// Stack of currently executing Contexts, used to report where null-page
+    /// accesses originate from within generated code. A Vec is used because
+    /// generated code may re-enter the runtime (e.g. callbacks, threads).
+    static ACTIVE_CTX: RefCell<Vec<*mut Context>> = const { RefCell::new(Vec::new()) };
+}
+
 /// Called by generated code for a statically-known jump target that the
 /// analysis didn't produce a block for.
 pub fn unknown_block(addr: u32) -> Cont {
@@ -108,6 +117,8 @@ impl Context {
     /// but jumps into the catching frame, after which the rest of the program
     /// runs inside this loop (see winapi's kernel32/seh.rs).
     pub fn cpu_loop(&mut self, mut f: Cont) {
+        ACTIVE_CTX.with_borrow_mut(|v| v.push(self as *mut Context));
+        log::info!("cpu_loop active ctx pushed");
         let mut i = 0;
         let done: ContFn = Context::return_from_x86;
         while f.0 as usize != done as usize {
@@ -115,6 +126,7 @@ impl Context {
             i = (i + 1) % self.recent.len();
             f = f.0(self);
         }
+        ACTIVE_CTX.with_borrow_mut(|v| v.pop());
     }
 
     pub fn return_from_x86(&mut self) -> Cont {

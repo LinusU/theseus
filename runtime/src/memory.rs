@@ -49,14 +49,31 @@ impl Memory {
     }
 
     #[inline(never)]
-    pub fn null_ptr(&self) {
-        log::error!("null page read/write");
+    pub fn null_ptr(&self, addr: u32) {
+        log::error!("null page read/write at {addr:#010x}");
+        crate::ACTIVE_CTX.with_borrow(|stack| {
+            if let Some(ctx) = stack.last().copied() {
+                let ctx = unsafe { &*ctx };
+                eprint!("recent: ");
+                for f in ctx.recent.iter() {
+                    if let Some(addr) = ctx.cont_addr(*f) {
+                        eprint!("{addr:#010x} ");
+                    } else {
+                        eprint!("{:?} ", *f as usize);
+                    }
+                }
+                eprintln!();
+                eprintln!("eip_context: {:#010x}", ctx.cpu.regs.eip_context);
+            } else {
+                eprintln!("null_ptr: active ctx is none");
+            }
+        });
     }
 
     #[inline]
     fn check_access(&self, addr: u32) {
         if addr < 0x1000 && self.null_page {
-            self.null_ptr();
+            self.null_ptr(addr);
         }
     }
 
