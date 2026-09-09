@@ -121,6 +121,36 @@ impl Context {
         (self.cpu.flags.contains(Flags::CF) || self.cpu.flags.contains(Flags::ZF)) as u8
     }
 
+    pub fn bit_scan_forward(&mut self, value: u32, bits: u32) -> u32 {
+        let value = if bits == 32 {
+            value
+        } else {
+            value & ((1u32 << bits) - 1)
+        };
+        if value == 0 {
+            self.cpu.flags.insert(Flags::ZF);
+            0
+        } else {
+            self.cpu.flags.remove(Flags::ZF);
+            value.trailing_zeros()
+        }
+    }
+
+    pub fn bit_scan_reverse(&mut self, value: u32, bits: u32) -> u32 {
+        let value = if bits == 32 {
+            value
+        } else {
+            value & ((1u32 << bits) - 1)
+        };
+        if value == 0 {
+            self.cpu.flags.insert(Flags::ZF);
+            0
+        } else {
+            self.cpu.flags.remove(Flags::ZF);
+            31 - value.leading_zeros() - (32 - bits)
+        }
+    }
+
     pub fn sti(&mut self) {
         // TODO: self.cpu.flags.insert(Flags::IF);
     }

@@ -21,7 +21,9 @@ pub struct DirectDraw {
 
 impl DirectDraw {
     pub fn set_cooperative_level(&mut self, _hwnd: HWND, _flags: u32) {
-        let window = user32::state().window.borrow().as_ref().unwrap().clone();
+        let Some(window) = user32::state().window.borrow().as_ref().cloned() else {
+            return;
+        };
         self.window = Some(window);
     }
 }
@@ -42,18 +44,24 @@ impl DirectDraw {
         let is_primary = desc.dwFlags.contains(DDSD::CAPS)
             && desc.ddsCaps.dwCaps.contains(DDSCAPS::PRIMARYSURFACE);
 
-        let window = self.window.as_ref().unwrap().borrow();
+        let (window_width, window_height) = self
+            .window
+            .as_ref()
+            .map(|window| {
+                let window = window.borrow();
+                (window.width, window.height)
+            })
+            .unwrap_or((640, 480));
         let width = if desc.dwFlags.contains(DDSD::WIDTH) {
             desc.dwWidth
         } else {
-            window.width
+            window_width
         };
         let height = if desc.dwFlags.contains(DDSD::HEIGHT) {
             desc.dwHeight
         } else {
-            window.height
+            window_height
         };
-        drop(window);
 
         // An offscreen surface takes the display mode's format unless the app
         // asks for a specific one, which is what lets a palettized game blit
@@ -111,15 +119,16 @@ impl DirectDraw {
     }
 
     fn create_one_surface(&mut self, addr: u32, params: &SurfaceParams) -> Rc<RefCell<Surface>> {
-        let window = self.window.as_ref().unwrap();
-        let target = if params.is_primary {
-            Target::Window(window.clone())
-        } else {
-            let texture = window
-                .borrow_mut()
-                .host
-                .create_surface(params.width, params.height);
-            Target::Texture(texture)
+        let target = match self.window.as_ref() {
+            Some(window) if params.is_primary => Target::Window(window.clone()),
+            Some(window) => {
+                let texture = window
+                    .borrow_mut()
+                    .host
+                    .create_surface(params.width, params.height);
+                Target::Texture(texture)
+            }
+            None => Target::Headless,
         };
 
         let surf = Rc::new(RefCell::new(Surface {
@@ -146,6 +155,7 @@ impl DirectDraw {
 pub enum Target {
     Window(Rc<RefCell<user32::Window>>),
     Texture(host::Surface),
+    Headless,
 }
 
 /// A DDCOLORKEY: the inclusive range of pixel values a blit treats as
@@ -215,7 +225,7 @@ impl Surface {
         match self.target {
             // Writes to the primary surface go straight to the screen.
             Target::Window(_) => self.present(mem),
-            Target::Texture(_) => self.update_texture(mem, &None),
+            Target::Texture(_) | Target::Headless => self.update_texture(mem, &None),
         }
     }
 
@@ -278,6 +288,7 @@ impl Surface {
         let width = self.width;
         match &mut self.target {
             Target::Window(_) => unreachable!(),
+            Target::Headless => {}
             Target::Texture(texture) => {
                 texture.set_pixels(&pixels, width * 4);
             }

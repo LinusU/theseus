@@ -156,7 +156,6 @@ pub fn stdcall_name(name: &str) -> String {
     let mut parts = name.split("::");
     let dll = parts.next();
     let valid = parts.next().is_some()
-        && parts.next().is_none()
         && name.split("::").all(|part| {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });

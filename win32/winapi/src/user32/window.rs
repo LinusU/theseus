@@ -4,7 +4,7 @@ use runtime::Context;
 
 use crate::{
     FromABIParam, POINT, Ptr, RECT,
-    gdi32::{self, Brush, COLORREF, DC, HBRUSH, HDC},
+    gdi32::{self, Bitmap, Brush, COLORREF, DC, HBRUSH, HDC},
     kernel32, stub,
     user32::{self, HCURSOR, HICON, HINSTANCE, HMENU, HWND, State, WM, state},
 };
@@ -547,8 +547,11 @@ pub fn EndPaint(ctx: &mut Context, _hWnd: HWND, lpPaint: Ptr<PAINTSTRUCT>) -> bo
 #[win32_derive::dllexport]
 pub fn GetDC(ctx: &mut Context, hWnd: HWND) -> HDC {
     if hWnd.is_null() {
-        // desktop window
-        return stub!(HDC::null());
+        let pixels = kernel32::lock()
+            .process_heap
+            .alloc(&mut ctx.memory, 640 * 480 * 4);
+        let bitmap = Bitmap::new_simple(640, 480, pixels);
+        return gdi32::lock().new_memory_dc(bitmap);
     }
 
     let state = state();

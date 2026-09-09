@@ -396,7 +396,10 @@ impl<'a> Traverse<'a> {
         let mut n = 0;
         while decoder.can_decode() {
             let instr = decoder.decode();
-            if matches!(instr.mnemonic(), iced_x86::Mnemonic::Iret | iced_x86::Mnemonic::Iretd) {
+            if matches!(
+                instr.mnemonic(),
+                iced_x86::Mnemonic::Iret | iced_x86::Mnemonic::Iretd
+            ) {
                 return false;
             }
             if instr.is_invalid() {
@@ -625,6 +628,7 @@ impl<'a> Traverse<'a> {
                     }
                 }
                 Ret | Retf | Iret => {}
+                Iretd => anyhow::bail!("iretd not implemented"),
                 Into => {}        // terminates
                 Int1 | Int3 => {} // breakpoint
                 Int => {
@@ -663,7 +667,11 @@ impl<'a> Traverse<'a> {
         let code = self.module.code_memory();
         let mut found = Vec::new();
         for mapping in self.mem.mappings.vec() {
-            if mapping.addr == 0 || mapping.addr == code.start {
+            if mapping.addr == 0
+                || mapping.addr == code.start
+                || mapping.desc == ".text"
+                || mapping.desc == "CSEG"
+            {
                 continue;
             }
             log::info!("scanning mapping {:?}", mapping);

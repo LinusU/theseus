@@ -114,6 +114,19 @@ impl<'a> CodeGen<'a> {
                     self.get_op(instr, 0)
                 ));
             }
+            Bsf | Bsr => {
+                let size = op_size(instr, 1);
+                let scan = if instr.mnemonic() == Bsf {
+                    "bit_scan_forward"
+                } else {
+                    "bit_scan_reverse"
+                };
+                self.line(format!(
+                    "let index = ctx.{scan}({} as u32, {size});",
+                    self.get_op(instr, 1)
+                ));
+                self.line(self.set_op(instr, 0, "index".into()));
+            }
 
             // CBW/CWDE: sign extend to next larger ax
             Cbw => self.line("ctx.cpu.regs.set_ax(ctx.cpu.regs.get_al() as i8 as i16 as u16);"),

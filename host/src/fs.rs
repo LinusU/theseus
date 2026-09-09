@@ -129,6 +129,10 @@ mod imp {
         std::fs::remove_file(path)
     }
 
+    pub fn create_dir_all(path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)
+    }
+
     pub fn exists(path: &Path) -> bool {
         path.exists()
     }
@@ -358,6 +362,10 @@ mod imp {
         }
     }
 
+    pub fn create_dir_all(_path: &Path) -> Result<()> {
+        Ok(())
+    }
+
     /// The prefix every path inside `dir` starts with, without doubling the
     /// slash at the root.
     fn dir_prefix(dir: &str) -> String {
@@ -397,4 +405,6 @@ mod imp {
 
 #[cfg(target_family = "wasm")]
 pub use imp::mount;
-pub use imp::{File, current_dir, exists, open, read_dir, remove_file, set_current_dir};
+pub use imp::{
+    File, create_dir_all, current_dir, exists, open, read_dir, remove_file, set_current_dir,
+};

@@ -28,6 +28,12 @@ pub const IID_IDirectDraw: GUID = GUID((
     0x11ce,
     [0xa5, 0x21, 0x00, 0x20, 0xaf, 0x0b, 0xe5, 0x60],
 ));
+pub const IID_IDirectDrawSurface4: GUID = GUID((
+    0x0b2b8630,
+    0xad35,
+    0x11d0,
+    [0x8e, 0xa6, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b],
+));
 pub const IID_IDirectDrawSurface: GUID = GUID((
     0x6c14db81,
     0xa733,
@@ -438,6 +444,10 @@ pub mod IDirectDrawSurface {
                 // The new pointer names the same surface.
                 state().surf.borrow_mut().insert(addr, surface);
                 ctx.memory.write::<u32>(ppvObject, addr);
+                DD::OK
+            }
+            IID_IDirectDrawSurface4 => {
+                ctx.memory.write::<u32>(ppvObject, this);
                 DD::OK
             }
             _ => {
