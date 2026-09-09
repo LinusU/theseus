@@ -10,7 +10,10 @@ fi
 args=(
     --exe "$exe"
     --out out/poptb
+    --scan-immediates
+    --scan-memory
     --entry-points-file out/poptb/entry-points.txt
+    --jump-table 56b368..56c364
 )
 cargo run -p tc -- "${args[@]}"
 echo "cargo build --profile fast -p poptb"
