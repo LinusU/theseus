@@ -396,6 +396,9 @@ impl<'a> Traverse<'a> {
         let mut n = 0;
         while decoder.can_decode() {
             let instr = decoder.decode();
+            if matches!(instr.mnemonic(), iced_x86::Mnemonic::Iret | iced_x86::Mnemonic::Iretd) {
+                return false;
+            }
             if instr.is_invalid() {
                 // Truncated final instruction is fine; garbage is not.
                 return n > 0 && decoder.position() + 16 > len;
