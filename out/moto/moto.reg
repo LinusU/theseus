@@ -1,0 +1,19 @@
+Windows Registry Editor Version 5.00
+
+; What SETUP.EXE would have written (see strings in DISK1/ENGLISH/SETUP.INS).
+; The game refuses to start ("PROGRAM INCORRECTLY INSTALLED") without these.
+; Paths are Windows paths; every drive maps onto the directory run.sh starts
+; the game in, so C:\ is the install directory.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\DelphineSoft\MotoRacer\CurrentVersion\Moto]
+"DataPath"="C:\\"
+"SavingPath"="C:\\"
+"InstallType"=dword:00000002
+"Language"="ENGLISH"
+"Version"=dword:00000001
+; PId is a hash of the Windows ProductId string below, computed by the game
+; (routine at 0x42e530) as h = (h * 2) ^ c over its characters; for "12345"
+; that is 0x211. The game refuses to run if they disagree.
+"PId"=dword:00000211
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion]
+"ProductId"="12345"
