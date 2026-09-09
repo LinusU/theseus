@@ -82,6 +82,14 @@ impl Context {
         self.indirect(addr)
     }
 
+    /// Look up the x86 address for a registered continuation, if any.
+    fn cont_addr(&self, func: ContFn) -> Option<u32> {
+        self.blocks
+            .iter()
+            .find(|&(_, f)| std::ptr::fn_addr_eq(*f, func))
+            .map(|&(addr, _)| addr)
+    }
+
     /// Given an address (jump target), look up the Cont registered for it.
     pub fn indirect(&self, addr: u32) -> Cont {
         if addr == 0 {
@@ -94,6 +102,16 @@ impl Context {
         // TODO: this would be faster as a perfect hash if we really cared.
         let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
             self.dump();
+            eprint!("recent: ");
+            for f in self.recent.iter() {
+                if let Some(addr) = self.cont_addr(*f) {
+                    eprint!("{addr:#010x} ");
+                } else {
+                    eprint!("{:?} ", *f as usize);
+                }
+            }
+            eprintln!();
+            eprintln!("eip_context: {:#010x}", self.cpu.regs.eip_context);
             crate::log_missing_addr(addr);
             panic!(
                 "jmp to unknown addr {addr:#010x}; \

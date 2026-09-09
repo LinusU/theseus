@@ -3,6 +3,7 @@ use crate::{Cont, ContFn, Context, Flags, RETURN_FROM_X86_ADDR32, segofs};
 impl Context {
     pub fn call32(&mut self, ret: u32, addr: Cont) -> Cont {
         self.push32(ret);
+        self.cpu.regs.eip_context = ret;
         addr
     }
 
