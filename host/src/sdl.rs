@@ -471,6 +471,27 @@ impl AudioStream {
             check(sdl::audio::SDL_ResumeAudioStreamDevice(self.0));
         }
     }
+
+    /// Stop consuming the queue, leaving it intact, so a later `resume` picks
+    /// up where playback stopped.
+    pub fn pause(&self) {
+        if self.0.is_null() {
+            return;
+        }
+        unsafe {
+            check(sdl::audio::SDL_PauseAudioStreamDevice(self.0));
+        }
+    }
+
+    /// Throw away whatever is queued but not yet played.
+    pub fn clear(&self) {
+        if self.0.is_null() {
+            return;
+        }
+        unsafe {
+            check(sdl::audio::SDL_ClearAudioStream(self.0));
+        }
+    }
 }
 
 impl Host {
