@@ -372,3 +372,15 @@ Suspects worth a look when the backlog is otherwise blocked:
   MemUsed (Just before GameLoop): 3.1M`. Lesson: verify callback arg counts
   against the guest's `ret N` before "fixing" them. Next: continue COM
   audit.
+- 2026-09-09 dplayx COM ref counting: What: `IDirectPlayLobby3A` and the
+  `IDirectPlay4A` (`CLSID_DirectPlay`) objects returned constant
+  AddRef/Release (1/0), QueryInterface never AddRefed, and the 4-byte
+  interface blocks were never freed. Repro: new tests
+  `lobby_object_lifetime_addref_release` and
+  `directplay_object_lifetime_addref_release`. Change: shared `OBJECTS`
+  `this`->refs map registered by both `create` paths, QI AddRefs on
+  success, real AddRef/Release that drop the map entry and free the heap
+  block at refs=0 (`dplayx.rs`). Check: `check.sh: OK (fmt 1 files,
+  clippy+test winapi, build mm2, whitespace)`. Next: survey a headless run
+  for remaining warn-level stubs; dmusic objects are stubs but their
+  content is missing anyway.
