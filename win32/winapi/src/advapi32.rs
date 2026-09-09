@@ -303,6 +303,11 @@ pub fn RegCreateKeyExA(
 }
 
 #[win32_derive::dllexport]
+pub fn RegOpenKeyA(ctx: &mut Context, hKey: HKEY, lpSubKey: Ptr<u8>, phkResult: Ptr<HKEY>) -> u32 {
+    RegOpenKeyExA(ctx, hKey, lpSubKey, 0, 0, phkResult)
+}
+
+#[win32_derive::dllexport]
 pub fn RegCreateKeyExW(
     ctx: &mut Context,
     hKey: HKEY,

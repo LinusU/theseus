@@ -20,6 +20,46 @@ pub struct CPINFO {
 }
 
 #[win32_derive::dllexport]
+pub fn IsDBCSLeadByte(_ctx: &mut Context, _TestChar: u32) -> bool {
+    false
+}
+
+#[win32_derive::dllexport]
+pub fn GetLocaleInfoA(
+    ctx: &mut Context,
+    _Locale: u32,
+    _LCType: u32,
+    lpLCData: Ptr<u8>,
+    cchData: i32,
+) -> i32 {
+    if cchData <= 0 {
+        return 0;
+    }
+    let n = crate::kernel32::write_cstr(ctx, lpLCData, cchData as u32, b"English (United States)");
+    (n + 1) as i32
+}
+
+#[win32_derive::dllexport]
+pub fn GetLocaleInfoW(
+    ctx: &mut Context,
+    _Locale: u32,
+    _LCType: u32,
+    lpLCData: Ptr<u16>,
+    cchData: i32,
+) -> i32 {
+    if cchData <= 0 || lpLCData.addr == 0 {
+        return 0;
+    }
+    let text: Vec<u16> = "English (United States)".encode_utf16().collect();
+    let n = text.len().min(cchData as usize - 1);
+    for (i, c) in text[..n].iter().enumerate() {
+        ctx.memory.write::<u16>(lpLCData.addr + i as u32 * 2, *c);
+    }
+    ctx.memory.write::<u16>(lpLCData.addr + n as u32 * 2, 0);
+    (n + 1) as i32
+}
+
+#[win32_derive::dllexport]
 pub fn GetCPInfo(ctx: &mut Context, _CodePage: u32, lpCPInfo: Ptr<CPINFO>) -> bool {
     // A single-byte codepage, so no lead byte ranges.
     let info = CPINFO {

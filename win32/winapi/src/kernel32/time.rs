@@ -11,6 +11,20 @@ pub fn Sleep(_ctx: &mut Context, dwMilliseconds: u32) {
 }
 
 #[win32_derive::dllexport]
+pub fn GetLocalTime(ctx: &mut Context, lpSystemTime: crate::Ptr<u8>) {
+    if lpSystemTime.addr != 0 {
+        ctx.memory[lpSystemTime.addr..][..16].fill(0);
+    }
+}
+
+#[win32_derive::dllexport]
+pub fn GetSystemTime(ctx: &mut Context, lpSystemTime: crate::Ptr<u8>) {
+    if lpSystemTime.addr != 0 {
+        ctx.memory[lpSystemTime.addr..][..16].fill(0);
+    }
+}
+
+#[win32_derive::dllexport]
 pub fn GetTimeZoneInformation(ctx: &mut Context, lpTimeZoneInformation: crate::Ptr<u8>) -> u32 /* TIME_ZONE_ID */
 {
     // TIME_ZONE_INFORMATION is 172 bytes; report UTC by zeroing it.
