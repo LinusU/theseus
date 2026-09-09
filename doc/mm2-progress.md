@@ -245,3 +245,11 @@ Suspects worth a look when the backlog is otherwise blocked:
   new test does not race the existing global-RefCell tests. Check:
   `check.sh: OK (fmt 1 files, clippy+test winapi, build mm2, whitespace)`.
   Next: `IDirect3DDevice7` and `IDirect3DVertexBuffer7` AddRef/Release.
+- 2026-09-09 IDirect3DDevice7 ref counting: What: `IDirect3DDevice7::AddRef`
+  and `Release` returned stub constants and never freed the object. Repro: new
+  unit test `d3d7_device_lifetime_addref_release` in
+  `win32/winapi/src/ddraw/d3d7.rs`. Change: added `refs` to `Device`, set it to
+  1 in `CreateDevice`, AddRef/Release through `d3d_state().devices`, and free
+  the heap block on the last `Release`; `QueryInterface` AddRefs for `IUnknown`
+  or `IID_IDIRECT3DDEVICE7`. Check: `check.sh: OK (fmt 1 files, clippy+test
+  winapi, build mm2, whitespace)`. Next: `IDirect3DVertexBuffer7` AddRef/Release.

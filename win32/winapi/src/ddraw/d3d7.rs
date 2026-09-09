@@ -367,6 +367,7 @@ fn vertex_size(fvf: u32) -> u32 {
 
 pub struct Device {
     pub addr: u32,
+    pub refs: u32,
     pub d3d: u32,
     pub render_target: u32,
     transforms: HashMap<u32, [f32; 16]>,
@@ -388,6 +389,7 @@ impl Device {
     fn new(addr: u32, d3d: u32, render_target: u32) -> Self {
         Device {
             addr,
+            refs: 1,
             d3d,
             render_target,
             transforms: HashMap::new(),
@@ -862,6 +864,9 @@ pub mod IDirect3DDevice7 {
         if !crate::ddraw::guest_range(ctx, ppv, 4) {
             return DD::ERR_INVALIDPARAMS;
         }
+        if !d3d_state().devices.borrow().contains_key(&this) {
+            return DD::ERR_INVALIDPARAMS;
+        }
         let Some(iid) = crate::Ptr::<GUID>::new(riid).read(&ctx.memory) else {
             return DD::ERR_INVALIDPARAMS;
         };
@@ -879,17 +884,40 @@ pub mod IDirect3DDevice7 {
         if out == 0 {
             return DD::E_NOINTERFACE;
         }
+        if let Some(device) = d3d_state().devices.borrow_mut().get_mut(&this) {
+            device.refs += 1;
+        }
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn AddRef(_ctx: &mut Context, _this: u32) -> u32 {
-        1
+    pub fn AddRef(_ctx: &mut Context, this: u32) -> u32 {
+        let mut devices = d3d_state().devices.borrow_mut();
+        let Some(device) = devices.get_mut(&this) else {
+            return 0;
+        };
+        device.refs += 1;
+        device.refs
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
-        0
+    pub fn Release(ctx: &mut Context, this: u32) -> u32 {
+        let remaining = {
+            let mut devices = d3d_state().devices.borrow_mut();
+            let Some(device) = devices.get_mut(&this) else {
+                return 0;
+            };
+            device.refs = device.refs.saturating_sub(1);
+            let remaining = device.refs;
+            if remaining == 0 {
+                devices.remove(&this);
+            }
+            remaining
+        };
+        if remaining == 0 {
+            kernel32::lock().process_heap.free(&mut ctx.memory, this);
+        }
+        remaining
     }
 
     #[win32_derive::dllexport]
@@ -3662,5 +3690,72 @@ mod tests {
 
         // Releasing an unknown or already-freed pointer is a no-op.
         assert_eq!(IDirect3D7::Release(&mut ctx, d3d), 0);
+    }
+
+    #[test]
+    fn d3d7_device_lifetime_addref_release() {
+        // IDirect3DDevice7::QueryInterface/AddRef/Release now track a real
+        // ref count and free the object on the last release.
+        fn context() -> Context {
+            Context {
+                cpu: CPU::default(),
+                thread_handle: 0,
+                thread_id: 0,
+                memory: Memory::leak_new(0x20_000),
+                blocks: &[],
+                cache: BlockCache::default(),
+                recent: [Context::return_from_x86; 4],
+            }
+        }
+
+        let mut ctx = context();
+        d3d_state().devices.borrow_mut().clear();
+        crate::kernel32::ensure_test_state();
+        {
+            let mut k32 = crate::kernel32::lock();
+            k32.process_heap = crate::heap::Heap::new(0x1000, 0x10000);
+        }
+
+        let k32 = crate::kernel32::lock();
+        let addr = k32.process_heap.try_alloc(&mut ctx.memory, 4).unwrap();
+        ctx.memory.write::<u32>(addr, 0x1234);
+        d3d_state()
+            .devices
+            .borrow_mut()
+            .insert(addr, Device::new(addr, 0, 0));
+        drop(k32);
+        assert_eq!(d3d_state().devices.borrow()[&addr].refs, 1);
+
+        const RIID: u32 = 0x2000;
+        const PPV: u32 = 0x3000;
+        ctx.memory
+            .write(RIID, crate::ddraw::GUID::new(0, 0, 0, [0; 8]));
+        assert_eq!(
+            IDirect3DDevice7::QueryInterface(&mut ctx, addr, RIID, PPV),
+            crate::ddraw::DD::OK
+        );
+        assert_eq!(ctx.memory.try_read::<u32>(PPV), Some(addr));
+        assert_eq!(d3d_state().devices.borrow()[&addr].refs, 2);
+
+        // An unsupported interface leaves the ref count unchanged.
+        ctx.memory.write(
+            RIID + 0x20,
+            crate::ddraw::GUID::new(0xdead_beef, 0xcafe, 0xbabe, [1, 2, 3, 4, 5, 6, 7, 8]),
+        );
+        assert_eq!(
+            IDirect3DDevice7::QueryInterface(&mut ctx, addr, RIID + 0x20, PPV + 0x20),
+            crate::ddraw::DD::E_NOINTERFACE
+        );
+        assert_eq!(d3d_state().devices.borrow()[&addr].refs, 2);
+
+        // AddRef/Release round-trip to zero frees the object.
+        assert_eq!(IDirect3DDevice7::AddRef(&mut ctx, addr), 3);
+        assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 2);
+        assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 1);
+        assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 0);
+        assert!(!d3d_state().devices.borrow().contains_key(&addr));
+
+        // Releasing an unknown pointer is a no-op.
+        assert_eq!(IDirect3DDevice7::Release(&mut ctx, addr), 0);
     }
 }
