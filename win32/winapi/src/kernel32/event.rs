@@ -24,8 +24,8 @@ pub fn WaitForSingleObject(_ctx: &mut Context, hHandle: HANDLE, dwMilliseconds: 
 {
     let event = {
         let kernel32 = lock();
-        let Object::Event(event) = kernel32.objects.get(hHandle).unwrap() else {
-            panic!()
+        let Some(Object::Event(event)) = kernel32.objects.get(hHandle) else {
+            return 0;
         };
         event.clone()
     };
@@ -96,8 +96,8 @@ pub fn WaitForMultipleObjects(
 #[win32_derive::dllexport]
 pub fn SetEvent(_ctx: &mut Context, hEvent: HANDLE) -> bool {
     let kernel32 = lock();
-    let Object::Event(event) = kernel32.objects.get(hEvent).unwrap() else {
-        panic!()
+    let Some(Object::Event(event)) = kernel32.objects.get(hEvent) else {
+        return false;
     };
     *event.signaled.lock().unwrap() = true;
     // TODO: the number of threads notified are different between manual reset and auto reset events!
