@@ -357,3 +357,15 @@ Suspects worth a look when the backlog is otherwise blocked:
   delivered at t≈3.5s, so window creation and macOS activation work on this
   display; window enumeration needs Accessibility permission, and no keys
   were physically pressed so the key path stays verified-but-not-reprobed.
+- 2026-09-09 IDirect3D7::EnumDevices callback args: What: the callback was
+  invoked with `(desc, name, hw-desc, context)` — `LPD3DENUMDEVICESCALLBACK7`
+  is `(GUID*, desc, name, hw-desc, hel-desc, context)` — so a device-picking
+  game read the name string as its GUID and matched against garbage. Repro:
+  code inspection of `call32_x86` arg order vs the d3d.h typedef (audited
+  every call32_x86 callback site; this and the DirectDrawEnumerateA shift
+  were the only mismatches). Change: each device now reports its real GUID,
+  and the D3DDEVICEDESC7 goes to the HW param for HAL/TnL devices or the HEL
+  param for RGB Emulation (d3d7.rs). Check: `check.sh: OK (fmt 1 files,
+  clippy+test winapi, build mm2, whitespace)`. Next: re-run a longer
+  windowed session to see whether device selection changes the in-race
+  renderer path.

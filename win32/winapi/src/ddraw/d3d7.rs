@@ -584,13 +584,24 @@ pub mod IDirect3D7 {
         ];
 
         for &(guid, desc, name) in DEVICES {
+            let Some(guid_addr) = kernel32::lock()
+                .process_heap
+                .try_alloc(&mut ctx.memory, std::mem::size_of::<GUID>() as u32)
+            else {
+                return DD::ERR_OUTOFMEMORY;
+            };
+            ctx.memory.write(guid_addr, guid);
             let Some(desc_addr) = crate::ddraw::alloc_string(ctx, desc) else {
+                kernel32::lock()
+                    .process_heap
+                    .free(&mut ctx.memory, guid_addr);
                 return DD::ERR_OUTOFMEMORY;
             };
             let Some(name_addr) = crate::ddraw::alloc_string(ctx, name) else {
-                kernel32::lock()
-                    .process_heap
-                    .free(&mut ctx.memory, desc_addr);
+                let kernel32 = kernel32::lock();
+                kernel32.process_heap.free(&mut ctx.memory, guid_addr);
+                kernel32.process_heap.free(&mut ctx.memory, desc_addr);
+                drop(kernel32);
                 return DD::ERR_OUTOFMEMORY;
             };
             let device = device_desc7(guid);
@@ -599,17 +610,33 @@ pub mod IDirect3D7 {
                 std::mem::size_of::<D3DDEVICEDESC7>() as u32,
             ) else {
                 let kernel32 = kernel32::lock();
+                kernel32.process_heap.free(&mut ctx.memory, guid_addr);
                 kernel32.process_heap.free(&mut ctx.memory, desc_addr);
                 kernel32.process_heap.free(&mut ctx.memory, name_addr);
+                drop(kernel32);
                 return DD::ERR_OUTOFMEMORY;
             };
             ctx.memory.write(dd_addr, device);
 
+            // LPD3DENUMDEVICESCALLBACK7 is (GUID*, desc, name, hw-desc,
+            // hel-desc, context): a hardware device gets the desc as the HW
+            // parameter and NULL for HEL; a software device is the reverse.
+            let (hw_desc, hel_desc) = if guid == IID_IDIRECT3DRGBDEVICE {
+                (0, dd_addr)
+            } else {
+                (dd_addr, 0)
+            };
             let callback = ctx.indirect(lpEnumDevicesCallback);
-            ctx.call32_x86(callback, vec![desc_addr, name_addr, dd_addr, lpUserArg]);
+            ctx.call32_x86(
+                callback,
+                vec![
+                    guid_addr, desc_addr, name_addr, hw_desc, hel_desc, lpUserArg,
+                ],
+            );
             let ret = ctx.cpu.regs.eax;
 
             let kernel32 = kernel32::lock();
+            kernel32.process_heap.free(&mut ctx.memory, guid_addr);
             kernel32.process_heap.free(&mut ctx.memory, desc_addr);
             kernel32.process_heap.free(&mut ctx.memory, name_addr);
             kernel32.process_heap.free(&mut ctx.memory, dd_addr);
