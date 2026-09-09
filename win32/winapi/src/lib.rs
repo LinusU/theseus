@@ -55,7 +55,7 @@ macro_rules! stub {
         $arg
     }};
 }
-use runtime::{CPU, Context, EXEData, Memory};
+use runtime::{CPU, Context, EXEData, Mappings, Memory};
 pub(crate) use stub;
 
 #[cfg(target_family = "wasm")]
@@ -76,11 +76,17 @@ pub fn load(exe: &EXEData) -> Context {
     let memory = Memory::leak_new(memory_size);
 
     kernel32::init_state(exe.image_base, exe.resources.clone());
-    let mut lock = kernel32::lock();
+    let (thread_handle, mut mappings) = {
+        let mut lock = kernel32::lock();
+        (
+            lock.objects.add(kernel32::Object::Thread).to_raw(),
+            std::mem::take(&mut lock.mappings),
+        )
+    };
 
     let mut ctx = Context {
         cpu: CPU::default(),
-        thread_handle: lock.objects.add(kernel32::Object::Thread).to_raw(),
+        thread_handle,
         thread_id: 1,
         memory,
         blocks: exe.blocks,
@@ -88,7 +94,9 @@ pub fn load(exe: &EXEData) -> Context {
         recent: [Context::return_from_x86; 4],
     };
 
-    (exe.init)(&mut ctx, &mut lock.mappings);
+    (exe.init)(&mut ctx, &mut mappings);
+    let mut lock = kernel32::lock();
+    lock.mappings = mappings;
     lock.init_process(&mut ctx);
     ctx
 }
