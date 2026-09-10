@@ -161,6 +161,7 @@ pub fn load(exe: &EXEData, command_line: Option<&str>) -> Context {
         blocks: exe.blocks,
         cache: Default::default(),
         recent: [Context::return_from_x86; 4],
+        recent_eip: [0; 4],
     };
     ctx.cpu.real_mode = true;
 

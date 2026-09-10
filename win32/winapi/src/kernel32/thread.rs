@@ -72,6 +72,7 @@ impl kernel32::State {
             blocks: ctx.blocks,
             cache: Default::default(),
             recent: [Context::return_from_x86; 4],
+            recent_eip: [0; 4],
         };
         self.next_thread_id += 1;
         self.init_thread(&mut new_ctx, teb(ctx).Peb);

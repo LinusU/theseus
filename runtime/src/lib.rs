@@ -123,6 +123,7 @@ impl Context {
         let done: ContFn = Context::return_from_x86;
         while f.0 as usize != done as usize {
             self.recent[i] = f.0;
+            self.recent_eip[i] = self.cpu.regs.eip_context;
             i = (i + 1) % self.recent.len();
             f = f.0(self);
         }

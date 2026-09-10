@@ -94,6 +94,7 @@ pub fn load(exe: &EXEData) -> Context {
         blocks: exe.blocks,
         cache: Default::default(),
         recent: [Context::return_from_x86; 4],
+        recent_eip: [0; 4],
     };
 
     (exe.init)(&mut ctx, &mut mappings);

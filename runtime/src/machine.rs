@@ -69,6 +69,7 @@ pub struct Context {
     pub blocks: &'static [(u32, ContFn)],
     pub cache: BlockCache,
     pub recent: [ContFn; 4],
+    pub recent_eip: [u32; 4],
 }
 
 impl Context {
@@ -102,12 +103,43 @@ impl Context {
         // TODO: this would be faster as a perfect hash if we really cared.
         let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
             self.dump();
+            if addr == 0x6c {
+                let r = &self.cpu.regs;
+                eprintln!(
+                    "bad indirect 0x6c: eax={:x} ecx={:x} edx={:x} esi={:x} edi={:x} esp={:x}",
+                    r.eax, r.ecx, r.edx, r.esi, r.edi, r.esp
+                );
+                for &base in [
+                    r.eax,
+                    r.ecx,
+                    r.edx,
+                    r.esi,
+                    r.edi,
+                    0x006643e0,
+                    0x4fd5dc8,
+                    0x1600140,
+                    0x9b607a,
+                    0x114c,
+                    0x105c,
+                    0x10ec,
+                ]
+                .iter()
+                {
+                    eprintln!("dump [{base:x}]:");
+                    for i in (0..0x100).step_by(4) {
+                        let v = self.memory.read::<u32>(base.wrapping_add(i));
+                        if v != 0 {
+                            eprintln!("  +{i:x}: {v:x}");
+                        }
+                    }
+                }
+            }
             eprint!("recent: ");
-            for f in self.recent.iter() {
+            for (f, eip) in self.recent.iter().zip(self.recent_eip.iter()) {
                 if let Some(addr) = self.cont_addr(*f) {
-                    eprint!("{addr:#010x} ");
+                    eprint!("{addr:#010x}({eip:#010x}) ");
                 } else {
-                    eprint!("{:?} ", *f as usize);
+                    eprint!("{:?}({eip:#010x}) ", *f as usize);
                 }
             }
             eprintln!();
