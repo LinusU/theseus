@@ -636,8 +636,21 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPalette(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
+        if lplpDDPalette == 0 {
+            return DD::ERR_GENERIC;
+        }
+        let state = state();
+        let surfaces = state.surf.borrow();
+        let Some(surface) = surfaces.get(&this) else {
+            return DD::ERR_GENERIC;
+        };
+        let surface = surface.borrow();
+        let Some(palette) = surface.palette_addr else {
+            return DD::ERR_GENERIC;
+        };
+        ctx.memory.write::<u32>(lplpDDPalette, palette);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -744,6 +757,7 @@ pub mod IDirectDrawSurface {
         let palettes = state.palette.borrow_mut();
         let palette = palettes.get(&lpPalette).unwrap();
         surface.palette = Some(palette.clone());
+        surface.palette_addr = Some(lpPalette);
         DD::OK
     }
 

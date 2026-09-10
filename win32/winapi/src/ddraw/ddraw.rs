@@ -143,6 +143,7 @@ impl DirectDraw {
             pixels: None,
             texture: None,
             palette: None,
+            palette_addr: None,
             src_color_key: None,
             dst_color_key: None,
         }));
@@ -197,6 +198,7 @@ pub struct Surface {
     pub texture: Option<host::Surface>,
 
     pub palette: Option<Rc<RefCell<Palette>>>,
+    pub palette_addr: Option<u32>,
 
     /// Pixel values that read as transparent when this surface is the source
     /// of a blit — how sprites get their transparent background.

@@ -415,8 +415,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPalette(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetPalette(ctx, this)
+    pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
+        IDirectDrawSurface::GetPalette(ctx, this, lplpDDPalette)
     }
 
     #[win32_derive::dllexport]
