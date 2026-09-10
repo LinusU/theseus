@@ -208,6 +208,7 @@ pub mod IDirectDraw {
         let desc = <DDSURFACEDESC>::ref_from_prefix(&ctx.memory[desc..])
             .unwrap()
             .0;
+        log::info!("CreateSurface {desc:?}");
         let desc2 = DDSURFACEDESC2::from_desc(&desc);
         let mut state = kernel32::lock();
         let surface = ddraw.create_surface(&desc2, &mut || {
@@ -727,6 +728,7 @@ pub mod IDirectDrawSurface {
         _lpDDSurfaceTargetOverride: u32,
         _dwFlags: u32,
     ) -> DD {
+        log::info!("Flip({this:#x}) from {:#x}", ctx.cpu.regs.eip_context);
         {
             let surfaces = state().surf.borrow_mut();
             let mut surface = surfaces.get(&this).unwrap().borrow_mut();
@@ -811,6 +813,7 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn GetPalette(ctx: &mut Context, this: u32, lplpDDPalette: u32) -> DD {
+        log::info!("GetPalette({this:#x}) from {:#x}", ctx.cpu.regs.eip_context);
         if lplpDDPalette == 0 {
             return DD::ERR_GENERIC;
         }
@@ -837,6 +840,7 @@ pub mod IDirectDrawSurface {
             .borrow()
             .bytes_per_pixel
             * 8;
+        log::info!("GetPixelFormat({this:#x}) bpp={bpp} from {:#x}", ctx.cpu.regs.eip_context);
         ctx.memory.write(lpDDPixelFormat, get_pixel_format(bpp));
         DD::OK
     }
