@@ -368,17 +368,21 @@ pub struct Palette {
 /// The pixel format of a surface or display mode with the given depth.
 pub fn get_pixel_format(bpp: u32) -> DDPIXELFORMAT {
     // DDPF_RGB = 0x40, DDPF_PALETTEINDEXED8 = 0x20.
-    let (flags, r, g, b, a) = match bpp {
-        8 => (0x40 | 0x20, 0, 0, 0, 0),
-        16 => (0x40, 0xF800, 0x07E0, 0x001F, 0), // 5-6-5, see Surface::to_rgba
-        24 => (0x40, 0xFF0000, 0x00FF00, 0x0000FF, 0),
+    let (flags, r, g, b, a, fourcc) = match bpp {
+        // 8bpp is palette-indexed; the masks are zero because the color comes
+        // from the palette.  Return non-zero masks anyway: some callers feed
+        // them to _BitScanForward, which loops forever on a zero mask.
+        // Likewise dwFourCC is the D3DFMT_* code, which callers also bit-scan.
+        8 => (0x40 | 0x20, 0xE0, 0x1C, 0x03, 0, 0x29), // D3DFMT_P8
+        16 => (0x40, 0xF800, 0x07E0, 0x001F, 0, 0x17), // D3DFMT_R5G6B5, see Surface::to_rgba
+        24 => (0x40, 0xFF0000, 0x00FF00, 0x0000FF, 0, 0x14), // D3DFMT_R8G8B8
         // 32: the byte order the surface code and host expect.
-        _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000),
+        _ => (0x40, 0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000, 0x16), // D3DFMT_X8R8G8B8
     };
     DDPIXELFORMAT {
         dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
         dwFlags: flags,
-        dwFourCC: 0,
+        dwFourCC: fourcc,
         dwRGBBitCount: bpp,
         dwRBitMask: r,
         dwGBitMask: g,
