@@ -58,6 +58,7 @@ pub fn timeSetEvent(
         callback: lpTimeProc,
         user_data: dwUser,
     });
+    log::info!("timeSetEvent({uDelay}ms, cb={lpTimeProc:#x}, user={dwUser:#x})");
     state.timer_thread = Some(kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
         winmm_main(ctx);
     }));

@@ -76,6 +76,7 @@ fn winmm_main(ctx: &mut Context) {
         timer.next = now + period;
         drop(lock);
 
+        log::info!("winmm_main: firing timer callback {callback:#x}");
         // LPTIMECALLBACK
         let func = ctx.indirect(callback);
         ctx.call32_x86(func, vec![1, 0, user_data, 0, 0]);
