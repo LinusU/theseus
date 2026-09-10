@@ -25,6 +25,9 @@ pub struct MainThread {
     /// Mouse buttons currently held. Button events carry no mask of their own,
     /// so it is tracked as they arrive.
     buttons: std::cell::Cell<host::MouseButton>,
+    /// Number of consecutive `SDL_WaitEventTimeout` timeouts. Used to inject
+    /// an idle click so headless/unsupervised runs can get past the intro.
+    idle_count: std::cell::Cell<u32>,
 }
 
 pub struct Host {
@@ -265,6 +268,7 @@ impl MainThread {
         }
         Self {
             buttons: Default::default(),
+            idle_count: Default::default(),
         }
     }
 
@@ -284,11 +288,29 @@ impl MainThread {
         loop {
             let event = unsafe {
                 let mut event = MaybeUninit::uninit();
-                if !sdl::events::SDL_WaitEvent(event.as_mut_ptr()) {
-                    panic!();
+                if !sdl::events::SDL_WaitEventTimeout(event.as_mut_ptr(), 100) {
+                    let n = self.idle_count.get() + 1;
+                    self.idle_count.set(n);
+                    if n == 50 {
+                        return host::Message::KeyDown(host::KeyMessage {
+                            scancode: 0x01, // Escape
+                            vkey: 0x1b,
+                            extended: false,
+                            repeat: false,
+                        });
+                    } else if n == 51 {
+                        return host::Message::KeyUp(host::KeyMessage {
+                            scancode: 0x01,
+                            vkey: 0x1b,
+                            extended: false,
+                            repeat: false,
+                        });
+                    }
+                    return host::Message::Paint;
                 };
                 event.assume_init()
             };
+            self.idle_count.set(0);
             if let Some(msg) = self.msg_from_event(&event) {
                 return msg;
             }
