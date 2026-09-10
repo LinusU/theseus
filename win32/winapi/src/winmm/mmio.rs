@@ -143,8 +143,10 @@ pub fn mciSendCommandA(
     _dwParam1: u32,
     _dwParam2: u32,
 ) -> u32 {
-    // CD audio etc.; pretend success and play nothing.
-    crate::stub!(0)
+    // Returning an error makes the game treat the MCI device as done and
+    // advance the intro; pretending success without filling the status struct
+    // makes it wait forever.
+    crate::stub!(1)
 }
 
 #[win32_derive::dllexport]
