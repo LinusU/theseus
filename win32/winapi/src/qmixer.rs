@@ -33,8 +33,16 @@ pub fn QSWaveMixFreeWave(_ctx: &mut Context, _hSession: u32, _hWave: u32) -> u32
 }
 
 #[win32_derive::dllexport]
-pub fn QSWaveMixPlayEx(_ctx: &mut Context, _hSession: u32, _hChannel: u32, _hWave: u32, _start: u32, _length: u32, _flags: u32) -> u32 {
-    0
+pub fn QSWaveMixPlayEx(
+    _ctx: &mut Context,
+    _hSession: u32,
+    _iChannel: u32,
+    _flags: u32,
+    _hWave: u32,
+    _loops: u32,
+    _params: u32,
+) -> u32 {
+    1
 }
 
 #[win32_derive::dllexport]
