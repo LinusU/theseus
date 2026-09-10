@@ -178,7 +178,7 @@ pub fn waveOutOpen(
     match callback {
         CALLBACK::NULL => {}
         CALLBACK::FUNCTION => {
-            kernel32::lock().create_thread(ctx, format!("winmm thread"), move |ctx| {
+            let _thread = kernel32::lock().create_thread(ctx, format!("winmm thread"), move |ctx| {
                 thread_proc(ctx, stream, receiver, dwCallback, dwInstance)
             });
         }

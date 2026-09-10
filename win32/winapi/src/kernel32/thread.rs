@@ -61,7 +61,7 @@ impl kernel32::State {
         ctx: &mut Context,
         name: String,
         proc: impl FnOnce(&mut Context) + Send + 'static,
-    ) {
+    ) -> std::thread::JoinHandle<()> {
         let handle = self.objects.add(Object::Thread);
         let mut new_ctx = Context {
             cpu: runtime::CPU::default(),
@@ -78,7 +78,7 @@ impl kernel32::State {
         std::thread::Builder::new()
             .name(name)
             .spawn(move || proc(&mut new_ctx))
-            .unwrap();
+            .unwrap()
     }
 
     // shared between the process initial thread and create_thread
@@ -115,7 +115,7 @@ pub fn CreateThread(
     let mut lock = kernel32::lock();
     let id = lock.next_thread_id;
     let name = format!("thread {}@{:x}", id, lpStartAddress.addr);
-    lock.create_thread(ctx, name, move |ctx| {
+    let _thread = lock.create_thread(ctx, name, move |ctx| {
         let f = ctx.indirect(lpStartAddress.addr);
         ctx.call32_x86(f, vec![lpParameter.addr]);
     });

@@ -2,7 +2,7 @@ use runtime::Context;
 
 use crate::{
     kernel32, stub,
-    winmm::{state, winmm_main},
+    winmm::{state, winmm_main, TIMER_COND},
 };
 
 pub struct Timer {
@@ -58,14 +58,23 @@ pub fn timeSetEvent(
         callback: lpTimeProc,
         user_data: dwUser,
     });
-    kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
+    state.timer_thread = Some(kernel32::lock().create_thread(ctx, "winmm".into(), |ctx| {
         winmm_main(ctx);
-    });
+    }));
+    TIMER_COND.notify_all();
 
     stub!(1)
 }
 
 #[win32_derive::dllexport]
 pub fn timeKillEvent(_ctx: &mut Context, _uTimerID: u32) -> u32 {
-    todo!()
+    let mut state = state();
+    if state.timer.take().is_none() {
+        return 0;
+    }
+    TIMER_COND.notify_all();
+    if let Some(thread) = state.timer_thread.take() {
+        let _ = thread.join();
+    }
+    1
 }
