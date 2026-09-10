@@ -4411,7 +4411,7 @@ pub fn x4061f6(ctx: &mut Context) -> Cont {
     // 0040621f fldz
     ctx.cpu.fpu.push(0.0);
     // 00406221 fcomp dword ptr [eax+8]
-    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(
+    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).partial_cmp(
         &(ctx
             .memory
             .read::<f32>(ctx.cpu.regs.eax.wrapping_add(0x8u32)) as f64),
@@ -4438,7 +4438,7 @@ pub fn x406229(ctx: &mut Context) -> Cont {
     // 0040622f fldz
     ctx.cpu.fpu.push(0.0);
     // 00406231 fcomp dword ptr [eax+8]
-    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(
+    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).partial_cmp(
         &(ctx
             .memory
             .read::<f32>(ctx.cpu.regs.eax.wrapping_add(0x8u32)) as f64),
@@ -4463,7 +4463,7 @@ pub fn x406239(ctx: &mut Context) -> Cont {
     // 0040623d fldz
     ctx.cpu.fpu.push(0.0);
     // 0040623f fcomp dword ptr [edi+eax+8]
-    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).total_cmp(
+    ctx.cpu.fpu.cmp = ctx.cpu.fpu.get(0).partial_cmp(
         &(ctx.memory.read::<f32>(
             ctx.cpu
                 .regs
@@ -10332,7 +10332,7 @@ pub fn x407be7(ctx: &mut Context) -> Cont {
         .cpu
         .fpu
         .get(0)
-        .total_cmp(&(ctx.memory.read::<f32>(0x40c628u32) as f64));
+        .partial_cmp(&(ctx.memory.read::<f32>(0x40c628u32) as f64));
     ctx.cpu.fpu.pop();
     // 00407c1f fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
@@ -10439,7 +10439,7 @@ pub fn x407c2e(ctx: &mut Context) -> Cont {
         .cpu
         .fpu
         .get(0)
-        .total_cmp(&(ctx.memory.read::<f32>(0x40c640u32) as f64));
+        .partial_cmp(&(ctx.memory.read::<f32>(0x40c640u32) as f64));
     ctx.cpu.fpu.pop();
     // 00407c8a fnstsw ax
     ctx.cpu.regs.set_ax(ctx.cpu.fpu.status());
