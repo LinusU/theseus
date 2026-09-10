@@ -81,8 +81,8 @@ pub mod IDirectDraw2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn CreateClipper(ctx: &mut Context, this: u32) -> DD {
-        IDirectDraw::CreateClipper(ctx, this)
+    pub fn CreateClipper(ctx: &mut Context, this: u32, dwFlags: u32, lplpDDClipper: u32, pUnkOuter: u32) -> DD {
+        IDirectDraw::CreateClipper(ctx, this, dwFlags, lplpDDClipper, pUnkOuter)
     }
 
     #[win32_derive::dllexport]
@@ -109,8 +109,8 @@ pub mod IDirectDraw2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn DuplicateSurface(ctx: &mut Context, this: u32) -> DD {
-        IDirectDraw::DuplicateSurface(ctx, this)
+    pub fn DuplicateSurface(ctx: &mut Context, this: u32, lpDDSurface: u32, lplpDDDuplicateSurface: u32) -> DD {
+        IDirectDraw::DuplicateSurface(ctx, this, lpDDSurface, lplpDDDuplicateSurface)
     }
 
     #[win32_derive::dllexport]
@@ -126,8 +126,15 @@ pub mod IDirectDraw2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumSurfaces(ctx: &mut Context, this: u32) -> DD {
-        IDirectDraw::EnumSurfaces(ctx, this)
+    pub fn EnumSurfaces(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpDDSD2: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
+    ) -> DD {
+        IDirectDraw::EnumSurfaces(ctx, this, dwFlags, lpDDSD2, lpContext, lpEnumCallback)
     }
 
     #[win32_derive::dllexport]
@@ -146,8 +153,8 @@ pub mod IDirectDraw2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFourCCCodes(ctx: &mut Context, this: u32) -> DD {
-        IDirectDraw::GetFourCCCodes(ctx, this)
+    pub fn GetFourCCCodes(ctx: &mut Context, this: u32, lpNumCodes: u32, lpCodes: u32) -> DD {
+        IDirectDraw::GetFourCCCodes(ctx, this, lpNumCodes, lpCodes)
     }
 
     #[win32_derive::dllexport]
@@ -296,13 +303,13 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddAttachedSurface(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::AddAttachedSurface(ctx, this)
+    pub fn AddAttachedSurface(ctx: &mut Context, this: u32, lpDDSAttached: u32) -> DD {
+        IDirectDrawSurface::AddAttachedSurface(ctx, this, lpDDSAttached)
     }
 
     #[win32_derive::dllexport]
-    pub fn AddOverlayDirtyRect(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::AddOverlayDirtyRect(ctx, this)
+    pub fn AddOverlayDirtyRect(ctx: &mut Context, this: u32, lpRect: u32) -> DD {
+        IDirectDrawSurface::AddOverlayDirtyRect(ctx, this, lpRect)
     }
 
     #[win32_derive::dllexport]
@@ -327,8 +334,14 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn BltBatch(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::BltBatch(ctx, this)
+    pub fn BltBatch(
+        ctx: &mut Context,
+        this: u32,
+        lpDDBltBatch: u32,
+        dwCount: u32,
+        dwFlags: u32,
+    ) -> DD {
+        IDirectDrawSurface::BltBatch(ctx, this, lpDDBltBatch, dwCount, dwFlags)
     }
 
     #[win32_derive::dllexport]
@@ -345,18 +358,34 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn DeleteAttachedSurface(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::DeleteAttachedSurface(ctx, this)
+    pub fn DeleteAttachedSurface(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpDDSAttached: u32,
+    ) -> DD {
+        IDirectDrawSurface::DeleteAttachedSurface(ctx, this, dwFlags, lpDDSAttached)
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumAttachedSurfaces(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::EnumAttachedSurfaces(ctx, this)
+    pub fn EnumAttachedSurfaces(
+        ctx: &mut Context,
+        this: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
+    ) -> DD {
+        IDirectDrawSurface::EnumAttachedSurfaces(ctx, this, lpContext, lpEnumCallback)
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumOverlayZOrders(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::EnumOverlayZOrders(ctx, this)
+    pub fn EnumOverlayZOrders(
+        ctx: &mut Context,
+        this: u32,
+        dwFlags: u32,
+        lpContext: u32,
+        lpfnCallback: u32,
+    ) -> DD {
+        IDirectDrawSurface::EnumOverlayZOrders(ctx, this, dwFlags, lpContext, lpfnCallback)
     }
 
     #[win32_derive::dllexport]
@@ -385,8 +414,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetClipper(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetClipper(ctx, this)
+    pub fn GetClipper(ctx: &mut Context, this: u32, lplpDDClipper: u32) -> DD {
+        IDirectDrawSurface::GetClipper(ctx, this, lplpDDClipper)
     }
 
     #[win32_derive::dllexport]
@@ -400,8 +429,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDC(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetDC(ctx, this)
+    pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
+        IDirectDrawSurface::GetDC(ctx, this, lphDC)
     }
 
     #[win32_derive::dllexport]
@@ -410,8 +439,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetOverlayPosition(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::GetOverlayPosition(ctx, this)
+    pub fn GetOverlayPosition(ctx: &mut Context, this: u32, lplX: u32, lplY: u32) -> DD {
+        IDirectDrawSurface::GetOverlayPosition(ctx, this, lplX, lplY)
     }
 
     #[win32_derive::dllexport]
@@ -458,8 +487,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn ReleaseDC(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::ReleaseDC(ctx, this)
+    pub fn ReleaseDC(ctx: &mut Context, this: u32, hDC: u32) -> DD {
+        IDirectDrawSurface::ReleaseDC(ctx, this, hDC)
     }
 
     #[win32_derive::dllexport]
@@ -468,13 +497,13 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::SetClipper(ctx, this)
+    pub fn SetClipper(ctx: &mut Context, this: u32, lpDDClipper: u32) -> DD {
+        IDirectDrawSurface::SetClipper(ctx, this, lpDDClipper)
     }
 
     #[win32_derive::dllexport]
-    pub fn SetOverlayPosition(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::SetOverlayPosition(ctx, this)
+    pub fn SetOverlayPosition(ctx: &mut Context, this: u32, lX: u32, lY: u32) -> DD {
+        IDirectDrawSurface::SetOverlayPosition(ctx, this, lX, lY)
     }
 
     #[win32_derive::dllexport]
@@ -488,18 +517,26 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlay(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::UpdateOverlay(ctx, this)
+    pub fn UpdateOverlay(
+        ctx: &mut Context,
+        this: u32,
+        lpDestRect: u32,
+        lpDDOverlay: u32,
+        lpSrcRect: u32,
+        dwFlags: u32,
+        lpDDOverlayFx: u32,
+    ) -> DD {
+        IDirectDrawSurface::UpdateOverlay(ctx, this, lpDestRect, lpDDOverlay, lpSrcRect, dwFlags, lpDDOverlayFx)
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayDisplay(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::UpdateOverlayDisplay(ctx, this)
+    pub fn UpdateOverlayDisplay(ctx: &mut Context, this: u32, dwFlags: u32) -> DD {
+        IDirectDrawSurface::UpdateOverlayDisplay(ctx, this, dwFlags)
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayZOrder(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::UpdateOverlayZOrder(ctx, this)
+    pub fn UpdateOverlayZOrder(ctx: &mut Context, this: u32, dwFlags: u32, lpDDSReference: u32) -> DD {
+        IDirectDrawSurface::UpdateOverlayZOrder(ctx, this, dwFlags, lpDDSReference)
     }
 
     #[win32_derive::dllexport]

@@ -6,11 +6,12 @@ use zerocopy::{FromBytes, IntoBytes};
 use crate::{
     RECT,
     ddraw::{
-        ColorKey, DD, GUID, Palette,
+        ColorKey, DD, GUID, Palette, Target,
         ddraw::{blit_copy, read_rect, surface_src_color_key},
         ddraw2, get_pixel_format, state,
         types::*,
     },
+    gdi32,
     heap::Heap,
     kernel32, stub,
     user32::HWND,
@@ -160,8 +161,10 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn CreateClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn CreateClipper(ctx: &mut Context, _this: u32, _dwFlags: u32, lplpDDClipper: u32, _pUnkOuter: u32) -> DD {
+        // TODO: create an IDirectDrawClipper object.
+        ctx.memory.write::<u32>(lplpDDClipper, 0);
+        DD::E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
@@ -216,8 +219,8 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn DuplicateSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn DuplicateSurface(_ctx: &mut Context, _this: u32, _lpDDSurface: u32, _lplpDDDuplicateSurface: u32) -> DD {
+        DD::ERR_GENERIC
     }
 
     #[win32_derive::dllexport]
@@ -264,8 +267,88 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumSurfaces(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumSurfaces(
+        ctx: &mut Context,
+        _this: u32,
+        _dwFlags: u32,
+        _lpDDSD2: u32,
+        lpContext: u32,
+        lpEnumCallback: u32,
+    ) -> DD {
+        if lpEnumCallback == 0 {
+            return DD::OK;
+        }
+
+        let surfaces: Vec<u32> = {
+            let state = state();
+            state.surf.borrow().values().map(|s| s.borrow().addr).collect()
+        };
+
+        for addr in surfaces {
+            let size = std::mem::size_of::<DDSURFACEDESC>() as u32;
+            let desc_addr = kernel32::lock().process_heap.alloc(&mut ctx.memory, size);
+            let mut desc = DDSURFACEDESC {
+                dwSize: size,
+                dwFlags: DDSD::CAPS | DDSD::HEIGHT | DDSD::WIDTH | DDSD::PIXELFORMAT,
+                dwHeight: 0,
+                dwWidth: 0,
+                lPitch_dwLinearSize: 0,
+                dwBackBufferCount: 0,
+                dwMipMapCount_dwZBufferBitDepth_dwRefreshRate: 0,
+                dwAlphaBitDepth: 0,
+                dwReserved: 0,
+                lpSurface: 0,
+                ddckCKDestOverlay: Default::default(),
+                ddckCKDestBlt: Default::default(),
+                ddckCKSrcOverlay: Default::default(),
+                ddckCKSrcBlt: Default::default(),
+                ddpfPixelFormat: Default::default(),
+                ddsCaps: Default::default(),
+            };
+
+            let (width, height, bps, caps) = {
+                let state = state();
+                let surf_map = state.surf.borrow();
+                let surf = surf_map.get(&addr).unwrap().borrow();
+                let mut caps = DDSCAPS::empty();
+                if matches!(surf.target, Target::Window(_)) {
+                    caps |= DDSCAPS::PRIMARYSURFACE;
+                } else {
+                    caps |= DDSCAPS::OFFSCREENPLAIN;
+                }
+                (surf.width, surf.height, surf.bytes_per_pixel, caps)
+            };
+
+            desc.dwWidth = width;
+            desc.dwHeight = height;
+            desc.lPitch_dwLinearSize = width * bps;
+            desc.ddsCaps = caps;
+            desc.ddpfPixelFormat = DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: 0,
+                dwFourCC: 0,
+                dwRGBBitCount: bps * 8,
+                dwRBitMask: 0,
+                dwGBitMask: 0,
+                dwBBitMask: 0,
+                dwRGBAlphaBitMask: 0,
+            };
+
+            ctx.memory.write(desc_addr, desc);
+
+            let callback = ctx.indirect(lpEnumCallback);
+            ctx.call32_x86(callback, vec![addr, desc_addr, lpContext]);
+            let ret = ctx.cpu.regs.eax;
+
+            kernel32::lock().process_heap.free(&mut ctx.memory, desc_addr);
+
+            // DDENUMRET_CANCEL (0) means stop.
+            if ret == 0 {
+                return DD::OK;
+            }
+        }
+
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -304,13 +387,26 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetFourCCCodes(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetFourCCCodes(ctx: &mut Context, _this: u32, lpNumCodes: u32, _lpCodes: u32) -> DD {
+        // Report no FourCC codes.
+        ctx.memory.write::<u32>(lpNumCodes, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetGDISurface(_ctx: &mut Context, _this: u32, _lplpGDIDDSSurface: u32) -> DD {
-        todo!()
+    pub fn GetGDISurface(ctx: &mut Context, _this: u32, lplpGDIDDSSurface: u32) -> DD {
+        // Find the primary surface (the one attached to the window).
+        let primary = {
+            let state = state();
+            state
+                .surf
+                .borrow()
+                .values()
+                .find(|s| matches!(s.borrow().target, Target::Window(_)))
+                .map(|s| s.borrow().addr)
+        };
+        ctx.memory.write::<u32>(lplpGDIDDSSurface, primary.unwrap_or(0));
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -496,13 +592,13 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn AddAttachedSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn AddAttachedSurface(_ctx: &mut Context, _this: u32, _lpDDSAttached: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn AddOverlayDirtyRect(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn AddOverlayDirtyRect(_ctx: &mut Context, _this: u32, _lpRect: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -527,8 +623,14 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn BltBatch(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn BltBatch(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDDBltBatch: u32,
+        _dwCount: u32,
+        _dwFlags: u32,
+    ) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -545,18 +647,77 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn DeleteAttachedSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn DeleteAttachedSurface(_ctx: &mut Context, _this: u32, _dwFlags: u32, _lpDDSAttached: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumAttachedSurfaces(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumAttachedSurfaces(ctx: &mut Context, this: u32, lpContext: u32, lpEnumCallback: u32) -> DD {
+        if lpEnumCallback == 0 {
+            return DD::OK;
+        }
+        let Some(attached) = ({
+            let state = state();
+            let surf = state.surf.borrow();
+            let surf = surf.get(&this).unwrap().borrow();
+            surf.attached.as_ref().map(|s| s.borrow().addr)
+        }) else {
+            return DD::OK;
+        };
+
+        let size = std::mem::size_of::<DDSURFACEDESC>() as u32;
+        let desc_addr = kernel32::lock().process_heap.alloc(&mut ctx.memory, size);
+        let mut desc = DDSURFACEDESC {
+            dwSize: size,
+            dwFlags: DDSD::CAPS | DDSD::HEIGHT | DDSD::WIDTH | DDSD::PIXELFORMAT,
+            dwHeight: 0,
+            dwWidth: 0,
+            lPitch_dwLinearSize: 0,
+            dwBackBufferCount: 0,
+            dwMipMapCount_dwZBufferBitDepth_dwRefreshRate: 0,
+            dwAlphaBitDepth: 0,
+            dwReserved: 0,
+            lpSurface: 0,
+            ddckCKDestOverlay: Default::default(),
+            ddckCKDestBlt: Default::default(),
+            ddckCKSrcOverlay: Default::default(),
+            ddckCKSrcBlt: Default::default(),
+            ddpfPixelFormat: Default::default(),
+            ddsCaps: Default::default(),
+        };
+
+        {
+            let state = state();
+            let surf_map = state.surf.borrow();
+            let surf = surf_map.get(&attached).unwrap().borrow();
+            desc.dwWidth = surf.width;
+            desc.dwHeight = surf.height;
+            desc.lPitch_dwLinearSize = surf.width * surf.bytes_per_pixel;
+            desc.ddsCaps = DDSCAPS::BACKBUFFER;
+            desc.ddpfPixelFormat = DDPIXELFORMAT {
+                dwSize: std::mem::size_of::<DDPIXELFORMAT>() as u32,
+                dwFlags: 0,
+                dwFourCC: 0,
+                dwRGBBitCount: surf.bytes_per_pixel * 8,
+                dwRBitMask: 0,
+                dwGBitMask: 0,
+                dwBBitMask: 0,
+                dwRGBAlphaBitMask: 0,
+            };
+        }
+
+        ctx.memory.write(desc_addr, desc);
+        let callback = ctx.indirect(lpEnumCallback);
+        ctx.call32_x86(callback, vec![attached, desc_addr, lpContext]);
+        let ret = ctx.cpu.regs.eax;
+        kernel32::lock().process_heap.free(&mut ctx.memory, desc_addr);
+        let _ = ret;
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumOverlayZOrders(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn EnumOverlayZOrders(_ctx: &mut Context, _this: u32, _dwFlags: u32, _lpContext: u32, _lpfnCallback: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -606,8 +767,10 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetClipper(ctx: &mut Context, _this: u32, lplpDDClipper: u32) -> DD {
+        // No clipper is currently attached; leave the output pointer as-is.
+        ctx.memory.write::<u32>(lplpDDClipper, 0);
+        DD::E_NOINTERFACE
     }
 
     #[win32_derive::dllexport]
@@ -621,8 +784,17 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetDC(ctx: &mut Context, this: u32, lphDC: u32) -> DD {
+        let surfaces = state().surf.borrow_mut();
+        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        let pixels = surface.lock(&mut ctx.memory);
+        let dc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(
+            surface.width,
+            surface.height,
+            pixels,
+        ));
+        ctx.memory.write(lphDC, dc.to_raw());
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -631,8 +803,10 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetOverlayPosition(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn GetOverlayPosition(ctx: &mut Context, _this: u32, lplX: u32, lplY: u32) -> DD {
+        ctx.memory.write::<u32>(lplX, 0);
+        ctx.memory.write::<u32>(lplY, 0);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -730,8 +904,12 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn ReleaseDC(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn ReleaseDC(ctx: &mut Context, this: u32, hDC: u32) -> DD {
+        let surfaces = state().surf.borrow_mut();
+        let mut surface = surfaces.get(&this).unwrap().borrow_mut();
+        gdi32::lock().release_dc(crate::HANDLE::from_raw(hDC));
+        surface.unlock(&mut ctx.memory);
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -740,13 +918,13 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetClipper(_ctx: &mut Context, _this: u32, _lpDDClipper: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn SetOverlayPosition(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetOverlayPosition(_ctx: &mut Context, _this: u32, _lX: u32, _lY: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
@@ -771,18 +949,26 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlay(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlay(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDestRect: u32,
+        _lpDDOverlay: u32,
+        _lpSrcRect: u32,
+        _dwFlags: u32,
+        _lpDDOverlayFx: u32,
+    ) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayDisplay(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlayDisplay(_ctx: &mut Context, _this: u32, _dwFlags: u32) -> DD {
+        DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn UpdateOverlayZOrder(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn UpdateOverlayZOrder(_ctx: &mut Context, _this: u32, _dwFlags: u32, _lpDDSReference: u32) -> DD {
+        DD::OK
     }
 
     pub static mut VTABLE: u32 = 0;
