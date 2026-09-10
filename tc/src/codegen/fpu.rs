@@ -194,7 +194,7 @@ impl<'a> CodeGen<'a> {
                     _ => unreachable!(),
                 };
                 self.line(format!(
-                    "ctx.cpu.fpu.cmp = {}.total_cmp(&({}));",
+                    "ctx.cpu.fpu.cmp = {}.partial_cmp(&({}));",
                     arg0, arg1
                 ));
                 if instr.mnemonic() == Fcomp {

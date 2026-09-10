@@ -16,8 +16,9 @@ pub struct FPU {
     pub st: [f64; 8],
     /// Index of top of FPU stack; 8 when stack empty.
     pub st_top: usize,
-    /// The result of the last fcmp, used to generate status word.
-    pub cmp: std::cmp::Ordering,
+    /// The result of the last fcom, used to generate the status word.
+    /// None is unordered: one of the operands was a NaN.
+    pub cmp: Option<std::cmp::Ordering>,
     /// Control word, as managed by fldcw/fnstcw. We only round-trip the value;
     /// precision/rounding control bits are not honored.
     pub control: u16,
@@ -28,7 +29,7 @@ impl Default for FPU {
         Self {
             st: [0.; 8],
             st_top: 8,
-            cmp: std::cmp::Ordering::Equal,
+            cmp: Some(std::cmp::Ordering::Equal),
             control: 0x037f,
         }
     }
@@ -93,9 +94,12 @@ impl FPU {
 
     pub fn status(&self) -> u16 {
         let status = match self.cmp {
-            std::cmp::Ordering::Less => Status::C0,
-            std::cmp::Ordering::Equal => Status::C3,
-            std::cmp::Ordering::Greater => Status::empty(),
+            Some(std::cmp::Ordering::Less) => Status::C0,
+            Some(std::cmp::Ordering::Equal) => Status::C3,
+            Some(std::cmp::Ordering::Greater) => Status::empty(),
+            // Unordered sets all three. After fnstsw/sahf, C2 lands in PF,
+            // which is what the jp following a float compare tests for.
+            None => Status::C0 | Status::C2 | Status::C3,
         };
         // Our status register impl doesn't include st_top so include it here.
         let mut status = status.bits();
@@ -107,5 +111,43 @@ impl FPU {
         // TODO: rounding modes?
         // This implements default rounding mode of round towards even.
         val.round_ties_even()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Flags;
+
+    fn condition_codes(fpu: &FPU) -> u16 {
+        fpu.status() & Status::all().bits()
+    }
+
+    #[test]
+    fn compare_condition_codes() {
+        let mut fpu = FPU::default();
+        fpu.cmp = 1.0f64.partial_cmp(&2.0);
+        assert_eq!(condition_codes(&fpu), Status::C0.bits());
+        fpu.cmp = 2.0f64.partial_cmp(&2.0);
+        assert_eq!(condition_codes(&fpu), Status::C3.bits());
+        fpu.cmp = 2.0f64.partial_cmp(&1.0);
+        assert_eq!(condition_codes(&fpu), 0);
+        fpu.cmp = f64::NAN.partial_cmp(&1.0);
+        assert_eq!(
+            condition_codes(&fpu),
+            (Status::C0 | Status::C2 | Status::C3).bits()
+        );
+    }
+
+    #[test]
+    fn unordered_reaches_parity_flag() {
+        // fnstsw ax; sahf copies the high byte of the status word into flags.
+        let mut fpu = FPU::default();
+        fpu.cmp = 1.0f64.partial_cmp(&1.0);
+        let ah = (fpu.status() >> 8) as u32;
+        assert!(!Flags::from_bits_retain(ah).contains(Flags::PF));
+        fpu.cmp = f64::NAN.partial_cmp(&1.0);
+        let ah = (fpu.status() >> 8) as u32;
+        assert!(Flags::from_bits_retain(ah).contains(Flags::PF));
     }
 }
