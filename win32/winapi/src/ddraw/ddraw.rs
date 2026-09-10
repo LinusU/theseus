@@ -235,7 +235,7 @@ impl Surface {
     /// `palette` for palettized formats. Borrows the pixels directly when they
     /// are already RGBA. Returns None when there is nothing to show, e.g. an
     /// 8-bit surface with no palette attached yet.
-    fn to_rgba<'a>(
+    pub fn to_rgba<'a>(
         &self,
         mem: &'a Memory,
         palette: &Option<Rc<RefCell<Palette>>>,
@@ -343,6 +343,21 @@ impl Surface {
 
         let mut window = window.borrow_mut();
         window.host.render(texture);
+
+        if std::env::var_os("THESEUS_DUMP_FRAMES").is_some() {
+            if let Some(pixels) = back.to_rgba(mem, &self.palette) {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n < 100 {
+                    let mut out = Vec::with_capacity(18 + pixels.len() / 4 * 3);
+                    out.extend_from_slice(format!("P6\n{} {}\n255\n", self.width, self.height).as_bytes());
+                    for px in pixels.chunks_exact(4) {
+                        out.extend_from_slice(&px[..3]);
+                    }
+                    let _ = std::fs::write(format!("frame_{n}.ppm"), out);
+                }
+            }
+        }
     }
 }
 
