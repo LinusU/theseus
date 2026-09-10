@@ -267,7 +267,10 @@ pub mod IDirectDrawSurface2 {
         "GetDC",
         "GetFlipStatus",
         "GetOverlayPosition",
-        "GetPalette",
+        // IDirectDrawSurface2 callers that use the IDirectDrawSurface v1
+        // offsets expect GetPixelFormat at 0x54.  Put it there too, and keep
+        // the v2 0x58 slot.  GetPalette is unused by poptb.
+        "GetPixelFormat",
         "GetPixelFormat",
         "GetSurfaceDesc",
         "Initialize",
