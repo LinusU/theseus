@@ -63,8 +63,10 @@ pub fn StartupNetwork(ctx: &mut Context) -> Cont {
 }
 
 pub fn AreWeLobbied(ctx: &mut Context) -> Cont {
-    // Return 0 (not lobbied); the game then calls EnumerateServices.
-    thiscall_return_with_value(ctx, 8, 0)
+    // Return 0x20 to tell the game it was launched from a lobby, which
+    // causes it to tear down the network object and skip further network
+    // setup that otherwise blocks on unimplemented MLDPlay behavior.
+    thiscall_return_with_value(ctx, 8, 0x20)
 }
 
 pub fn EnumerateServices(ctx: &mut Context) -> Cont {
