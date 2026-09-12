@@ -110,8 +110,7 @@ pub fn GetModuleFileNameA(
 #[win32_derive::dllexport]
 pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
     let kernel32 = lock();
-    let Some(name) =
-        (lpModuleName.addr != 0).then(|| ctx.memory.read_str(lpModuleName.addr).to_owned())
+    let Some(name) = (lpModuleName.addr != 0).then(|| ctx.memory.read_str(lpModuleName.addr))
     else {
         // A null name asks for the running executable itself.
         return kernel32.image_base;
@@ -127,7 +126,7 @@ pub fn GetModuleHandleA(ctx: &mut Context, lpModuleName: Ptr<u8>) -> HMODULE {
 
 #[win32_derive::dllexport]
 pub fn LoadLibraryA(ctx: &mut Context, lpLibFileName: Ptr<u8>) -> HMODULE {
-    let filename = ctx.memory.read_str(lpLibFileName.addr).to_owned();
+    let filename = ctx.memory.read_str(lpLibFileName.addr);
     let addr = lock().dlls.load_library(&filename);
     if addr == 0 {
         log::warn!("LoadLibrary({filename}): not supported, returning null");
@@ -147,7 +146,7 @@ pub fn GetProcAddress(ctx: &mut Context, hModule: HMODULE, lpProcName: Ptr<u8>) 
     let name = if lpProcName.addr < 0x1000 {
         format!("ordinal{}", lpProcName.addr)
     } else {
-        ctx.memory.read_str(lpProcName.addr).to_owned()
+        ctx.memory.read_str(lpProcName.addr)
     };
     let addr = lock().dlls.get_proc_address(hModule, &name);
     if addr == 0 {
