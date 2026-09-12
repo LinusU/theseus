@@ -12,6 +12,22 @@ impl Context {
             .write::<u16>(segofs(self.cpu.regs.ss, self.cpu.regs.get_sp()), x);
     }
 
+    /// cpuid, describing a plain Pentium: an FPU and nothing else (no TSC, no
+    /// MMX), so programs take the paths this runtime implements.
+    pub fn cpuid(&mut self) {
+        let (eax, ebx, ecx, edx) = match self.cpu.regs.eax {
+            // Highest leaf, and "GenuineIntel" in ebx:edx:ecx.
+            0 => (1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69),
+            // Family 5 model 4 stepping 3; feature flags: FPU.
+            1 => (0x543, 0, 0, 0x1),
+            _ => (0, 0, 0, 0),
+        };
+        self.cpu.regs.eax = eax;
+        self.cpu.regs.ebx = ebx;
+        self.cpu.regs.ecx = ecx;
+        self.cpu.regs.edx = edx;
+    }
+
     pub fn pop32(&mut self) -> u32 {
         let x = self.memory.read::<u32>(self.cpu.regs.esp);
         self.cpu.regs.esp += 4;
