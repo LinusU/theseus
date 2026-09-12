@@ -164,10 +164,10 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
     let esp = ctx.cpu.regs.esp;
     let dst = ctx.memory.read::<u32>(esp + 4);
     let fmt_addr = ctx.memory.read::<u32>(esp + 8);
-    let fmt = ctx.memory.read_str(fmt_addr).to_owned();
+    let fmt = ctx.memory.read_cstr(fmt_addr).to_vec();
     let mut arg_addr = esp + 12;
 
-    let bytes = fmt.as_bytes();
+    let bytes = fmt.as_slice();
     let mut out: Vec<u8> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
@@ -229,7 +229,7 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
             b'c' => vec![next_arg() as u8],
             b's' => {
                 let addr = next_arg();
-                ctx.memory.read_str(addr).as_bytes().to_vec()
+                ctx.memory.read_cstr(addr).to_vec()
             }
             _ => {
                 // Consume the arg anyway: skipping it would shift every

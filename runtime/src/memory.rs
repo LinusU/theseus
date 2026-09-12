@@ -62,12 +62,16 @@ impl<'a> Memory<'a> {
             .unwrap();
     }
 
-    pub fn read_str(&self, addr: u32) -> &str {
+    /// Read the bytes of a NUL-terminated string, without the terminator.
+    pub fn read_cstr(&self, addr: u32) -> &[u8] {
         self.check_access(addr);
         let buf = &self.bytes[addr as usize..];
         let nul = buf.iter().position(|&c| c == 0).unwrap();
-        let buf = &buf[..nul];
-        std::str::from_utf8(buf).unwrap()
+        &buf[..nul]
+    }
+
+    pub fn read_str(&self, addr: u32) -> &str {
+        std::str::from_utf8(self.read_cstr(addr)).unwrap()
     }
 
     /// This returns an allocated string rather than a reference due to alignment.

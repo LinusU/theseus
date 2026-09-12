@@ -80,7 +80,7 @@ pub fn GetStringTypeA(
         return false;
     }
     let len = if cchSrc < 0 {
-        ctx.memory.read_str(lpSrcStr.addr).len() + 1
+        ctx.memory.read_cstr(lpSrcStr.addr).len() + 1
     } else {
         cchSrc as usize
     };
@@ -147,7 +147,7 @@ pub fn LCMapStringA(
     cchDest: i32,
 ) -> i32 {
     let len = if cchSrc < 0 {
-        ctx.memory.read_str(lpSrcStr.addr).len() as u32 + 1
+        ctx.memory.read_cstr(lpSrcStr.addr).len() as u32 + 1
     } else {
         cchSrc as u32
     };
