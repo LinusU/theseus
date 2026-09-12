@@ -55,6 +55,10 @@ pub fn CoCreateInstance(
             log::debug!("CoCreateInstance(CLSID_DirectMusicSegment) = {ret:#x}");
             return ret;
         }
+        if let Some(ret) = dmusic::create_object(ctx, _riid, ppv.addr, clsid) {
+            log::debug!("CoCreateInstance({clsid:?}) = {ret:#x}");
+            return ret;
+        }
         log::debug!("CoCreateInstance: unregistered class {clsid:?}");
     }
 

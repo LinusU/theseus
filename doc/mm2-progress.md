@@ -534,3 +534,20 @@ Suspects worth a look when the backlog is otherwise blocked:
   LONDON CAB / CONTROLLER: KEYBOARD" in the panel. Next: #5 music —
   `aud/dmusic` content ships but no DirectMusic object is created in the
   first 25s; trace the in-race path.
+- 2026-09-12 DirectMusic Style/Band classes registered: What: in-race music
+  stalled before `PlaySegment`; the load loop creates `CLSID_DirectMusicStyle`
+  (d2ac288a) and `CLSID_DirectMusicBand` (79ba9e00) for `IID_IDirectMusicObject`
+  and both returned `REGDB_E_CLASSNOTREG`. The `6B0650&4` music-enable bit is
+  set during boot (0x57 once settings register), so the gate was the classes,
+  not the flag. Repro: `THESEUS_HEADLESS=1 THESEUS_INJECT_* RUST_LOG=warn,
+  winapi::dmusic=debug,winapi::ole32=debug ./target/fast/mm2 game` -> segments
+  stream-load then `style GetMotif`, `band CreateSegment`, `Download`, and
+  `PlaySegment seg=0x11d6b58`. Change: register the DirectMusic content classes
+  (Style/Band/ChordMap + the `d2ac28xx` track/segment-state family) as generic
+  objects reporting their own class via `GetDescriptor` and answering
+  `IPersistStream` + the matching class interface (`win32/winapi/src/dmusic.rs`,
+  `ole32.rs`); tests `content_objects_report_their_class`,
+  `unregistered_class_is_rejected`. Check: `check.sh: OK (fmt 2 files,
+  clippy+test winapi, build mm2, whitespace)`; 105s headless race reaches
+  PlaySegment, no `missing.txt`. Next: segments still empty (Load no-ops) and
+  no synth path, so no audible music; decide whether to parse `.sgt` tracks.
