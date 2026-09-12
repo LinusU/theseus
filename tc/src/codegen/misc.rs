@@ -93,7 +93,9 @@ impl<'a> CodeGen<'a> {
                     self.todo(format!("int {:#x}", instr.immediate8()));
                 }
             }
-            Int3 | Cmpxchg | Cpuid | Xgetbv | Div => self.todo(instr_name(instr)),
+            Int3 | Cmpxchg | Xgetbv | Div => self.todo(instr_name(instr)),
+
+            Cpuid => self.line("ctx.cpuid();"),
 
             Bt => {
                 // With a memory operand and a register index the hardware can
