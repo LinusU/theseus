@@ -18,14 +18,13 @@ const NORM_IGNORECASE: u32 = 1;
 pub fn lstrlenA(ctx: &mut Context, lpString: Ptr<u8>) -> i32 {
     // A null string faults on Windows too, so let the null page guard catch it
     // rather than inventing a length.
-    ctx.memory.read_str(lpString.addr).len() as i32
+    ctx.memory.read_cstr(lpString.addr).len() as i32
 }
 
 #[win32_derive::dllexport]
 pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
-    let bytes = src.as_bytes();
-    ctx.memory[lpString1.addr..][..bytes.len()].copy_from_slice(bytes);
+    let bytes = ctx.memory.read_cstr(lpString2.addr).to_vec();
+    ctx.memory[lpString1.addr..][..bytes.len()].copy_from_slice(&bytes);
     ctx.memory
         .write::<u8>(lpString1.addr + bytes.len() as u32, 0);
     lpString1.addr
@@ -33,10 +32,9 @@ pub fn lstrcpyA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
 
 #[win32_derive::dllexport]
 pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u32 {
-    let dst_len = ctx.memory.read_str(lpString1.addr).len() as u32;
-    let src = ctx.memory.read_str(lpString2.addr).to_owned();
-    let bytes = src.as_bytes();
-    ctx.memory[lpString1.addr + dst_len..][..bytes.len()].copy_from_slice(bytes);
+    let dst_len = ctx.memory.read_cstr(lpString1.addr).len() as u32;
+    let bytes = ctx.memory.read_cstr(lpString2.addr).to_vec();
+    ctx.memory[lpString1.addr + dst_len..][..bytes.len()].copy_from_slice(&bytes);
     ctx.memory
         .write::<u8>(lpString1.addr + dst_len + bytes.len() as u32, 0);
     lpString1.addr
@@ -44,7 +42,7 @@ pub fn lstrcatA(ctx: &mut Context, lpString1: Ptr<u8>, lpString2: Ptr<u8>) -> u3
 
 fn read_counted_a(ctx: &Context, addr: u32, count: i32) -> Vec<u8> {
     if count < 0 {
-        ctx.memory.read_str(addr).as_bytes().to_vec()
+        ctx.memory.read_cstr(addr).to_vec()
     } else {
         ctx.memory[addr..][..count as usize].to_vec()
     }
