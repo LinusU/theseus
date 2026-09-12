@@ -93,7 +93,27 @@ impl<'a> CodeGen<'a> {
                     self.todo(format!("int {:#x}", instr.immediate8()));
                 }
             }
-            Int3 | Cmpxchg | Cpuid | Xgetbv | Bt | Div => self.todo(instr_name(instr)),
+            Int3 | Cmpxchg | Cpuid | Xgetbv | Div => self.todo(instr_name(instr)),
+
+            Bt => {
+                // With a memory operand and a register index the hardware can
+                // address bits outside the operand; only handle the in-range forms.
+                if instr.op0_kind() == iced_x86::OpKind::Memory
+                    && instr.op1_kind() == iced_x86::OpKind::Register
+                {
+                    self.todo(format!("{instr}"));
+                    return true;
+                }
+                let size = op_size(instr, 0);
+                self.line(format!(
+                    "let bit = ({} as u32) % {size};",
+                    self.get_op(instr, 1)
+                ));
+                self.line(format!(
+                    "ctx.cpu.flags.set(Flags::CF, ({} >> bit) & 1 != 0);",
+                    self.get_op(instr, 0)
+                ));
+            }
 
             Pushfd => self.line("ctx.push32(ctx.cpu.flags.bits());"),
             Popfd => {
