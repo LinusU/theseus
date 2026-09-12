@@ -70,8 +70,17 @@ impl<'a> Memory<'a> {
         &buf[..nul]
     }
 
-    pub fn read_str(&self, addr: u32) -> &str {
-        std::str::from_utf8(self.read_cstr(addr)).unwrap()
+    /// Read a NUL-terminated string as text, for paths, names and logging.
+    /// Programs of this era use the Windows-1252 code page, so bytes that
+    /// aren't valid UTF-8 are decoded as Latin-1 rather than rejected. This is
+    /// convenient rather than correct: a caller that cares about the encoding
+    /// should take the bytes from read_cstr.
+    pub fn read_str(&self, addr: u32) -> String {
+        let buf = self.read_cstr(addr);
+        match std::str::from_utf8(buf) {
+            Ok(s) => s.to_string(),
+            Err(_) => buf.iter().map(|&b| b as char).collect(),
+        }
     }
 
     /// This returns an allocated string rather than a reference due to alignment.
