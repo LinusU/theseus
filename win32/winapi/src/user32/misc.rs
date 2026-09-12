@@ -93,7 +93,7 @@ pub fn MessageBoxA(
         if ptr.addr == 0 {
             String::new()
         } else {
-            ctx.memory.read_str(ptr.addr).to_owned()
+            ctx.memory.read_str(ptr.addr).into_owned()
         }
     };
     log::warn!("MessageBox: {} / {}", read(lpCaption), read(lpText));

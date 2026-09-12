@@ -70,8 +70,15 @@ impl<'a> Memory<'a> {
         &buf[..nul]
     }
 
-    pub fn read_str(&self, addr: u32) -> &str {
-        std::str::from_utf8(self.read_cstr(addr)).unwrap()
+    /// Read a NUL-terminated string. Programs of this era use the Windows-1252
+    /// code page, so bytes that aren't valid UTF-8 are decoded as Latin-1
+    /// (into an owned string) rather than rejected.
+    pub fn read_str(&self, addr: u32) -> std::borrow::Cow<'_, str> {
+        let buf = self.read_cstr(addr);
+        match std::str::from_utf8(buf) {
+            Ok(s) => std::borrow::Cow::Borrowed(s),
+            Err(_) => std::borrow::Cow::Owned(buf.iter().map(|&b| b as char).collect()),
+        }
     }
 
     /// This returns an allocated string rather than a reference due to alignment.

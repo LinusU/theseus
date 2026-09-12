@@ -115,7 +115,7 @@ pub fn CreateFileA(
     _dwFlagsAndAttributes: u32,
     _hTemplateFile: u32,
 ) -> crate::HANDLE {
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let name = ctx.memory.read_str(lpFileName.addr).into_owned();
     let path = resolve_path(&name);
     let write = dwDesiredAccess & GENERIC_WRITE != 0;
     let read = dwDesiredAccess & GENERIC_READ != 0;
@@ -300,7 +300,7 @@ pub fn CloseHandle(_ctx: &mut Context, hObject: crate::HANDLE) -> bool {
 
 #[win32_derive::dllexport]
 pub fn DeleteFileA(ctx: &mut Context, lpFileName: Ptr<u8>) -> bool {
-    let name = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let name = ctx.memory.read_str(lpFileName.addr).into_owned();
     host::fs::remove_file(&resolve_path(&name)).is_ok()
 }
 
@@ -352,7 +352,7 @@ pub fn GetCurrentDirectoryA(ctx: &mut Context, nBufferLength: u32, lpBuffer: Ptr
 
 #[win32_derive::dllexport]
 pub fn SetCurrentDirectoryA(ctx: &mut Context, lpPathName: Ptr<u8>) -> bool {
-    let name = ctx.memory.read_str(lpPathName.addr).to_owned();
+    let name = ctx.memory.read_str(lpPathName.addr).into_owned();
     let path = resolve_path(&name);
     match host::fs::set_current_dir(&path) {
         Ok(()) => true,
@@ -457,7 +457,7 @@ pub fn FindFirstFileA(
     lpFileName: Ptr<u8>,
     lpFindFileData: Ptr<WIN32_FIND_DATAA>,
 ) -> crate::HANDLE {
-    let pattern = ctx.memory.read_str(lpFileName.addr).to_owned();
+    let pattern = ctx.memory.read_str(lpFileName.addr).into_owned();
     let pattern = pattern.replace('\\', "/");
     let (dir, file_pattern) = match pattern.rfind('/') {
         Some(pos) => (&pattern[..pos], &pattern[pos + 1..]),

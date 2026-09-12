@@ -83,7 +83,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                 log::warn!("TODO: file access {access:x}");
             }
             let mut state = state();
-            let Some(buf) = state.read_file(name) else {
+            let Some(buf) = state.read_file(&name) else {
                 log::warn!("open {name:?}: not found");
                 ctx.cpu.regs.set_ax(/* file not found */ 2);
                 ctx.cpu.flags.insert(runtime::Flags::CF);
@@ -205,7 +205,7 @@ pub fn int21(ctx: &mut Context) -> Option<runtime::Cont> {
                     let seg = ctx.memory.read::<u16>(params_addr);
                     let relo = ctx.memory.read::<u16>(params_addr + 2);
 
-                    let Some(buf) = state().read_file(cmd) else {
+                    let Some(buf) = state().read_file(&cmd) else {
                         panic!()
                     };
                     let header = exe::DOS::parse(&buf).unwrap();

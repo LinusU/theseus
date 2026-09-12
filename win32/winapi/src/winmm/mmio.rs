@@ -154,7 +154,7 @@ pub fn mmioOpenA(ctx: &mut Context, szFilename: u32, _lpmmioinfo: u32, _dwOpenFl
         log::warn!("mmioOpenA: no filename");
         return 0;
     }
-    let name = ctx.memory.read_str(szFilename).to_owned();
+    let name = ctx.memory.read_str(szFilename).into_owned();
     let path = kernel32::resolve_path(&name);
     let data = match host::fs::read(&path) {
         Ok(data) => data,
