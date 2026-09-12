@@ -18,12 +18,10 @@ User-requested priority backlog, in order. Open items outrank every audit:
 1. Single-click input: DONE. Root cause was macOS never activating the
    process plus a leaked first window; user-confirmed 2026-09-08.
 2. Arrow-key driving: DONE, same fix, user-confirmed 2026-09-08.
-3. Missing UI text: OPEN, Theseus gap. The bitmaps are absent, but the
-   game then draws the text itself: `CreateFontA`, `GetTextExtentPoint32A`
-   and `DrawTextA` into a DirectDraw surface DC (9 `DrawTextA` calls at
-   startup). `user32::DrawTextA` only measures; it never rasterizes glyphs
-   into the DC's bitmap. Next: draw glyphs (a built-in bitmap font is
-   enough) in `DrawTextA`/`TextOutA` so the surface gets pixels.
+3. Missing UI text: DONE 2026-09-12. `DrawTextA` now rasterizes the
+   built-in bitmap font into the DC's bitmap (shared core with
+   `TextOutA`); a headless frame shows the driver-info panel text
+   ("RANKING: AMATEUR", "LAST RACE: LONDON'S CALLING", ...).
 4. In-race graphical glitches: PARTIAL. `FOGENABLE` gating fixed the
    washed-out screen. A 2026-09-08 frame survey of the scripted London
    crash-course race found no non-content defect: the dominant artifact
@@ -520,3 +518,19 @@ Suspects worth a look when the backlog is otherwise blocked:
   shared process heap). Check: `.devin/check.sh` OK; live run: 3x
   `DirectSoundCreate`, 42 buffers, warnings 42 -> 1, mixer WAV non-silent at
   the click times. Next: #3 (`DrawTextA` glyphs) or music trace.
+- 2026-09-12 DrawTextA rasterizes glyphs: What: `DrawTextA` only measured,
+  so the panel text the game draws into a DirectDraw surface DC (9 calls at
+  startup, `SetBkMode(TRANSPARENT)` + yellow `SetTextColor`, formats
+  0x824/0x800) never produced pixels. Repro: `THESEUS_HEADLESS=1
+  THESEUS_FRAME_DUMP=/tmp/mm2frames/f.ppm THESEUS_FRAME_DUMP_EVERY=500` 40s
+  -> driver-info panel empty. Change: extracted `TextOutA`'s glyph drawing
+  into shared `gdi32::draw_text` taking an optional clip rect; `DrawTextA`
+  now rasterizes each line honoring DT_CENTER/RIGHT/VCENTER/BOTTOM
+  (vertical only with DT_SINGLELINE) and clips to lprc unless DT_NOCLIP
+  (`gdi32/dc.rs`, `user32/misc.rs`); `fill_pixels` takes RECT bounds; new
+  test `draw_text_rasterizes_glyphs_into_the_dc_bitmap`. Check: `check.sh:
+  OK (fmt 2 files, clippy+test winapi, build mm2, whitespace)`; same dump
+  now shows "RANKING: AMATEUR / LAST RACE: LONDON'S CALLING / LAST VEHICLE:
+  LONDON CAB / CONTROLLER: KEYBOARD" in the panel. Next: #5 music —
+  `aud/dmusic` content ships but no DirectMusic object is created in the
+  first 25s; trace the in-race path.

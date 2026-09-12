@@ -42,7 +42,12 @@ pub fn DrawTextA(
     lprc: Ptr<RECT>,
     format: u32,
 ) -> i32 {
+    const DT_CENTER: u32 = 0x1;
+    const DT_RIGHT: u32 = 0x2;
+    const DT_VCENTER: u32 = 0x4;
+    const DT_BOTTOM: u32 = 0x8;
     const DT_SINGLELINE: u32 = 0x20;
+    const DT_NOCLIP: u32 = 0x100;
     const DT_CALCRECT: u32 = 0x400;
 
     if cchText < -1
@@ -79,12 +84,12 @@ pub fn DrawTextA(
     };
     let mut max_width = 0;
     let mut line_height = 0;
-    let mut line_count = 0;
     let lines = if format & DT_SINGLELINE != 0 {
         bytes.split(|_| false).take(1).collect::<Vec<_>>()
     } else {
         bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>()
     };
+    let mut measured: Vec<(&[u8], gdi32::SIZE)> = Vec::with_capacity(lines.len());
     for line in lines {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let Some(size) = gdi32::text_extent_for_dc(hdc, line.len()) else {
@@ -92,16 +97,15 @@ pub fn DrawTextA(
         };
         max_width = max_width.max(size.cx);
         line_height = line_height.max(size.cy);
-        line_count += 1;
+        measured.push((line, size));
     }
+    let height = line_height.saturating_mul(measured.len() as i32);
     if format & DT_CALCRECT != 0 {
-        let width = max_width;
-        let height = line_height.saturating_mul(line_count);
         if lprc
             .write(
                 &mut ctx.memory,
                 RECT {
-                    right: rect.left.saturating_add(width),
+                    right: rect.left.saturating_add(max_width),
                     bottom: rect.top.saturating_add(height),
                     ..rect
                 },
@@ -110,8 +114,34 @@ pub fn DrawTextA(
         {
             return 0;
         }
+        return height;
     }
-    line_height.saturating_mul(line_count)
+    // Rasterize each line: DrawText clips to lprc unless DT_NOCLIP, aligns
+    // left/center/right per line, and vertically centers or bottom-aligns
+    // a single line (VCENTER/BOTTOM apply only with DT_SINGLELINE).
+    let single = format & DT_SINGLELINE != 0;
+    let clip = (format & DT_NOCLIP == 0).then_some(rect);
+    let mut y = if single && format & DT_VCENTER != 0 {
+        rect.top
+            .saturating_add(rect.bottom.saturating_sub(rect.top).saturating_sub(height) / 2)
+    } else if single && format & DT_BOTTOM != 0 {
+        rect.bottom.saturating_sub(height)
+    } else {
+        rect.top
+    };
+    for (line, size) in measured {
+        let x = if format & DT_CENTER != 0 {
+            rect.left
+                .saturating_add(rect.right.saturating_sub(rect.left).saturating_sub(size.cx) / 2)
+        } else if format & DT_RIGHT != 0 {
+            rect.right.saturating_sub(size.cx)
+        } else {
+            rect.left
+        };
+        gdi32::draw_text(ctx, hdc, x, y, line, clip);
+        y = y.saturating_add(line_height);
+    }
+    height
 }
 
 // DEVMODEA field offsets (dmDeviceName is 32 bytes, then the printer fields
@@ -662,9 +692,10 @@ pub fn wsprintfA(ctx: &mut Context) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChangeDisplaySettingsA, EnumDisplaySettingsA, GetSystemMetrics, wsprintfA, wsprintfW,
+        ChangeDisplaySettingsA, DrawTextA, EnumDisplaySettingsA, GetSystemMetrics, wsprintfA,
+        wsprintfW,
     };
-    use crate::Ptr;
+    use crate::{Ptr, RECT, gdi32};
     use runtime::{BlockCache, CPU, Context, Memory};
 
     fn context() -> Context {
@@ -809,6 +840,80 @@ mod tests {
         ctx.memory.write::<u32>(0x1000 + 0x6c, 720);
         ctx.memory.write::<u32>(0x1000 + 0x70, 576);
         assert_eq!(ChangeDisplaySettingsA(&mut ctx, devmode(), 0), -2);
+    }
+
+    #[test]
+    fn draw_text_rasterizes_glyphs_into_the_dc_bitmap() {
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(40, 20, 0x2000));
+        // The stock font measures 8x16 per character; TRANSPARENT mode
+        // draws only the glyph pixels.
+        gdi32::SetBkMode(&mut ctx, hdc, 1);
+        gdi32::SetTextColor(&mut ctx, hdc, gdi32::COLORREF::from_rgb(0xff, 0xff, 0xff));
+        ctx.memory[0x2C90..][..2].copy_from_slice(b"A\0");
+        let write_rect = |ctx: &mut Context, rect: RECT| {
+            Ptr::<RECT>::new(0x3D00)
+                .write(&mut ctx.memory, rect)
+                .unwrap()
+        };
+        let px = |ctx: &Context, x: u32, y: u32| ctx.memory.read::<u32>(0x2000 + (y * 40 + x) * 4);
+
+        // DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER centers the 16px line in the
+        // 20px rect, so glyph rows start at y=2.
+        write_rect(
+            &mut ctx,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 40,
+                bottom: 20,
+            },
+        );
+        assert_eq!(
+            DrawTextA(&mut ctx, hdc, Ptr::new(0x2C90), 1, Ptr::new(0x3D00), 0x824),
+            16
+        );
+        // 'A' row 0 lights columns 1-3; column 0 stays dark, as does below
+        // the line's extent.
+        assert_eq!(px(&ctx, 2, 2), 0xffff_ffff);
+        assert_eq!(px(&ctx, 0, 2), 0);
+        assert_eq!(px(&ctx, 2, 18), 0);
+
+        // A rect too narrow for the glyph clips it entirely.
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(40, 20, 0x2000));
+        gdi32::SetBkMode(&mut ctx, hdc, 1);
+        gdi32::SetTextColor(&mut ctx, hdc, gdi32::COLORREF::from_rgb(0xff, 0xff, 0xff));
+        ctx.memory[0x2C90..][..2].copy_from_slice(b"A\0");
+        write_rect(
+            &mut ctx,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1,
+                bottom: 20,
+            },
+        );
+        DrawTextA(&mut ctx, hdc, Ptr::new(0x2C90), 1, Ptr::new(0x3D00), 0x800);
+        assert_eq!(px(&ctx, 2, 2), 0);
+        // DT_NOCLIP ignores the rect bounds.
+        DrawTextA(&mut ctx, hdc, Ptr::new(0x2C90), 1, Ptr::new(0x3D00), 0x900);
+        assert_eq!(px(&ctx, 2, 0), 0xffff_ffff);
+
+        // DT_CALCRECT updates the rect without touching pixels.
+        let mut ctx = context();
+        let hdc = gdi32::lock().new_memory_dc(gdi32::Bitmap::new_simple(40, 20, 0x2000));
+        gdi32::SetBkMode(&mut ctx, hdc, 1);
+        gdi32::SetTextColor(&mut ctx, hdc, gdi32::COLORREF::from_rgb(0xff, 0xff, 0xff));
+        ctx.memory[0x2C90..][..2].copy_from_slice(b"A\0");
+        write_rect(&mut ctx, RECT::default());
+        assert_eq!(
+            DrawTextA(&mut ctx, hdc, Ptr::new(0x2C90), 1, Ptr::new(0x3D00), 0xc00),
+            16
+        );
+        let rect = Ptr::<RECT>::new(0x3D00).read(&ctx.memory).unwrap();
+        assert_eq!((rect.right, rect.bottom), (8, 16));
+        assert_eq!(px(&ctx, 2, 2), 0);
     }
 
     #[test]

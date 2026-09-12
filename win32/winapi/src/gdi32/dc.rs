@@ -3,7 +3,7 @@ use std::sync::Arc;
 use runtime::{Context, Memory};
 
 use crate::{
-    HANDLE, POINT, Ptr,
+    HANDLE, POINT, Ptr, RECT,
     gdi32::{
         self, Bitmap, Brush, COLORREF, Font, GetStockObjectArg, HBITMAP, HBRUSH, HGDIOBJ, HPEN,
         Object, Pen, State,
@@ -245,22 +245,27 @@ fn draw_pixel(pixels: &mut [u8], bitmap: &Bitmap, x: i32, y: i32, color: [u8; 4]
     pixels[offset..][..4].copy_from_slice(&color);
 }
 
+/// Fill the inclusive-exclusive pixel bounds `[left, top, right, bottom)`,
+/// clipped to the bitmap and to `clip` when given.
 fn fill_pixels(
     pixels: &mut [u8],
     bitmap: &Bitmap,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+    bounds: RECT,
     color: [u8; 4],
+    clip: Option<RECT>,
 ) {
     // Clip the rect to the bitmap before looping: out-of-bounds pixels
     // are discarded anyway, and a hostile rect would otherwise spin
     // through billions of no-op iterations.
-    let max_x = bitmap.width.min(i32::MAX as u32) as i32;
-    let max_y = bitmap.height.min(i32::MAX as u32) as i32;
-    for py in y.max(0)..y.saturating_add(height).min(max_y) {
-        for px in x.max(0)..x.saturating_add(width).min(max_x) {
+    let mut bounds = bounds.clip_to_size(
+        bitmap.width.min(i32::MAX as u32),
+        bitmap.height.min(i32::MAX as u32),
+    );
+    if let Some(clip) = clip {
+        bounds = bounds.clip(&clip);
+    }
+    for py in bounds.top..bounds.bottom {
+        for px in bounds.left..bounds.right {
             draw_pixel(pixels, bitmap, px, py, color);
         }
     }
@@ -293,8 +298,24 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
     else {
         return false;
     };
-    let mut state = gdi32::lock();
-    let Some(dc) = state.dcs.get_mut(hdc) else {
+    draw_text(ctx, hdc, x, y, &string, None)
+}
+
+/// Rasterize `text` left-to-right starting at (x, y) in the DC's selected
+/// font, colors, and background mode — the shared core of `TextOutA` and
+/// `user32::DrawTextA`. `clip` additionally bounds the drawing: DrawText
+/// clips to its rect unless DT_NOCLIP. Returns false for an unknown DC or
+/// a bitmap that is not plain top-down RGBA.
+pub fn draw_text(
+    ctx: &mut Context,
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    text: &[u8],
+    clip: Option<RECT>,
+) -> bool {
+    let state = gdi32::lock();
+    let Some(dc) = state.dcs.get(hdc) else {
         return false;
     };
     let bitmap = dc.bitmap.1.clone();
@@ -311,30 +332,49 @@ pub fn TextOutA(ctx: &mut Context, hdc: HDC, x: i32, y: i32, lpString: Ptr<u8>, 
     let Some(pixels) = bitmap.pixels_mut(&mut ctx.memory) else {
         return false;
     };
-    for (index, character) in string.into_iter().enumerate() {
+    // Characters only advance right; once the origin is past the right
+    // edge nothing further can draw, which also bounds the loop for a
+    // pathologically long string.
+    let right_edge = clip.map_or(bitmap.width.min(i32::MAX as u32) as i32, |c| {
+        c.right.min(bitmap.width.min(i32::MAX as u32) as i32)
+    });
+    for (index, &character) in text.iter().enumerate() {
         let origin_x = x.saturating_add(size.cx.saturating_mul(index as i32));
-        // Characters only advance right; once the origin is past the
-        // bitmap's right edge nothing further can draw, which also bounds
-        // the loop for a pathologically large `c`.
-        if size.cx > 0 && origin_x >= bitmap.width.min(i32::MAX as u32) as i32 {
+        if size.cx > 0 && origin_x >= right_edge {
             break;
         }
         if opaque {
-            fill_pixels(pixels, &bitmap, origin_x, y, size.cx, size.cy, bk_color);
+            fill_pixels(
+                pixels,
+                &bitmap,
+                RECT {
+                    left: origin_x,
+                    top: y,
+                    right: origin_x.saturating_add(size.cx),
+                    bottom: y.saturating_add(size.cy),
+                },
+                bk_color,
+                clip,
+            );
         }
         for (row, bits) in glyph(character).into_iter().enumerate() {
             for column in 0..5 {
                 if bits & (1 << (4 - column)) == 0 {
                     continue;
                 }
+                let left = origin_x.saturating_add(column * scale_x);
+                let top = y.saturating_add(row as i32 * scale_y);
                 fill_pixels(
                     pixels,
                     &bitmap,
-                    origin_x.saturating_add(column * scale_x),
-                    y.saturating_add(row as i32 * scale_y),
-                    scale_x,
-                    scale_y,
+                    RECT {
+                        left,
+                        top,
+                        right: left.saturating_add(scale_x),
+                        bottom: top.saturating_add(scale_y),
+                    },
                     text_color,
+                    clip,
                 );
             }
         }
@@ -372,7 +412,18 @@ pub fn Rectangle(
         return false;
     };
     if let Some(fill) = fill {
-        fill_pixels(pixels, &bitmap, left, top, width, height, fill);
+        fill_pixels(
+            pixels,
+            &bitmap,
+            RECT {
+                left,
+                top,
+                right,
+                bottom,
+            },
+            fill,
+            None,
+        );
     }
     if let Some(border) = border {
         // Clip the border walks to the bitmap the same way fill_pixels
