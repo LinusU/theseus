@@ -6,6 +6,7 @@ use std::{
 
 mod d3d;
 mod ddraw;
+mod gpu;
 mod ddraw1;
 mod ddraw2;
 mod ddraw7;

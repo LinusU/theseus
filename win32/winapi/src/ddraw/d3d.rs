@@ -1,17 +1,27 @@
 //! Direct3D Immediate Mode as of DirectX 3/5: IDirect3D and the objects hung
 //! off it, drawn through execute buffers.
 //!
-//! So far this is a probe, not a renderer: it accepts everything a game asks
-//! of it so the game takes its Direct3D path, and logs what that path uses
-//! (execute buffer opcodes, render states, vertex layouts, texture formats)
-//! the first time each thing is seen. Nothing is drawn.
+//! Execute buffers are interpreted here and their triangles drawn with wgpu
+//! (see gpu.rs) into a render target standing in for the DirectDraw surface
+//! the device renders to. Games still read and write that surface's memory
+//! for their 2D drawing, so the two are kept in sync: GPU output is read back
+//! before DirectDraw hands the surface to the game or shows it, and whatever
+//! the game drew is uploaded before the next triangles.
+//!
+//! Only what a game has been seen to use is implemented; anything else is
+//! logged the first time it shows up.
 
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+};
 
-use runtime::Context;
+use runtime::{Context, Memory};
 
+use super::gpu::{self, Batch, Gpu, PipelineKey, SamplerKey};
 use crate::{
-    ddraw::{DD, GUID, state},
+    ddraw::{DD, GUID, Surface, state},
     heap::Heap,
     kernel32, stub,
 };
@@ -39,6 +49,58 @@ pub const IID_IDirect3DTexture: GUID = GUID((
 /// with.
 const DEVICEDESC_SIZE: u32 = 0xcc;
 
+/// sizeof(D3DTLVERTEX), the only vertex layout implemented.
+const TLVERTEX_SIZE: usize = 32;
+
+// D3DRENDERSTATETYPE values this file reads.
+const RS_TEXTUREHANDLE: usize = 1;
+const RS_TEXTUREADDRESS: usize = 3;
+const RS_ZENABLE: usize = 7;
+const RS_FILLMODE: usize = 8;
+const RS_SHADEMODE: usize = 9;
+const RS_ZWRITEENABLE: usize = 14;
+const RS_ALPHATESTENABLE: usize = 15;
+const RS_TEXTUREMAG: usize = 17;
+const RS_TEXTUREMIN: usize = 18;
+const RS_SRCBLEND: usize = 19;
+const RS_DESTBLEND: usize = 20;
+const RS_TEXTUREMAPBLEND: usize = 21;
+const RS_CULLMODE: usize = 22;
+const RS_ZFUNC: usize = 23;
+const RS_ALPHAREF: usize = 24;
+const RS_ALPHAFUNC: usize = 25;
+const RS_BLENDENABLE: usize = 27;
+const RS_FOGENABLE: usize = 28;
+const RS_SPECULARENABLE: usize = 29;
+const RS_STIPPLEDALPHA: usize = 33;
+const RS_FOGCOLOR: usize = 34;
+const RS_COLORKEYENABLE: usize = 41;
+const RENDER_STATES: usize = 64;
+
+/// The render states a fresh device starts with.
+fn default_render_states() -> [u32; RENDER_STATES] {
+    let mut rs = [0; RENDER_STATES];
+    rs[RS_TEXTUREADDRESS] = 1; // WRAP
+    rs[4] = 1; // TEXTUREPERSPECTIVE
+    rs[RS_FILLMODE] = 3; // SOLID
+    rs[RS_SHADEMODE] = 2; // GOURAUD
+    rs[RS_ZWRITEENABLE] = 1;
+    rs[16] = 1; // LASTPIXEL
+    rs[RS_TEXTUREMAG] = 1; // NEAREST
+    rs[RS_TEXTUREMIN] = 1; // NEAREST
+    rs[RS_SRCBLEND] = 2; // ONE
+    rs[RS_DESTBLEND] = 1; // ZERO
+    rs[RS_TEXTUREMAPBLEND] = 2; // MODULATE
+    rs[RS_CULLMODE] = 3; // CCW
+    rs[RS_ZFUNC] = 4; // LESSEQUAL
+    rs[RS_ALPHAFUNC] = 8; // ALWAYS
+    rs[RS_SPECULARENABLE] = 1;
+    // Version 1 devices had no switch for it: textures with a color key were
+    // always keyed.
+    rs[RS_COLORKEYENABLE] = 1;
+    rs
+}
+
 struct ExecuteBuffer {
     size: u32,
     data: Option<u32>,
@@ -47,26 +109,37 @@ struct ExecuteBuffer {
     execute_data: [u32; 5],
 }
 
+struct Device {
+    /// The surface rendered to.
+    target: Rc<RefCell<Surface>>,
+    render_states: [u32; RENDER_STATES],
+    /// Vertices placed by PROCESSVERTICES, as raw D3DTLVERTEX bytes.
+    vertices: Vec<[u8; TLVERTEX_SIZE]>,
+}
+
 #[derive(Default)]
 pub struct D3D {
     execute_buffers: HashMap<u32, ExecuteBuffer>,
-    /// IDirect3DTexture pointer -> the surface it wraps.
+    /// IDirect3DTexture pointer (which is also its handle) -> its surface.
     textures: HashMap<u32, u32>,
+    /// IDirect3DMaterial pointer (its handle) -> diffuse color.
+    materials: HashMap<u32, [f32; 4]>,
+    /// IDirect3DViewport pointer -> background material handle.
+    backgrounds: HashMap<u32, u32>,
     next_matrix: u32,
-    probe: Probe,
-}
-
-/// What the game's Direct3D path uses, gathered as it runs.
-#[derive(Default)]
-struct Probe {
+    device: Option<Device>,
+    gpu: Option<Gpu>,
+    gpu_failed: bool,
+    /// The GPU target holds drawing the surface's memory lacks.
+    gpu_dirty: bool,
+    /// The surface's memory may hold drawing the GPU target lacks.
+    cpu_dirty: bool,
     seen: BTreeSet<String>,
     scenes: u32,
-    executes: u32,
-    triangles: u32,
-    vertices: u32,
+    triangles: u64,
 }
 
-impl Probe {
+impl D3D {
     /// Log `what` the first time it happens.
     fn note(&mut self, what: String) {
         if !self.seen.contains(&what) {
@@ -74,10 +147,18 @@ impl Probe {
             self.seen.insert(what);
         }
     }
+
+    fn gpu(&mut self) -> Option<&mut Gpu> {
+        if self.gpu.is_none() && !self.gpu_failed {
+            self.gpu = Gpu::new();
+            self.gpu_failed = self.gpu.is_none();
+        }
+        self.gpu.as_mut()
+    }
 }
 
 fn note(what: String) {
-    state().d3d.borrow_mut().probe.note(what);
+    state().d3d.borrow_mut().note(what);
 }
 
 fn alloc(ctx: &mut Context, size: u32) -> u32 {
@@ -96,28 +177,33 @@ fn write_u32s(ctx: &mut Context, addr: u32, values: &[u32]) {
 /// accelerator.
 fn write_hal_desc(ctx: &mut Context, addr: u32) {
     const D3DPRIMCAPS: [u32; 14] = [
-        56,       // dwSize
-        0x72,     // dwMiscCaps: MASKZ | CULLNONE | CULLCW | CULLCCW
-        0x1b1,    // dwRasterCaps: DITHER | ZTEST | SUBPIXEL | FOGVERTEX | FOGTABLE
-        0xff,     // dwZCmpCaps: all
-        0x1fff,   // dwSrcBlendCaps: all
-        0x1fff,   // dwDestBlendCaps: all
-        0xff,     // dwAlphaCmpCaps: all
-        0x8520a,  // dwShadeCaps: flat/gouraud color, specular, alpha, fog
-        0xd,      // dwTextureCaps: PERSPECTIVE | ALPHA | TRANSPARENCY
-        0x3f,     // dwTextureFilterCaps: nearest, linear, mipmapped
-        0xcf,     // dwTextureBlendCaps: DECAL | MODULATE | DECALALPHA | MODULATEALPHA | COPY | ADD
-        0x7,      // dwTextureAddressCaps: WRAP | MIRROR | CLAMP
-        0, 0,     // dwStippleWidth, dwStippleHeight
+        56,      // dwSize
+        0x72,    // dwMiscCaps: MASKZ | CULLNONE | CULLCW | CULLCCW
+        0x1b1,   // dwRasterCaps: DITHER | ZTEST | SUBPIXEL | FOGVERTEX | FOGTABLE
+        0xff,    // dwZCmpCaps: all
+        0x1fff,  // dwSrcBlendCaps: all
+        0x1fff,  // dwDestBlendCaps: all
+        0xff,    // dwAlphaCmpCaps: all
+        0x8520a, // dwShadeCaps: flat/gouraud color, specular, alpha, fog
+        0xd,     // dwTextureCaps: PERSPECTIVE | ALPHA | TRANSPARENCY
+        0x3f,    // dwTextureFilterCaps: nearest, linear, mipmapped
+        0xcf,    // dwTextureBlendCaps: DECAL | MODULATE | DECALALPHA | MODULATEALPHA | COPY | ADD
+        0x7,     // dwTextureAddressCaps: WRAP | MIRROR | CLAMP
+        0,
+        0, // dwStippleWidth, dwStippleHeight
     ];
     let mut desc = vec![
         DEVICEDESC_SIZE,
-        0x7ff,        // dwFlags: every field below is valid
-        2,            // dcmColorModel: D3DCOLOR_RGB
+        0x7ff, // dwFlags: every field below is valid
+        2,     // dcmColorModel: D3DCOLOR_RGB
         0x1 | 0x10 | 0x40 | 0x100 | 0x200 | 0x400, // dwDevCaps
-        8, 1,         // dtcTransformCaps: D3DTRANSFORMCAPS_CLIP
-        1,            // bClipping
-        16, 0x7, 1, 8, // dlcLightingCaps: point/spot/directional, RGB model, 8 lights
+        8,
+        1, // dtcTransformCaps: D3DTRANSFORMCAPS_CLIP
+        1, // bClipping
+        16,
+        0x7,
+        1,
+        8, // dlcLightingCaps: point/spot/directional, RGB model, 8 lights
     ];
     desc.extend_from_slice(&D3DPRIMCAPS); // dpcLineCaps
     desc.extend_from_slice(&D3DPRIMCAPS); // dpcTriCaps
@@ -188,98 +274,494 @@ fn render_state_name(state: u32) -> &'static str {
     }
 }
 
-/// Walk an execute buffer's instruction stream, recording what it contains.
-fn probe_execute(ctx: &mut Context, data: u32, exec: &[u32; 5]) {
-    let [vertex_offset, vertex_count, instr_offset, instr_len, _hvertex_offset] = *exec;
-    let mut d3d = state().d3d.borrow_mut();
-    let probe = &mut d3d.probe;
-    probe.executes += 1;
-    probe.vertices += vertex_count;
-    if vertex_offset != 0 {
-        probe.note(format!("vertex offset {vertex_offset:#x}"));
+/// A D3DCOLOR (0xAARRGGBB) as RGBA floats.
+fn color(argb: u32) -> [f32; 4] {
+    let c = |shift: u32| ((argb >> shift) & 0xff) as f32 / 255.0;
+    [c(16), c(8), c(0), c(24)]
+}
+
+/// A channel mask's shift and width.
+fn mask_bits(mask: u32) -> (u32, u32) {
+    if mask == 0 {
+        (0, 0)
+    } else {
+        (mask.trailing_zeros(), mask.count_ones())
     }
+}
+
+/// Decode a masked channel to 8 bits; `absent` when the mask is empty.
+fn decode_channel(pixel: u32, mask: u32, absent: u8) -> u8 {
+    let (shift, bits) = mask_bits(mask);
+    if bits == 0 {
+        return absent;
+    }
+    let max = (1u64 << bits) - 1;
+    let value = ((pixel & mask) >> shift) as u64;
+    ((value * 255 + max / 2) / max) as u8
+}
+
+fn encode_channel(value: u8, mask: u32) -> u32 {
+    let (shift, bits) = mask_bits(mask);
+    if bits == 0 {
+        return 0;
+    }
+    let max = (1u32 << bits) - 1;
+    ((value as u32 * max + 127) / 255) << shift
+}
+
+/// A texture surface's pixels as RGBA, color-keyed pixels made transparent.
+fn texture_rgba(mem: &Memory, surface: &Surface) -> Vec<u8> {
+    let (w, h) = (surface.width as usize, surface.height as usize);
+    let mut out = vec![0u8; w * h * 4];
+    let Some(pixels) = surface.pixels else {
+        return out;
+    };
+    let bpp = surface.bytes_per_pixel as usize;
+    let pitch = w * bpp;
+    let data = &mem[pixels..][..pitch * h];
+    let format = &surface.pixel_format;
+    let key = surface.src_color_key;
+    let palette = surface.palette.as_ref().map(|p| p.borrow());
+    let lookup = |index: usize| -> [u8; 3] {
+        match &palette {
+            Some(p) => p
+                .entries
+                .get(index)
+                .map_or([0; 3], |e| [e.peRed, e.peGreen, e.peBlue]),
+            None => [index as u8; 3],
+        }
+    };
+    const PALETTEINDEXED4: u32 = 0x8;
+    const PALETTEINDEXED8: u32 = 0x20;
+    const ALPHAPIXELS: u32 = 0x1;
+    for y in 0..h {
+        let row = &data[y * pitch..][..pitch];
+        for x in 0..w {
+            let (raw, rgba) = if format.dwFlags & PALETTEINDEXED8 != 0 {
+                let index = row[x] as u32;
+                let [r, g, b] = lookup(index as usize);
+                (index, [r, g, b, 255])
+            } else if format.dwFlags & PALETTEINDEXED4 != 0 {
+                // Two to a byte, the first pixel in the high nibble.
+                let byte = row[x / 2];
+                let index = if x % 2 == 0 { byte >> 4 } else { byte & 0xf } as u32;
+                let [r, g, b] = lookup(index as usize);
+                (index, [r, g, b, 255])
+            } else {
+                let mut raw = 0u32;
+                for i in 0..bpp.min(4) {
+                    raw |= (row[x * bpp + i] as u32) << (8 * i);
+                }
+                let alpha = if format.dwFlags & ALPHAPIXELS != 0 {
+                    decode_channel(raw, format.dwRGBAlphaBitMask, 255)
+                } else {
+                    255
+                };
+                (
+                    raw,
+                    [
+                        decode_channel(raw, format.dwRBitMask, 0),
+                        decode_channel(raw, format.dwGBitMask, 0),
+                        decode_channel(raw, format.dwBBitMask, 0),
+                        alpha,
+                    ],
+                )
+            };
+            let o = (y * w + x) * 4;
+            out[o..o + 4].copy_from_slice(&rgba);
+            if key.is_some_and(|k| k.matches(raw)) {
+                out[o + 3] = 0;
+            }
+        }
+    }
+    out
+}
+
+/// DirectDraw is about to hand `surface`'s memory to the game (`writing`) or
+/// show it. If it is the render target, bring the memory up to date with
+/// what the GPU drew.
+pub fn cpu_access(mem: &mut Memory, surface: &Surface, writing: bool) {
+    let Ok(mut d3d) = state().d3d.try_borrow_mut() else {
+        return;
+    };
+    let d3d = &mut *d3d;
+    let Some(device) = &d3d.device else {
+        return;
+    };
+    if !std::ptr::eq(device.target.as_ptr(), surface) {
+        return;
+    }
+    if d3d.gpu_dirty {
+        d3d.gpu_dirty = false;
+        if let (Some(gpu), Some(pixels)) = (d3d.gpu.as_mut(), surface.pixels) {
+            if let Some(rgba) = gpu.read() {
+                write_rgba(mem, surface, pixels, &rgba);
+                d3d.note(format!(
+                    "read the GPU back into the render target ({})",
+                    if writing { "lock" } else { "flip" }
+                ));
+            }
+        }
+    }
+    if writing {
+        d3d.cpu_dirty = true;
+    }
+}
+
+/// Store RGBA pixels into a surface's memory in its own format.
+fn write_rgba(mem: &mut Memory, surface: &Surface, pixels: u32, rgba: &[u8]) {
+    let bpp = surface.bytes_per_pixel;
+    let count = (surface.width * surface.height) as usize;
+    let format = &surface.pixel_format;
+    match bpp {
+        2 => {
+            let out = &mut mem[pixels..][..count * 2];
+            for (o, p) in out.chunks_exact_mut(2).zip(rgba.chunks_exact(4)) {
+                let value = encode_channel(p[0], format.dwRBitMask)
+                    | encode_channel(p[1], format.dwGBitMask)
+                    | encode_channel(p[2], format.dwBBitMask);
+                o.copy_from_slice(&(value as u16).to_le_bytes());
+            }
+        }
+        4 => mem[pixels..][..count * 4].copy_from_slice(&rgba[..count * 4]),
+        _ => log::warn!("d3d: can't read back into a {bpp} byte per pixel surface"),
+    }
+}
+
+/// Before drawing, upload whatever the game drew into the target's memory.
+fn sync_to_gpu(ctx: &Context, d3d: &mut D3D) {
+    if !d3d.cpu_dirty {
+        return;
+    }
+    d3d.cpu_dirty = false;
+    let Some(device) = &d3d.device else {
+        return;
+    };
+    let rgba = {
+        let target = device.target.borrow();
+        target.to_rgba(&ctx.memory, &None).map(|p| {
+            let mut p = p.into_owned();
+            for px in p.chunks_exact_mut(4) {
+                px[3] = 255;
+            }
+            p
+        })
+    };
+    if let (Some(rgba), Some(gpu)) = (rgba, d3d.gpu.as_mut()) {
+        gpu.upload(&rgba);
+    }
+}
+
+/// Where a texture handle's pixels are and how to draw them.
+#[derive(Clone, Copy)]
+struct TextureInfo {
+    key: u64,
+    alpha: bool,
+    color_key: bool,
+}
+
+/// Upload the texture behind a handle if it changed, and describe it.
+fn resolve_texture(ctx: &Context, d3d: &mut D3D, handle: u32) -> Option<TextureInfo> {
+    let surface_ptr = *d3d.textures.get(&handle)?;
+    let surface = state().surf.borrow().get(&surface_ptr)?.clone();
+    let surface = surface.borrow();
+    let key = &*surface as *const Surface as u64;
+    let palette_generation = surface.palette.as_ref().map_or(0, |p| p.borrow().generation);
+    let generation = surface.generation ^ palette_generation.rotate_left(32);
+    let info = TextureInfo {
+        key,
+        alpha: surface.pixel_format.dwFlags & 0x1 != 0,
+        color_key: surface.src_color_key.is_some(),
+    };
+    let format = &surface.pixel_format;
+    d3d.note(format!(
+        "texture format flags {:#x} {} bits masks {:#x}/{:#x}/{:#x}/{:#x}, color key {:?}, palette {}",
+        format.dwFlags,
+        format.dwRGBBitCount,
+        format.dwRBitMask,
+        format.dwGBitMask,
+        format.dwBBitMask,
+        format.dwRGBAlphaBitMask,
+        surface.src_color_key.map(|k| (k.low, k.high)),
+        surface.palette.is_some()
+    ));
+    let gpu = d3d.gpu.as_mut()?;
+    gpu.texture(key, generation, surface.width, surface.height, || {
+        texture_rgba(&ctx.memory, &surface)
+    });
+    Some(info)
+}
+
+fn filter_is_linear(filter: u32) -> bool {
+    // D3DFILTER_LINEAR, _MIPLINEAR, _LINEARMIPLINEAR
+    matches!(filter, 2 | 4 | 6) || linear_filter_forced()
+}
+
+/// THESEUS_D3D_FILTER=linear smooths textures even when the game asks for
+/// nearest sampling.
+fn linear_filter_forced() -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FORCED.get_or_init(|| std::env::var("THESEUS_D3D_FILTER").is_ok_and(|v| v == "linear"))
+    }
+    #[cfg(target_family = "wasm")]
+    false
+}
+
+/// Run an execute buffer's instructions, drawing its triangles.
+fn execute(ctx: &mut Context, data: u32, exec: &[u32; 5]) {
+    let [vertex_offset, _vertex_count, instr_offset, instr_len, _hvertex_offset] = *exec;
+    let mut d3d = state().d3d.borrow_mut();
+    let d3d = &mut *d3d;
+    let Some((width, height)) = d3d.device.as_ref().map(|d| {
+        let t = d.target.borrow();
+        (t.width, t.height)
+    }) else {
+        return;
+    };
+    let Some(gpu) = d3d.gpu() else {
+        return;
+    };
+    gpu.set_target_size(width, height);
+    sync_to_gpu(ctx, d3d);
+
+    let mut vertices: Vec<gpu::Vertex> = Vec::new();
+    let mut batches: Vec<Batch> = Vec::new();
+    let mut textures: HashMap<u32, Option<TextureInfo>> = HashMap::new();
 
     let mut at = data + instr_offset;
     let end = at + instr_len;
-    while at < end {
+    'instructions: while at + 4 <= end {
         let op = ctx.memory.read::<u8>(at);
         let size = ctx.memory.read::<u8>(at + 1) as u32;
         let count = ctx.memory.read::<u16>(at + 2) as u32;
         let payload = at + 4;
+        let mut next = payload + count * size;
         match op {
-            1 => probe.note("op POINT".into()),
-            2 => probe.note("op LINE".into()),
             3 => {
-                probe.note(format!("op TRIANGLE (size {size})"));
-                probe.triangles += count;
+                // TRIANGLE: D3DTRIANGLE { v1, v2, v3, wFlags } per record.
+                let rs = d3d.device.as_ref().unwrap().render_states;
+                let handle = rs[RS_TEXTUREHANDLE];
+                let texture = if handle == 0 {
+                    None
+                } else {
+                    *textures
+                        .entry(handle)
+                        .or_insert_with(|| resolve_texture(ctx, d3d, handle))
+                };
+                let (key, sampler, flags) = triangle_state(&rs, texture);
+                let alpha_ref = rs[RS_ALPHAREF] as f32 / 255.0;
+                let fog = color(rs[RS_FOGCOLOR]);
+                let flat = rs[RS_SHADEMODE] == 1;
+
+                let texture_key = texture.map(|t| t.key);
+                let start = vertices.len() as u32;
+                let device = d3d.device.as_ref().unwrap();
                 for i in 0..count {
-                    let flags = ctx.memory.read::<u16>(payload + i * size + 6);
-                    probe.note(format!("triangle flags {flags:#x}"));
+                    let rec = payload + i * size;
+                    let indices = [0, 2, 4].map(|o| ctx.memory.read::<u16>(rec + o) as usize);
+                    let Some(raws) = indices
+                        .iter()
+                        .map(|&index| device.vertices.get(index))
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue; // an index past the vertices placed so far
+                    };
+                    let mut first: Option<([f32; 4], [f32; 4])> = None;
+                    for raw in raws {
+                        let mut v = tl_vertex(raw, width as f32, height as f32);
+                        if flat {
+                            let (c, s) = *first.get_or_insert((v.color, v.specular));
+                            v.color = c;
+                            v.specular = s;
+                        }
+                        v.flags = flags;
+                        v.alpha_ref = alpha_ref;
+                        v.fog_color = [fog[0], fog[1], fog[2]];
+                        vertices.push(v);
+                    }
+                }
+                let range = start..vertices.len() as u32;
+                d3d.triangles += (range.len() / 3) as u64;
+                match batches.last_mut() {
+                    Some(last)
+                        if last.pipeline == key
+                            && last.texture == texture_key
+                            && last.sampler == sampler
+                            && last.range.end == range.start =>
+                    {
+                        last.range.end = range.end;
+                    }
+                    _ => batches.push(Batch {
+                        pipeline: key,
+                        texture: texture_key,
+                        sampler,
+                        range,
+                    }),
                 }
             }
-            4 => probe.note("op MATRIXLOAD".into()),
-            5 => probe.note("op MATRIXMULTIPLY".into()),
-            6 | 7 | 8 => {
-                let kind = ["STATETRANSFORM", "STATELIGHT", "STATERENDER"][op as usize - 6];
+            8 => {
+                // STATERENDER: D3DSTATE { type, value } per record.
                 for i in 0..count {
                     let ty = ctx.memory.read::<u32>(payload + i * size);
                     let value = ctx.memory.read::<u32>(payload + i * size + 4);
-                    if op == 8 {
-                        let name = render_state_name(ty);
-                        if ty == 1 {
-                            // Texture handles are pointers; the values say nothing.
-                            probe.note(format!("{kind} {name}"));
-                        } else {
-                            probe.note(format!("{kind} {name}={value:#x}"));
-                        }
+                    if ty as usize == RS_TEXTUREHANDLE {
+                        d3d.note("STATERENDER TEXTUREHANDLE".into());
                     } else {
-                        probe.note(format!("{kind} {ty}"));
+                        d3d.note(format!(
+                            "STATERENDER {}={value:#x}",
+                            render_state_name(ty)
+                        ));
+                    }
+                    if let Some(slot) = d3d
+                        .device
+                        .as_mut()
+                        .unwrap()
+                        .render_states
+                        .get_mut(ty as usize)
+                    {
+                        *slot = value;
                     }
                 }
             }
             9 => {
+                // PROCESSVERTICES: D3DPROCESSVERTICES { dwFlags, wStart,
+                // wDest, dwCount, dwReserved } per record.
                 for i in 0..count {
                     let rec = payload + i * size;
                     let flags = ctx.memory.read::<u32>(rec);
-                    let start = ctx.memory.read::<u16>(rec + 4);
-                    let dest = ctx.memory.read::<u16>(rec + 6);
-                    let n = ctx.memory.read::<u32>(rec + 8);
-                    let what = format!("op PROCESSVERTICES flags {flags:#x}");
-                    if !probe.seen.contains(&what) {
-                        // D3DTLVERTEX: sx sy sz rhw color specular tu tv.
-                        let v = data + vertex_offset + start as u32 * 32;
-                        let f = |o| ctx.memory.read::<f32>(v + o);
-                        let c = |o| ctx.memory.read::<u32>(v + o);
-                        log::info!(
-                            "d3d: first vertex ({start}->{dest}, {n} of them): \
-                             {:.2} {:.2} {:.4} {:.4} color {:#010x} spec {:#010x} uv {:.3} {:.3}",
-                            f(0),
-                            f(4),
-                            f(8),
-                            f(12),
-                            c(16),
-                            c(20),
-                            f(24),
-                            f(28)
-                        );
+                    let start = ctx.memory.read::<u16>(rec + 4) as u32;
+                    let dest = ctx.memory.read::<u16>(rec + 6) as usize;
+                    let n = ctx.memory.read::<u32>(rec + 8) as usize;
+                    if flags & 7 != 2 {
+                        // Transforming or lighting would need D3DVERTEX input
+                        // and the matrices; copying is all that's been seen.
+                        d3d.note(format!("PROCESSVERTICES flags {flags:#x} treated as a copy"));
                     }
-                    probe.note(what);
+                    let device = d3d.device.as_mut().unwrap();
+                    if device.vertices.len() < dest + n {
+                        device.vertices.resize(dest + n, [0; TLVERTEX_SIZE]);
+                    }
+                    for j in 0..n {
+                        let src = data + vertex_offset + (start + j as u32) * TLVERTEX_SIZE as u32;
+                        device.vertices[dest + j]
+                            .copy_from_slice(&ctx.memory[src..][..TLVERTEX_SIZE]);
+                    }
                 }
             }
-            10 => probe.note("op TEXTURELOAD".into()),
-            11 => {
-                probe.note("op EXIT".into());
-                break;
+            11 => break, // EXIT
+            12 => {
+                // BRANCHFORWARD: D3DBRANCH { dwMask, dwValue, bNegate,
+                // dwOffset }. The status tested is the buffer's clip status,
+                // which nothing computes, so it is always zero. The offset
+                // counts from this instruction's start; zero ends the buffer.
+                for i in 0..count {
+                    let rec = payload + i * size;
+                    let mask = ctx.memory.read::<u32>(rec);
+                    let value = ctx.memory.read::<u32>(rec + 4);
+                    let negate = ctx.memory.read::<u32>(rec + 8) != 0;
+                    let offset = ctx.memory.read::<u32>(rec + 12);
+                    let status = 0u32;
+                    if ((status & mask) == value) != negate {
+                        if offset == 0 {
+                            break 'instructions;
+                        }
+                        next = at + offset;
+                        break;
+                    }
+                }
             }
-            12 => probe.note("op BRANCHFORWARD".into()),
-            13 => probe.note("op SPAN".into()),
-            14 => probe.note("op SETSTATUS".into()),
+            14 => {} // SETSTATUS
             _ => {
-                log::warn!("d3d: unknown execute buffer opcode {op}");
-                break;
+                d3d.note(format!("execute buffer opcode {op} not implemented"));
+                if !(1..=14).contains(&op) {
+                    break;
+                }
             }
         }
-        at = payload + count * size;
+        at = next;
+    }
+
+    if !batches.is_empty() {
+        d3d.gpu.as_mut().unwrap().draw(&vertices, &batches);
+        d3d.gpu_dirty = true;
+    }
+}
+
+/// The pipeline, sampler and per-vertex flags for triangles drawn with these
+/// render states.
+fn triangle_state(
+    rs: &[u32; RENDER_STATES],
+    texture: Option<TextureInfo>,
+) -> (PipelineKey, SamplerKey, u32) {
+    // Stippled alpha was the fallback for cards that couldn't blend; blending
+    // looks like what it was approximating.
+    let blend = if rs[RS_BLENDENABLE] != 0 || rs[RS_STIPPLEDALPHA] != 0 {
+        Some((rs[RS_SRCBLEND] as u8, rs[RS_DESTBLEND] as u8))
+    } else {
+        None
+    };
+    // No z-buffer is ever attached (AddAttachedSurface is unimplemented), so
+    // depth testing has nothing to test against.
+    let zbuffer = false;
+    let key = PipelineKey {
+        blend,
+        depth_test: (zbuffer && rs[RS_ZENABLE] != 0).then_some(rs[RS_ZFUNC] as u8),
+        depth_write: zbuffer && rs[RS_ZENABLE] != 0 && rs[RS_ZWRITEENABLE] != 0,
+        color_write: true,
+        cull: rs[RS_CULLMODE] as u8,
+    };
+    let sampler = SamplerKey {
+        linear_mag: filter_is_linear(rs[RS_TEXTUREMAG]),
+        linear_min: filter_is_linear(rs[RS_TEXTUREMIN]),
+        address: rs[RS_TEXTUREADDRESS] as u8,
+    };
+    let mut flags = match texture {
+        // Without a texture the diffuse color is drawn whatever the blend mode.
+        None => 2,
+        Some(_) => rs[RS_TEXTUREMAPBLEND] & gpu::flags::BLEND_MASK,
+    };
+    if let Some(texture) = texture {
+        flags |= gpu::flags::TEXTURED;
+        if texture.alpha {
+            flags |= gpu::flags::TEXTURE_ALPHA;
+        }
+        if texture.color_key && rs[RS_COLORKEYENABLE] != 0 {
+            flags |= gpu::flags::COLOR_KEY;
+        }
+    }
+    if rs[RS_SPECULARENABLE] != 0 {
+        flags |= gpu::flags::SPECULAR;
+    }
+    if rs[RS_FOGENABLE] != 0 {
+        flags |= gpu::flags::FOG;
+    }
+    if rs[RS_ALPHATESTENABLE] != 0 {
+        flags |= gpu::flags::ALPHA_TEST | ((rs[RS_ALPHAFUNC] & 0xf) << gpu::flags::ALPHA_FUNC_SHIFT);
+    }
+    (key, sampler, flags)
+}
+
+/// A D3DTLVERTEX (screen x/y, z, 1/w, diffuse, specular, u, v) in clip space
+/// for a target of the given size.
+fn tl_vertex(raw: &[u8; TLVERTEX_SIZE], width: f32, height: f32) -> gpu::Vertex {
+    let f = |o: usize| f32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+    let d = |o: usize| u32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+    let (sx, sy, sz, rhw) = (f(0), f(4), f(8), f(12));
+    let w = if rhw > 0.0 && rhw.is_finite() { 1.0 / rhw } else { 1.0 };
+    // Direct3D samples pixels at their integer coordinates, wgpu at their
+    // centers.
+    let x = (sx + 0.5) / width * 2.0 - 1.0;
+    let y = 1.0 - (sy + 0.5) / height * 2.0;
+    // Games put far vertices at exactly 1; keep them inside the clip volume.
+    let z = sz.clamp(0.0, 0.999_999);
+    gpu::Vertex {
+        pos: [x * w, y * w, z * w, w],
+        color: color(d(16)),
+        specular: color(d(20)),
+        uv: [f(24), f(28)],
+        ..Default::default()
     }
 }
 
@@ -347,7 +829,12 @@ pub mod IDirect3D {
     }
 
     #[win32_derive::dllexport]
-    pub fn EnumDevices(ctx: &mut Context, _this: u32, lpEnumDevicesCallback: u32, lpUserArg: u32) -> DD {
+    pub fn EnumDevices(
+        ctx: &mut Context,
+        _this: u32,
+        lpEnumDevicesCallback: u32,
+        lpUserArg: u32,
+    ) -> DD {
         // One hardware device. The software rasterizers real DirectX also lists
         // would only give the game something worse to pick.
         let guid = alloc(ctx, 16);
@@ -377,7 +864,12 @@ pub mod IDirect3D {
     }
 
     #[win32_derive::dllexport]
-    pub fn CreateLight(ctx: &mut Context, _this: u32, lplpDirect3DLight: u32, _pUnkOuter: u32) -> DD {
+    pub fn CreateLight(
+        ctx: &mut Context,
+        _this: u32,
+        lplpDirect3DLight: u32,
+        _pUnkOuter: u32,
+    ) -> DD {
         let addr = new_object(ctx, IDirect3DLight::new);
         ctx.memory.write::<u32>(lplpDirect3DLight, addr);
         DD::OK
@@ -455,16 +947,31 @@ pub mod IDirect3DDevice {
 
     #[win32_derive::dllexport]
     pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+        let mut d3d = state().d3d.borrow_mut();
+        d3d.device = None;
+        d3d.gpu_dirty = false;
+        d3d.cpu_dirty = false;
         0
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpd3d: u32, _lpGUID: u32, _lpd3ddvdesc: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpd3d: u32,
+        _lpGUID: u32,
+        _lpd3ddvdesc: u32,
+    ) -> DD {
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetCaps(ctx: &mut Context, _this: u32, lpD3DHWDevDesc: u32, lpD3DHELDevDesc: u32) -> DD {
+    pub fn GetCaps(
+        ctx: &mut Context,
+        _this: u32,
+        lpD3DHWDevDesc: u32,
+        lpD3DHELDevDesc: u32,
+    ) -> DD {
         if lpD3DHWDevDesc != 0 {
             write_hal_desc(ctx, lpD3DHWDevDesc);
         }
@@ -475,7 +982,12 @@ pub mod IDirect3DDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn SwapTextureHandles(_ctx: &mut Context, _this: u32, _lpD3DTex1: u32, _lpD3DTex2: u32) -> DD {
+    pub fn SwapTextureHandles(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpD3DTex1: u32,
+        _lpD3DTex2: u32,
+    ) -> DD {
         todo!()
     }
 
@@ -526,12 +1038,10 @@ pub mod IDirect3DDevice {
         let flags = ctx.memory.read::<u32>(lpDesc + 4);
         let size = ctx.memory.read::<u32>(lpDesc + 12);
         let data = if flags & 4 != 0 {
-            note("execute buffer with app-provided memory".into());
             Some(ctx.memory.read::<u32>(lpDesc + 16))
         } else {
             None
         };
-        note(format!("execute buffer flags {flags:#x}"));
         let addr = new_object(ctx, IDirect3DExecuteBuffer::new);
         state().d3d.borrow_mut().execute_buffers.insert(
             addr,
@@ -556,16 +1066,17 @@ pub mod IDirect3DDevice {
         _this: u32,
         lpDirect3DExecuteBuffer: u32,
         _lpDirect3DViewport: u32,
-        dwFlags: u32,
+        _dwFlags: u32,
     ) -> DD {
-        note(format!("Execute flags {dwFlags:#x}"));
         let (data, exec) = {
             let d3d = state().d3d.borrow();
-            let buffer = &d3d.execute_buffers[&lpDirect3DExecuteBuffer];
+            let Some(buffer) = d3d.execute_buffers.get(&lpDirect3DExecuteBuffer) else {
+                return DD::ERR_GENERIC;
+            };
             (buffer.data, buffer.execute_data)
         };
         if let Some(data) = data {
-            probe_execute(ctx, data, &exec);
+            execute(ctx, data, &exec);
         }
         DD::OK
     }
@@ -604,13 +1115,17 @@ pub mod IDirect3DDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn GetPickRecords(_ctx: &mut Context, _this: u32, _lpCount: u32, _lpD3DPickRec: u32) -> DD {
+    pub fn GetPickRecords(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpCount: u32,
+        _lpD3DPickRec: u32,
+    ) -> DD {
         stub!(DD::ERR_GENERIC)
     }
 
     #[win32_derive::dllexport]
     pub fn CreateMatrix(ctx: &mut Context, _this: u32, lpD3DMatHandle: u32) -> DD {
-        note("CreateMatrix".into());
         let handle = {
             let mut d3d = state().d3d.borrow_mut();
             d3d.next_matrix += 1;
@@ -621,13 +1136,25 @@ pub mod IDirect3DDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetMatrix(_ctx: &mut Context, _this: u32, _d3dMatHandle: u32, _lpD3DMatrix: u32) -> DD {
-        note("SetMatrix".into());
+    pub fn SetMatrix(
+        _ctx: &mut Context,
+        _this: u32,
+        _d3dMatHandle: u32,
+        _lpD3DMatrix: u32,
+    ) -> DD {
+        // Matrices only matter to PROCESSVERTICES transforms, which aren't
+        // implemented.
+        note("SetMatrix ignored".into());
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetMatrix(_ctx: &mut Context, _this: u32, _D3DMatHandle: u32, _lpD3DMatrix: u32) -> DD {
+    pub fn GetMatrix(
+        _ctx: &mut Context,
+        _this: u32,
+        _D3DMatHandle: u32,
+        _lpD3DMatrix: u32,
+    ) -> DD {
         stub!(DD::ERR_GENERIC)
     }
 
@@ -644,16 +1171,9 @@ pub mod IDirect3DDevice {
     #[win32_derive::dllexport]
     pub fn EndScene(_ctx: &mut Context, _this: u32) -> DD {
         let mut d3d = state().d3d.borrow_mut();
-        let probe = &mut d3d.probe;
-        probe.scenes += 1;
-        if probe.scenes % 300 == 0 {
-            log::info!(
-                "d3d: {} scenes: {} executes, {} triangles, {} vertices",
-                probe.scenes,
-                probe.executes,
-                probe.triangles,
-                probe.vertices
-            );
+        d3d.scenes += 1;
+        if d3d.scenes % 600 == 0 {
+            log::info!("d3d: {} scenes, {} triangles", d3d.scenes, d3d.triangles);
         }
         DD::OK
     }
@@ -695,14 +1215,22 @@ pub mod IDirect3DExecuteBuffer {
     #[win32_derive::dllexport]
     pub fn Release(ctx: &mut Context, this: u32) -> u32 {
         let buffer = state().d3d.borrow_mut().execute_buffers.remove(&this);
-        if let Some(ExecuteBuffer { data: Some(data), .. }) = buffer {
+        if let Some(ExecuteBuffer {
+            data: Some(data), ..
+        }) = buffer
+        {
             kernel32::lock().process_heap.free(&mut ctx.memory, data);
         }
         0
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpDirect3DDevice: u32, _lpDesc: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpDirect3DDevice: u32,
+        _lpDesc: u32,
+    ) -> DD {
         DD::OK
     }
 
@@ -717,7 +1245,13 @@ pub mod IDirect3DExecuteBuffer {
             Some(data) => data,
             None => {
                 let data = alloc(ctx, size);
-                state().d3d.borrow_mut().execute_buffers.get_mut(&this).unwrap().data = Some(data);
+                state()
+                    .d3d
+                    .borrow_mut()
+                    .execute_buffers
+                    .get_mut(&this)
+                    .unwrap()
+                    .data = Some(data);
                 data
             }
         };
@@ -737,7 +1271,13 @@ pub mod IDirect3DExecuteBuffer {
         for (i, value) in exec.iter_mut().enumerate() {
             *value = ctx.memory.read::<u32>(lpData + 4 + i as u32 * 4);
         }
-        state().d3d.borrow_mut().execute_buffers.get_mut(&this).unwrap().execute_data = exec;
+        state()
+            .d3d
+            .borrow_mut()
+            .execute_buffers
+            .get_mut(&this)
+            .unwrap()
+            .execute_data = exec;
         DD::OK
     }
 
@@ -799,7 +1339,8 @@ pub mod IDirect3DViewport {
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+    pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
+        state().d3d.borrow_mut().backgrounds.remove(&this);
         0
     }
 
@@ -816,21 +1357,15 @@ pub mod IDirect3DViewport {
     #[win32_derive::dllexport]
     pub fn SetViewport(ctx: &mut Context, _this: u32, lpData: u32) -> DD {
         // D3DVIEWPORT: dwSize, dwX, dwY, dwWidth, dwHeight, then floats dvScaleX,
-        // dvScaleY, dvMaxX, dvMaxY, dvMinZ, dvMaxZ.
+        // dvScaleY, dvMaxX, dvMaxY, dvMinZ, dvMaxZ. TL vertices are already in
+        // screen space, so none of it affects drawing.
         let d = |i: u32| ctx.memory.read::<u32>(lpData + i * 4);
-        let f = |i: u32| ctx.memory.read::<f32>(lpData + i * 4);
         note(format!(
-            "viewport {}x{} at {},{} scale {} {} max {} {} z {}..{}",
+            "viewport {}x{} at {},{}",
             d(3),
             d(4),
             d(1),
-            d(2),
-            f(5),
-            f(6),
-            f(7),
-            f(8),
-            f(9),
-            f(10)
+            d(2)
         ));
         DD::OK
     }
@@ -848,13 +1383,18 @@ pub mod IDirect3DViewport {
     }
 
     #[win32_derive::dllexport]
-    pub fn LightElements(_ctx: &mut Context, _this: u32, _dwElementCount: u32, _lpData: u32) -> DD {
+    pub fn LightElements(
+        _ctx: &mut Context,
+        _this: u32,
+        _dwElementCount: u32,
+        _lpData: u32,
+    ) -> DD {
         todo!()
     }
 
     #[win32_derive::dllexport]
-    pub fn SetBackground(_ctx: &mut Context, _this: u32, _hMat: u32) -> DD {
-        note("SetBackground".into());
+    pub fn SetBackground(_ctx: &mut Context, this: u32, hMat: u32) -> DD {
+        state().d3d.borrow_mut().backgrounds.insert(this, hMat);
         DD::OK
     }
 
@@ -865,24 +1405,69 @@ pub mod IDirect3DViewport {
 
     #[win32_derive::dllexport]
     pub fn SetBackgroundDepth(_ctx: &mut Context, _this: u32, _lpDDSurface: u32) -> DD {
-        note("SetBackgroundDepth".into());
+        note("SetBackgroundDepth ignored".into());
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn GetBackgroundDepth(_ctx: &mut Context, _this: u32, _lplpDDSurface: u32, _lpValid: u32) -> DD {
+    pub fn GetBackgroundDepth(
+        _ctx: &mut Context,
+        _this: u32,
+        _lplpDDSurface: u32,
+        _lpValid: u32,
+    ) -> DD {
         todo!()
     }
 
     #[win32_derive::dllexport]
-    pub fn Clear(_ctx: &mut Context, _this: u32, dwCount: u32, _lpRects: u32, dwFlags: u32) -> DD {
-        note(format!("viewport Clear flags {dwFlags:#x} ({dwCount} rects)"));
+    pub fn Clear(ctx: &mut Context, this: u32, dwCount: u32, lpRects: u32, dwFlags: u32) -> DD {
+        const D3DCLEAR_TARGET: u32 = 1;
+        const D3DCLEAR_ZBUFFER: u32 = 2;
+        let mut d3d = state().d3d.borrow_mut();
+        let d3d = &mut *d3d;
+        let Some((width, height)) = d3d.device.as_ref().map(|d| {
+            let t = d.target.borrow();
+            (t.width, t.height)
+        }) else {
+            return DD::OK;
+        };
+        let background = d3d
+            .backgrounds
+            .get(&this)
+            .and_then(|m| d3d.materials.get(m))
+            .copied()
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        let rects: Vec<[u32; 4]> = (0..dwCount)
+            .map(|i| {
+                let r = |o: u32| ctx.memory.read::<i32>(lpRects + i * 16 + o).max(0) as u32;
+                [r(0), r(4), r(8).min(width), r(12).min(height)]
+            })
+            .collect();
+        let covers_all = rects.iter().any(|r| *r == [0, 0, width, height]);
+        if dwFlags & D3DCLEAR_TARGET != 0 && covers_all {
+            // Whatever the game drew is about to be painted over.
+            d3d.cpu_dirty = false;
+        }
+        let Some(gpu) = d3d.gpu() else {
+            return DD::OK;
+        };
+        gpu.set_target_size(width, height);
+        sync_to_gpu(ctx, d3d);
+        let gpu = d3d.gpu.as_mut().unwrap();
+        for rect in rects {
+            gpu.clear(
+                Some(rect),
+                (dwFlags & D3DCLEAR_TARGET != 0).then_some(background),
+                (dwFlags & D3DCLEAR_ZBUFFER != 0).then_some(1.0),
+            );
+        }
+        d3d.gpu_dirty = true;
         DD::OK
     }
 
     #[win32_derive::dllexport]
     pub fn AddLight(_ctx: &mut Context, _this: u32, _lpDirect3DLight: u32) -> DD {
-        note("AddLight".into());
+        note("AddLight ignored".into());
         DD::OK
     }
 
@@ -931,7 +1516,8 @@ pub mod IDirect3DMaterial {
     }
 
     #[win32_derive::dllexport]
-    pub fn Release(_ctx: &mut Context, _this: u32) -> u32 {
+    pub fn Release(_ctx: &mut Context, this: u32) -> u32 {
+        state().d3d.borrow_mut().materials.remove(&this);
         0
     }
 
@@ -941,8 +1527,11 @@ pub mod IDirect3DMaterial {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetMaterial(_ctx: &mut Context, _this: u32, _lpMat: u32) -> DD {
-        note("SetMaterial".into());
+    pub fn SetMaterial(ctx: &mut Context, this: u32, lpMat: u32) -> DD {
+        // D3DMATERIAL: dwSize, then the diffuse D3DCOLORVALUE (r, g, b, a).
+        let c = |i: u32| ctx.memory.read::<f32>(lpMat + 4 + i * 4);
+        let diffuse = [c(0), c(1), c(2), c(3)];
+        state().d3d.borrow_mut().materials.insert(this, diffuse);
         DD::OK
     }
 
@@ -1004,7 +1593,7 @@ pub mod IDirect3DLight {
 
     #[win32_derive::dllexport]
     pub fn SetLight(_ctx: &mut Context, _this: u32, _lpLight: u32) -> DD {
-        note("SetLight".into());
+        note("SetLight ignored".into());
         DD::OK
     }
 
@@ -1047,7 +1636,12 @@ pub mod IDirect3DTexture {
     }
 
     #[win32_derive::dllexport]
-    pub fn Initialize(_ctx: &mut Context, _this: u32, _lpD3DDevice: u32, _lpDDSurface: u32) -> DD {
+    pub fn Initialize(
+        _ctx: &mut Context,
+        _this: u32,
+        _lpD3DDevice: u32,
+        _lpDDSurface: u32,
+    ) -> DD {
         DD::OK
     }
 
@@ -1060,13 +1654,53 @@ pub mod IDirect3DTexture {
 
     #[win32_derive::dllexport]
     pub fn PaletteChanged(_ctx: &mut Context, _this: u32, _dwStart: u32, _dwCount: u32) -> DD {
-        note("texture PaletteChanged".into());
+        // Palette changes are noticed through the palette's generation.
         DD::OK
     }
 
     #[win32_derive::dllexport]
-    pub fn Load(_ctx: &mut Context, _this: u32, _lpD3DTexture: u32) -> DD {
-        note("texture Load".into());
+    pub fn Load(ctx: &mut Context, this: u32, lpD3DTexture: u32) -> DD {
+        // Copy a texture (typically one in system memory) into this one.
+        let surfaces = {
+            let d3d = state().d3d.borrow();
+            let surf = state().surf.borrow();
+            let lookup = |texture| {
+                d3d.textures
+                    .get(&texture)
+                    .and_then(|s| surf.get(s))
+                    .cloned()
+            };
+            lookup(this).zip(lookup(lpD3DTexture))
+        };
+        let Some((dst, src)) = surfaces else {
+            return DD::ERR_GENERIC;
+        };
+        if Rc::ptr_eq(&dst, &src) {
+            return DD::OK;
+        }
+        let (src_pixels, size, palette, key) = {
+            let mut src = src.borrow_mut();
+            let addr = src.lock(&mut ctx.memory);
+            (
+                addr,
+                src.width * src.height * src.bytes_per_pixel,
+                src.palette.clone(),
+                src.src_color_key,
+            )
+        };
+        let mut dst = dst.borrow_mut();
+        let dst_size = dst.width * dst.height * dst.bytes_per_pixel;
+        let dst_pixels = dst.lock(&mut ctx.memory);
+        let (src_pixels, dst_pixels) = (src_pixels as usize, dst_pixels as usize);
+        ctx.memory.bytes.copy_within(
+            src_pixels..src_pixels + size.min(dst_size) as usize,
+            dst_pixels,
+        );
+        if palette.is_some() {
+            dst.palette = palette;
+        }
+        dst.src_color_key = key;
+        dst.generation = crate::ddraw::next_generation();
         DD::OK
     }
 
@@ -1080,15 +1714,34 @@ pub mod IDirect3DTexture {
 
 /// IDirectDrawSurface::QueryInterface for the Direct3D interfaces a surface
 /// can hand out: a device (rendering into the surface) or a texture.
-pub fn surface_query_interface(ctx: &mut Context, surface: u32, iid: &GUID, ppv: u32) -> Option<DD> {
+pub fn surface_query_interface(
+    ctx: &mut Context,
+    surface: u32,
+    iid: &GUID,
+    ppv: u32,
+) -> Option<DD> {
     let addr = if *iid == IID_IDirect3DHALDevice {
-        let (width, height, bpp) = {
-            let surfaces = state().surf.borrow();
-            let s = surfaces.get(&surface)?.borrow();
-            (s.width, s.height, s.bytes_per_pixel * 8)
-        };
-        note(format!("device on a {width}x{height}x{bpp} surface"));
-        new_object(ctx, IDirect3DDevice::new)
+        let target = state().surf.borrow().get(&surface)?.clone();
+        let addr = new_object(ctx, IDirect3DDevice::new);
+        let mut d3d = state().d3d.borrow_mut();
+        {
+            let t = target.borrow();
+            d3d.note(format!(
+                "device on a {}x{}x{} surface",
+                t.width,
+                t.height,
+                t.bytes_per_pixel * 8
+            ));
+        }
+        d3d.device = Some(Device {
+            target,
+            render_states: default_render_states(),
+            vertices: Vec::new(),
+        });
+        // Whatever the surface holds so far goes under the first triangles.
+        d3d.cpu_dirty = true;
+        d3d.gpu_dirty = false;
+        addr
     } else if *iid == IID_IDirect3DTexture {
         let addr = new_object(ctx, IDirect3DTexture::new);
         state().d3d.borrow_mut().textures.insert(addr, surface);

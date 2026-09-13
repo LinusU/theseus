@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bitflags = { workspace = true }
 bitflags-derive = { workspace = true }
+bytemuck = { version = "1.25", features = ["derive"] }
 exe = { workspace = true }
 host = { workspace = true }
 log = { workspace = true }
@@ -13,3 +14,8 @@ runtime = { workspace = true }
 widestring = { workspace = true }
 win32-derive = { path = "../derive" }
 zerocopy = { workspace = true }
+
+# Direct3D draws through wgpu natively; the web build has no renderer yet.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+pollster = "0.4"
+wgpu = "30"

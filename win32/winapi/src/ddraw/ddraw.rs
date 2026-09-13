@@ -243,7 +243,7 @@ pub struct Surface {
 
 impl Surface {
     pub fn lock(&mut self, mem: &mut Memory) -> u32 {
-        match self.pixels {
+        let addr = match self.pixels {
             Some(addr) => addr,
             None => {
                 let size = self.width * self.height * self.bytes_per_pixel;
@@ -253,7 +253,10 @@ impl Surface {
                 self.pixels = Some(addr);
                 addr
             }
-        }
+        };
+        // A Direct3D render target's latest pixels may still be on the GPU.
+        super::d3d::cpu_access(mem, self, true);
+        addr
     }
 
     pub fn unlock(&mut self, mem: &mut Memory) {
@@ -269,7 +272,7 @@ impl Surface {
     /// `palette` for palettized formats. Borrows the pixels directly when they
     /// are already RGBA. Returns None when there is nothing to show, e.g. an
     /// 8-bit surface with no palette attached yet.
-    fn to_rgba<'a>(
+    pub(crate) fn to_rgba<'a>(
         &self,
         mem: &'a Memory,
         palette: &Option<Rc<RefCell<Palette>>>,
@@ -368,6 +371,7 @@ impl Surface {
         };
 
         let mut back = self.attached.as_ref().unwrap().borrow_mut();
+        super::d3d::cpu_access(mem, &back, false);
         // A palette is only needed to expand indexed (8-bit) pixels; 16/32bpp
         // buffers convert without one, so gating this on `palette.is_some()`
         // left 16bpp games (Moto Racer's RGB565) re-presenting a stale
