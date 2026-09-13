@@ -26,6 +26,10 @@ pub struct MainThread {
     /// Mouse buttons currently held. Button events carry no mask of their own,
     /// so it is tracked as they arrive.
     buttons: std::cell::Cell<host::MouseButton>,
+    /// Windows are this many times the size the program asks for
+    /// (THESEUS_WINDOW_SCALE); mouse positions are scaled back down, so the
+    /// program never knows.
+    window_scale: u32,
 }
 
 pub struct Host {
@@ -193,8 +197,8 @@ impl MainThread {
                     // Motion events do carry the mask, so resync from them.
                     self.buttons.set(mouse_buttons_from_sdl(event.state));
                     return Some(host::Message::MouseMove(host::MouseMessage {
-                        x: event.x as u32,
-                        y: event.y as u32,
+                        x: (event.x / self.window_scale as f32) as u32,
+                        y: (event.y / self.window_scale as f32) as u32,
                         button: host::MouseButton::empty(),
                         buttons: mouse_buttons_from_sdl(event.state),
                     }));
@@ -220,8 +224,8 @@ impl MainThread {
                     }
                     self.buttons.set(buttons);
                     let message = host::MouseMessage {
-                        x: event.x as u32,
-                        y: event.y as u32,
+                        x: (event.x / self.window_scale as f32) as u32,
+                        y: (event.y / self.window_scale as f32) as u32,
                         button,
                         buttons,
                     };
@@ -267,9 +271,14 @@ impl MainThread {
                 sdl::init::SDL_INIT_VIDEO
             }));
         }
+        let window_scale = std::env::var("THESEUS_WINDOW_SCALE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map_or(1, |scale: u32| scale.clamp(1, 8));
         Self {
             headless,
             buttons: Default::default(),
+            window_scale,
         }
     }
 
@@ -328,6 +337,8 @@ pub struct Window {
     window: *mut sdl::video::SDL_Window,
     /// null when running in headless mode
     renderer: *mut sdl::render::SDL_Renderer,
+    /// See `MainThread::window_scale`.
+    scale: u32,
 }
 
 impl Window {
@@ -357,8 +368,8 @@ impl Window {
         unsafe {
             check(sdl::video::SDL_SetWindowSize(
                 self.window,
-                width as i32,
-                height as i32,
+                (width * self.scale) as i32,
+                (height * self.scale) as i32,
             ));
         }
     }
@@ -400,13 +411,14 @@ impl MainThread {
             return Window {
                 window: std::ptr::null_mut(),
                 renderer: std::ptr::null_mut(),
+                scale: self.window_scale,
             };
         }
         unsafe {
             let window = sdl::video::SDL_CreateWindow(
                 CString::new(title).unwrap().as_ptr(),
-                width as i32,
-                height as i32,
+                (width * self.window_scale) as i32,
+                (height * self.window_scale) as i32,
                 sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY,
             );
             let renderer = sdl::render::SDL_CreateRenderer(window, std::ptr::null());
@@ -415,7 +427,11 @@ impl MainThread {
                 renderer,
                 sdl::surface::SDL_ScaleMode::NEAREST,
             ));
-            Window { window, renderer }
+            Window {
+                window,
+                renderer,
+                scale: self.window_scale,
+            }
         }
     }
 }
