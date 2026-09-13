@@ -485,15 +485,61 @@ fn surface_bytes<'a>(mem: &'a Memory, surface: &Surface, pixels: u32) -> &'a [u8
 /// target and the GPU drew this frame, show the GPU's full-resolution image
 /// (with the game's 2D laid on top) instead of the surface's memory, and
 /// report that it was shown.
-pub fn present(mem: &mut Memory, surface: &Surface, host: &mut host::Window) -> bool {
+///
+/// Once there is a GPU, it presents to the window itself where it can (see
+/// `host::Window::metal_layer`): every frame from then on, with or without
+/// 3D, and nothing is read back to be shown.
+pub fn present(
+    mem: &mut Memory,
+    surface: &Surface,
+    palette: &Option<Rc<RefCell<super::Palette>>>,
+    host: &mut host::Window,
+) -> bool {
     let Ok(mut d3d) = state().d3d.try_borrow_mut() else {
         return false;
     };
     let d3d = &mut *d3d;
-    let Some(device) = &d3d.device else {
-        return false;
-    };
-    if !std::ptr::eq(device.target.as_ptr(), surface) || !d3d.gpu_frame {
+    let is_target = d3d
+        .device
+        .as_ref()
+        .is_some_and(|device| std::ptr::eq(device.target.as_ptr(), surface));
+
+    #[cfg(not(target_family = "wasm"))]
+    if d3d.gpu.is_some() {
+        if let Some(layer) = host.metal_layer() {
+            let gpu_frame = is_target && std::mem::take(&mut d3d.gpu_frame);
+            if gpu_frame {
+                sync_to_gpu(mem, d3d, surface);
+            } else if is_target {
+                cpu_access(mem, surface, false);
+            }
+            let pixels = host.pixel_size();
+            let gpu = d3d.gpu.as_mut().unwrap();
+            if gpu_frame {
+                gpu.present(layer, pixels, gpu::Frame::Target);
+                if super::ddraw::dumping_frames() {
+                    if let Some((_, Some((full, width, height)))) = gpu.read_frames(true) {
+                        super::ddraw::dump_frame(&full, width, height);
+                    }
+                }
+            } else if let Some(rgba) = surface.to_rgba(mem, palette) {
+                super::ddraw::dump_frame(&rgba, surface.width, surface.height);
+                gpu.present(
+                    layer,
+                    pixels,
+                    gpu::Frame::Pixels {
+                        rgba: &rgba,
+                        width: surface.width,
+                        height: surface.height,
+                    },
+                );
+            }
+            host.frame_presented();
+            return true;
+        }
+    }
+
+    if !is_target || !d3d.gpu_frame {
         return false;
     }
     d3d.gpu_frame = false;

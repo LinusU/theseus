@@ -141,16 +141,75 @@ const DOWNSAMPLE_SHADER: &str = r#"
 }
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-    let base = vec2i(pos.xy) * SCALE;
+    let base = vec2i(floor(floor(pos.xy) * RATIO));
+    let limit = vec2i(textureDimensions(source)) - 1;
     var sum = vec4f(0.0);
-    for (var y = 0; y < SCALE; y++) {
-        for (var x = 0; x < SCALE; x++) {
-            sum += textureLoad(source, base + vec2i(x, y), 0);
+    for (var y = 0; y < TAPS.y; y++) {
+        for (var x = 0; x < TAPS.x; x++) {
+            sum += textureLoad(source, min(base + vec2i(x, y), limit), 0);
         }
     }
-    return sum / f32(SCALE * SCALE);
+    return sum / f32(TAPS.x * TAPS.y);
 }
 "#;
+
+/// Draws a texture over the whole viewport, for presenting to a window:
+/// `fs_smooth` for the render target (already about the window's size), `fs_sharp`
+/// for the game's own pixels, which stay crisp without coming out uneven when
+/// the window isn't a whole multiple of their size.
+#[cfg(not(target_family = "wasm"))]
+const PRESENT_SHADER: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+
+struct VOut {
+    @builtin(position) pos: vec4f,
+    @location(0) uv: vec2f,
+};
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
+    var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+    let c = corners[i];
+    return VOut(vec4f(c, 0.0, 1.0), vec2f((c.x + 1.0) * 0.5, (1.0 - c.y) * 0.5));
+}
+
+@fragment fn fs_smooth(f: VOut) -> @location(0) vec4f {
+    return vec4f(textureSampleLevel(source, samp, f.uv, 0.0).rgb, 1.0);
+}
+
+@fragment fn fs_sharp(f: VOut) -> @location(0) vec4f {
+    let size = vec2f(textureDimensions(source));
+    var texel = f.uv * size;
+    // Blend neighbours only within a screen pixel of the edge between them.
+    let seam = floor(texel + 0.5);
+    let per_pixel = max(fwidth(texel), vec2f(1e-5));
+    texel = seam + clamp((texel - seam) / per_pixel, vec2f(-0.5), vec2f(0.5));
+    return vec4f(textureSampleLevel(source, samp, texel / size, 0.0).rgb, 1.0);
+}
+"#;
+
+/// What `Gpu::present` shows.
+#[cfg(not(target_family = "wasm"))]
+pub enum Frame<'a> {
+    /// The render target.
+    Target,
+    /// RGBA pixels the game drew itself.
+    Pixels { rgba: &'a [u8], width: u32, height: u32 },
+}
+
+/// Presenting to a window.
+#[cfg(not(target_family = "wasm"))]
+struct Screen {
+    layer: *mut std::ffi::c_void,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    bind_layout: wgpu::BindGroupLayout,
+    smooth: wgpu::RenderPipeline,
+    sharp: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    /// For `Frame::Pixels`, with its size.
+    pixels: Option<(u32, u32, wgpu::Texture)>,
+}
 
 /// Render state that needs its own pipeline.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -243,8 +302,9 @@ struct Target {
     /// The game's size.
     width: u32,
     height: u32,
-    /// The render target is this many times larger in each direction.
-    scale: u32,
+    /// The render target's own size.
+    full_width: u32,
+    full_height: u32,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
@@ -263,6 +323,13 @@ struct Target {
 
 #[cfg(not(target_family = "wasm"))]
 pub struct Gpu {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    /// Set once presenting to a window (see `present`).
+    screen: Option<Screen>,
+    /// The size the window last showed the game at, in pixels, which the
+    /// render target follows.
+    output_size: Option<(u32, u32)>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     shader: wgpu::ShaderModule,
@@ -321,16 +388,22 @@ fn compare(d3d: u8) -> wgpu::CompareFunction {
     }
 }
 
+/// THESEUS_D3D_SCALE: render at this many times the game's size, whatever
+/// the window's size.
 #[cfg(not(target_family = "wasm"))]
-fn scale_from_env() -> u32 {
-    if let Some(scale) = std::env::var("THESEUS_D3D_SCALE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        return u32::clamp(scale, 1, 8);
-    }
-    2
+fn scale_from_env() -> Option<u32> {
+    static SCALE: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *SCALE.get_or_init(|| {
+        std::env::var("THESEUS_D3D_SCALE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(|scale: u32| scale.clamp(1, 8))
+    })
 }
+
+/// Textures up to this size are guaranteed by wgpu's default limits.
+#[cfg(not(target_family = "wasm"))]
+const MAX_TARGET_SIZE: u32 = 8192;
 
 #[cfg(not(target_family = "wasm"))]
 impl Gpu {
@@ -381,6 +454,10 @@ impl Gpu {
         });
 
         let mut gpu = Gpu {
+            instance,
+            adapter,
+            screen: None,
+            output_size: None,
             device,
             queue,
             shader,
@@ -396,15 +473,23 @@ impl Gpu {
         Some(gpu)
     }
 
-    /// Make the render target match the game's back buffer size.
+    /// Make the render target right for a back buffer of the game's size: as
+    /// large as the window shows it (see `present`), or THESEUS_D3D_SCALE
+    /// times the game's size, or without either twice that.
     pub fn set_target_size(&mut self, width: u32, height: u32) {
+        let (w, h) = match (scale_from_env(), self.output_size) {
+            (Some(scale), _) => (width * scale, height * scale),
+            (None, Some((w, h))) => (w, h),
+            (None, None) => (width * 2, height * 2),
+        };
+        let (w, h) = (w.clamp(1, MAX_TARGET_SIZE), h.clamp(1, MAX_TARGET_SIZE));
         if let Some(target) = &self.target {
-            if (target.width, target.height) == (width, height) {
+            if (target.width, target.height, target.full_width, target.full_height)
+                == (width, height, w, h)
+            {
                 return;
             }
         }
-        let scale = scale_from_env();
-        let (w, h) = (width * scale, height * scale);
         let texture = |format, usage| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("d3d target"),
@@ -484,7 +569,15 @@ impl Gpu {
         let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("d3d downsample"),
             source: wgpu::ShaderSource::Wgsl(
-                format!("const SCALE: i32 = {scale};\n{DOWNSAMPLE_SHADER}").into(),
+                {
+                    let (rx, ry) = (w as f32 / width as f32, h as f32 / height as f32);
+                    let (tx, ty) = (rx.ceil().max(1.0) as i32, ry.ceil().max(1.0) as i32);
+                    format!(
+                        "const RATIO = vec2f({rx:?}, {ry:?});\n\
+                         const TAPS = vec2i({tx}, {ty});\n{DOWNSAMPLE_SHADER}"
+                    )
+                    .into()
+                },
             ),
         });
         let downsample = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -525,7 +618,8 @@ impl Gpu {
         self.target = Some(Target {
             width,
             height,
-            scale,
+            full_width: w,
+            full_height: h,
             color_view,
             color,
             depth_view: depth.create_view(&Default::default()),
@@ -883,7 +977,8 @@ impl Gpu {
     /// round trip.
     pub fn read_frames(&mut self, full: bool) -> Option<(Vec<u8>, Option<(Vec<u8>, u32, u32)>)> {
         let target = self.target.as_ref()?;
-        let (scale, w, h) = (target.scale, target.width, target.height);
+        let (w, h) = (target.width, target.height);
+        let (full_w, full_h) = (target.full_width, target.full_height);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -908,7 +1003,7 @@ impl Gpu {
         }
         let mut reads = vec![(&target.small, &target.small_readback, target.small_padded_row, w, h)];
         if full {
-            reads.push((&target.color, &target.readback, target.padded_row, w * scale, h * scale));
+            reads.push((&target.color, &target.readback, target.padded_row, full_w, full_h));
         }
         for &(texture, buffer, row, width, height) in &reads {
             encoder.copy_texture_to_buffer(
@@ -953,8 +1048,235 @@ impl Gpu {
         }
         let mut images = images.into_iter();
         let small = images.next()?;
-        let full = images.next().map(|pixels| (pixels, w * scale, h * scale));
+        let full = images.next().map(|pixels| (pixels, full_w, full_h));
         Some((small, full))
+    }
+
+    /// Show a frame in the window whose Metal layer this is, `pixels` large,
+    /// scaled to fit and centered, waiting for the display if it's vsynced
+    /// (unless THESEUS_VSYNC=0). The render target then follows the size the
+    /// game is shown at. Returns whether a frame was shown.
+    pub fn present(&mut self, layer: *mut std::ffi::c_void, pixels: (u32, u32), frame: Frame) -> bool {
+        if pixels.0 == 0 || pixels.1 == 0 {
+            return false;
+        }
+        if self.screen.as_ref().is_none_or(|s| s.layer != layer) {
+            match self.new_screen(layer, pixels) {
+                Some(screen) => self.screen = Some(screen),
+                None => return false,
+            }
+        }
+        let screen = self.screen.as_mut().unwrap();
+        if (screen.config.width, screen.config.height) != pixels {
+            (screen.config.width, screen.config.height) = pixels;
+            screen.surface.configure(&self.device, &screen.config);
+        }
+
+        let (view, program_size, sharp) = match frame {
+            Frame::Target => {
+                let Some(target) = &self.target else {
+                    return false;
+                };
+                (target.color_view.clone(), (target.width, target.height), false)
+            }
+            Frame::Pixels { rgba, width, height } => {
+                if !matches!(&screen.pixels, Some((w, h, _)) if (*w, *h) == (width, height)) {
+                    let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("d3d present pixels"),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: COLOR_FORMAT,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    screen.pixels = Some((width, height, texture));
+                }
+                let texture = &screen.pixels.as_ref().unwrap().2;
+                self.queue.write_texture(
+                    texture.as_image_copy(),
+                    rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                (texture.create_view(&Default::default()), (width, height), true)
+            }
+        };
+
+        let output = match screen.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                screen.surface.configure(&self.device, &screen.config);
+                return false;
+            }
+            _ => return false,
+        };
+        let (x, y, w, h) = host::fit_rect(pixels, program_size);
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d present"),
+            layout: &screen.bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&screen.sampler),
+                },
+            ],
+        });
+        let output_view = output.texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("d3d present"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_pipeline(if sharp { &screen.sharp } else { &screen.smooth });
+            pass.set_bind_group(0, &bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit([encoder.finish()]);
+        self.queue.present(output);
+        if !sharp {
+            self.output_size = Some((w.round() as u32, h.round() as u32));
+        }
+        true
+    }
+
+    fn new_screen(&self, layer: *mut std::ffi::c_void, pixels: (u32, u32)) -> Option<Screen> {
+        let surface = match unsafe {
+            self.instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
+        } {
+            Ok(surface) => surface,
+            Err(err) => {
+                log::warn!("d3d: can't present to the window: {err}");
+                return None;
+            }
+        };
+        let mut config = surface.get_default_config(&self.adapter, pixels.0, pixels.1)?;
+        // The target holds the game's colors as they are; show them unconverted.
+        let caps = surface.get_capabilities(&self.adapter);
+        if let Some(format) = caps.formats.iter().find(|f| !f.is_srgb()) {
+            config.format = *format;
+        }
+        let vsync = std::env::var("THESEUS_VSYNC").map_or(true, |v| v != "0");
+        config.present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        surface.configure(&self.device, &config);
+        log::info!(
+            "d3d: presenting to the window at {}x{} ({:?}, {:?})",
+            pixels.0,
+            pixels.1,
+            config.format,
+            config.present_mode
+        );
+
+        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("d3d present"),
+            source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
+        });
+        let bind_layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("d3d present"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("d3d present"),
+            bind_group_layouts: &[Some(&bind_layout)],
+            immediate_size: 0,
+        });
+        let pipeline = |entry_point| {
+            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("d3d present"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let (smooth, sharp) = (pipeline("fs_smooth"), pipeline("fs_sharp"));
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("d3d present"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Some(Screen {
+            layer,
+            surface,
+            config,
+            bind_layout,
+            smooth,
+            sharp,
+            sampler,
+            pixels: None,
+        })
     }
 }
 

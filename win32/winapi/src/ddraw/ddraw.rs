@@ -424,7 +424,7 @@ impl Surface {
         };
 
         let mut back = self.attached.as_ref().unwrap().borrow_mut();
-        if super::d3d::present(mem, &back, &mut window.borrow_mut().host) {
+        if super::d3d::present(mem, &back, &self.palette, &mut window.borrow_mut().host) {
             return;
         }
         super::d3d::cpu_access(mem, &back, false);
@@ -463,7 +463,7 @@ fn dump_dir() -> Option<&'static str> {
     None
 }
 
-fn dumping_frames() -> bool {
+pub(crate) fn dumping_frames() -> bool {
     dump_dir().is_some()
 }
 
