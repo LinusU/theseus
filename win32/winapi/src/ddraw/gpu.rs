@@ -126,6 +126,30 @@ fn alpha_passes(func: u32, a: f32, r: f32) -> bool {
 }
 "#;
 
+/// Averages each SCALE x SCALE block of the target into one pixel of a
+/// game-size copy, so reading back what DirectDraw's memory needs doesn't mean
+/// reading back the whole target.
+#[cfg(not(target_family = "wasm"))]
+const DOWNSAMPLE_SHADER: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    var corners = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+    return vec4f(corners[i], 0.0, 1.0);
+}
+
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    let base = vec2i(pos.xy) * SCALE;
+    var sum = vec4f(0.0);
+    for (var y = 0; y < SCALE; y++) {
+        for (var x = 0; x < SCALE; x++) {
+            sum += textureLoad(source, base + vec2i(x, y), 0);
+        }
+    }
+    return sum / f32(SCALE * SCALE);
+}
+"#;
+
 /// Render state that needs its own pipeline.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PipelineKey {
@@ -197,6 +221,13 @@ struct Target {
     padded_row: u32,
     /// The game's size, for uploading what it drew to the back buffer.
     staging: wgpu::Texture,
+    /// The game's size, averaged down from `color` by `downsample`.
+    small: wgpu::Texture,
+    small_view: wgpu::TextureView,
+    small_readback: wgpu::Buffer,
+    small_padded_row: u32,
+    downsample: wgpu::RenderPipeline,
+    downsample_bind: wgpu::BindGroup,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -361,7 +392,9 @@ impl Gpu {
         };
         let color = texture(
             COLOR_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         let depth = texture(DEPTH_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT);
         let padded_row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -394,17 +427,85 @@ impl Gpu {
                 bind_groups: HashMap::new(),
             },
         );
+        let small = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("d3d game size"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: COLOR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let small_padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let small_readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("d3d game size readback"),
+            size: (small_padded_row * height) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("d3d downsample"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("const SCALE: i32 = {scale};\n{DOWNSAMPLE_SHADER}").into(),
+            ),
+        });
+        let downsample = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("d3d downsample"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let color_view = color.create_view(&Default::default());
+        let downsample_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("d3d downsample"),
+            layout: &downsample.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&color_view),
+            }],
+        });
         log::info!("d3d: {width}x{height} target rendered at {w}x{h}");
         self.target = Some(Target {
             width,
             height,
             scale,
-            color_view: color.create_view(&Default::default()),
+            color_view,
             color,
             depth_view: depth.create_view(&Default::default()),
             readback,
             padded_row,
             staging,
+            small_view: small.create_view(&Default::default()),
+            small,
+            small_readback,
+            small_padded_row,
+            downsample,
+            downsample_bind,
         });
     }
 
@@ -715,84 +816,89 @@ impl Gpu {
         );
     }
 
-    /// Read the target back at the game's size (RGBA), averaging each
-    /// scale x scale block.
+    /// Read the target back at the game's size (RGBA), averaged on the GPU.
     pub fn read(&mut self) -> Option<Vec<u8>> {
-        let (full, width, height, scale) = self.read_full()?;
-        Some(downsample(&full, width / scale, height / scale, scale))
+        self.read_frames(false).map(|(small, _)| small)
     }
 
-    /// Read the whole target back (RGBA), with its width, height and scale.
-    pub fn read_full(&mut self) -> Option<(Vec<u8>, u32, u32, u32)> {
+    /// Read the target back at the game's size, averaged on the GPU, and if
+    /// `full` also the whole target (RGBA) with its width and height, in one
+    /// round trip.
+    pub fn read_frames(&mut self, full: bool) -> Option<(Vec<u8>, Option<(Vec<u8>, u32, u32)>)> {
         let target = self.target.as_ref()?;
         let (scale, w, h) = (target.scale, target.width, target.height);
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_buffer(
-            target.color.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &target.readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(target.padded_row),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d {
-                width: w * scale,
-                height: h * scale,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit([encoder.finish()]);
-        let slice = target.readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            if let Err(err) = result {
-                log::error!("d3d: readback failed: {err}");
-            }
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .ok()?;
-        let (full_w, full_h) = ((w * scale) as usize, (h * scale) as usize);
-        let mut out = Vec::with_capacity(full_w * full_h * 4);
         {
-            let data = slice.get_mapped_range().ok()?;
-            let row = target.padded_row as usize;
-            for y in 0..full_h {
-                out.extend_from_slice(&data[y * row..][..full_w * 4]);
-            }
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("d3d downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.small_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&target.downsample);
+            pass.set_bind_group(0, &target.downsample_bind, &[]);
+            pass.draw(0..3, 0..1);
         }
-        target.readback.unmap();
-        Some((out, full_w as u32, full_h as u32, scale))
-    }
-}
-
-/// Shrink an RGBA image `scale` times in each direction to `width` x
-/// `height`, averaging each block.
-pub fn downsample(full: &[u8], width: u32, height: u32, scale: u32) -> Vec<u8> {
-    let (w, h, s) = (width as usize, height as usize, scale as usize);
-    let row = w * s * 4;
-    let div = (s * s) as u32;
-    let mut out = vec![0u8; w * h * 4];
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = [0u32; 4];
-            for dy in 0..s {
-                let base = (y * s + dy) * row + x * s * 4;
-                for dx in 0..s {
-                    let p = &full[base + dx * 4..][..4];
-                    for c in 0..4 {
-                        sum[c] += p[c] as u32;
-                    }
+        let mut reads = vec![(&target.small, &target.small_readback, target.small_padded_row, w, h)];
+        if full {
+            reads.push((&target.color, &target.readback, target.padded_row, w * scale, h * scale));
+        }
+        for &(texture, buffer, row, width, height) in &reads {
+            encoder.copy_texture_to_buffer(
+                texture.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.queue.submit([encoder.finish()]);
+        for &(_, buffer, ..) in &reads {
+            buffer.slice(..).map_async(wgpu::MapMode::Read, |result| {
+                if let Err(err) = result {
+                    log::error!("d3d: readback failed: {err}");
                 }
-            }
-            let o = (y * w + x) * 4;
-            for c in 0..4 {
-                out[o + c] = ((sum[c] + div / 2) / div) as u8;
-            }
+            });
         }
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let mut images = Vec::with_capacity(reads.len());
+        for &(_, buffer, row, width, height) in &reads {
+            let pixels = {
+                let data = buffer.slice(..).get_mapped_range().ok()?;
+                let (row, width) = (row as usize, width as usize);
+                let mut pixels = Vec::with_capacity(width * height as usize * 4);
+                for y in 0..height as usize {
+                    pixels.extend_from_slice(&data[y * row..][..width * 4]);
+                }
+                pixels
+            };
+            buffer.unmap();
+            images.push(pixels);
+        }
+        let mut images = images.into_iter();
+        let small = images.next()?;
+        let full = images.next().map(|pixels| (pixels, w * scale, h * scale));
+        Some((small, full))
     }
-    out
 }
 
 /// Two triangles covering a rect given as fractions of the target
@@ -837,7 +943,7 @@ impl Gpu {
     pub fn read(&mut self) -> Option<Vec<u8>> {
         None
     }
-    pub fn read_full(&mut self) -> Option<(Vec<u8>, u32, u32, u32)> {
+    pub fn read_frames(&mut self, _full: bool) -> Option<(Vec<u8>, Option<(Vec<u8>, u32, u32)>)> {
         None
     }
 }

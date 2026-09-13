@@ -498,13 +498,13 @@ pub fn present(mem: &mut Memory, surface: &Surface, host: &mut host::Window) -> 
     }
     d3d.gpu_frame = false;
     sync_to_gpu(mem, d3d, surface);
-    let Some((full, width, height, scale)) = d3d.gpu.as_mut().and_then(|gpu| gpu.read_full())
+    let Some((small, Some((full, width, height)))) =
+        d3d.gpu.as_mut().and_then(|gpu| gpu.read_frames(true))
     else {
         return false;
     };
     // The back buffer still holds what the game would have seen.
     if let Some(pixels) = surface.pixels {
-        let small = gpu::downsample(&full, surface.width, surface.height, scale);
         write_rgba(mem, surface, pixels, &small);
         d3d.snapshot = Some(surface_bytes(mem, surface, pixels).to_vec());
     }
