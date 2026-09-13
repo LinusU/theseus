@@ -173,6 +173,7 @@ pub mod IDirectDraw {
             ptr,
             Rc::new(RefCell::new(Palette {
                 entries: entries.into_iter().cloned().collect(),
+                generation: crate::ddraw::next_generation(),
             })),
         );
         ctx.memory.write::<u32>(lplpPal, ptr);
@@ -754,6 +755,7 @@ pub mod IDirectDrawSurface {
         let palettes = state.palette.borrow_mut();
         let palette = palettes.get(&lpPalette).unwrap();
         surface.palette = Some(palette.clone());
+        surface.generation = crate::ddraw::next_generation();
         DD::OK
     }
 
@@ -885,6 +887,7 @@ pub mod IDirectDrawPalette {
         .to_vec();
         let palettes = state().palette.borrow_mut();
         let mut palette = palettes.get(&this).unwrap().borrow_mut();
+        palette.generation = crate::ddraw::next_generation();
         for (i, entry) in new_entries.into_iter().enumerate() {
             let index = dwStartingEntry as usize + i;
             if index < palette.entries.len() {

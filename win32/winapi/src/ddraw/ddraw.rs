@@ -164,6 +164,7 @@ impl DirectDraw {
             height: params.height,
             bytes_per_pixel: params.bytes_per_pixel,
             pixel_format: params.pixel_format.clone(),
+            generation: next_generation(),
             caps: params.caps,
             target,
             primary: Default::default(),
@@ -208,6 +209,10 @@ pub struct Surface {
     pub height: u32,
     pub bytes_per_pixel: u32,
     pub pixel_format: DDPIXELFORMAT,
+    /// Changes whenever what the pixels mean may have changed (an Unlock, a
+    /// new palette or color key), so a copy made elsewhere knows it's stale.
+    /// Unique across surfaces.
+    pub generation: u64,
     /// DDSCAPS as reported by GetSurfaceDesc.
     pub caps: DDSCAPS,
     pub target: Target,
@@ -252,6 +257,7 @@ impl Surface {
     }
 
     pub fn unlock(&mut self, mem: &mut Memory) {
+        self.generation = next_generation();
         match self.target {
             // Writes to the primary surface go straight to the screen.
             Target::Window(_) => self.present(mem),
@@ -430,6 +436,15 @@ fn dump_frame(rgba: &[u8], width: u32, height: u32) {
 
 pub struct Palette {
     pub entries: Vec<PALETTEENTRY>,
+    /// See `Surface::generation`.
+    pub generation: u64,
+}
+
+/// A value for `Surface::generation` or `Palette::generation` that no other
+/// surface or palette has had.
+pub fn next_generation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The pixel format of a surface or display mode with the given depth.
@@ -743,6 +758,7 @@ pub fn set_color_key(ctx: &mut Context, this: u32, dwFlags: u32, lpDDColorKey: u
         return DD::ERR_GENERIC;
     };
     let mut surface = surface.borrow_mut();
+    surface.generation = next_generation();
     if dwFlags & (DDCKEY_SRCOVERLAY | DDCKEY_DESTOVERLAY) != 0 {
         log::warn!("SetColorKey: overlays are not supported");
     }
