@@ -307,6 +307,9 @@ struct Target {
     full_height: u32,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
+    /// Multisampled color drawn into when antialiasing (see `Gpu::samples`),
+    /// resolved into `color` when that is needed.
+    msaa_view: Option<wgpu::TextureView>,
     depth_view: wgpu::TextureView,
     readback: wgpu::Buffer,
     padded_row: u32,
@@ -330,6 +333,10 @@ pub struct Gpu {
     /// The size the window last showed the game at, in pixels, which the
     /// render target follows.
     output_size: Option<(u32, u32)>,
+    /// Samples per pixel of the render target (THESEUS_D3D_MSAA, default 4).
+    samples: u32,
+    /// `Target::msaa_view` holds drawing `Target::color` lacks.
+    needs_resolve: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     shader: wgpu::ShaderModule,
@@ -401,6 +408,15 @@ fn scale_from_env() -> Option<u32> {
     })
 }
 
+/// THESEUS_D3D_MSAA: samples per pixel when drawing (1 for none).
+#[cfg(not(target_family = "wasm"))]
+fn msaa_from_env() -> u32 {
+    std::env::var("THESEUS_D3D_MSAA")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map_or(4, |n: u32| n.clamp(1, 8))
+}
+
 /// Textures up to this size are guaranteed by wgpu's default limits.
 #[cfg(not(target_family = "wasm"))]
 const MAX_TARGET_SIZE: u32 = 8192;
@@ -453,11 +469,23 @@ impl Gpu {
             immediate_size: 0,
         });
 
+        let samples = msaa_from_env();
+        let samples = [samples, 4, 2]
+            .into_iter()
+            .filter(|&n| n <= samples)
+            .find(|&n| {
+                [COLOR_FORMAT, DEPTH_FORMAT].iter().all(|&format| {
+                    adapter.get_texture_format_features(format).flags.sample_count_supported(n)
+                })
+            })
+            .unwrap_or(1);
         let mut gpu = Gpu {
             instance,
             adapter,
             screen: None,
             output_size: None,
+            samples,
+            needs_resolve: false,
             device,
             queue,
             shader,
@@ -490,7 +518,8 @@ impl Gpu {
                 return;
             }
         }
-        let texture = |format, usage| {
+        let samples = self.samples;
+        let texture = |format, usage, sample_count| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("d3d target"),
                 size: wgpu::Extent3d {
@@ -499,7 +528,7 @@ impl Gpu {
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count,
                 dimension: wgpu::TextureDimension::D2,
                 format,
                 usage,
@@ -511,8 +540,11 @@ impl Gpu {
             wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
         );
-        let depth = texture(DEPTH_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let msaa = (samples > 1)
+            .then(|| texture(COLOR_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT, samples));
+        let depth = texture(DEPTH_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT, samples);
         let padded_row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -614,7 +646,8 @@ impl Gpu {
                 resource: wgpu::BindingResource::TextureView(&color_view),
             }],
         });
-        log::info!("d3d: {width}x{height} target rendered at {w}x{h}");
+        log::info!("d3d: {width}x{height} target rendered at {w}x{h}, {samples} samples per pixel");
+        self.needs_resolve = false;
         self.target = Some(Target {
             width,
             height,
@@ -622,6 +655,7 @@ impl Gpu {
             full_height: h,
             color_view,
             color,
+            msaa_view: msaa.map(|t| t.create_view(&Default::default())),
             depth_view: depth.create_view(&Default::default()),
             readback,
             padded_row,
@@ -754,7 +788,10 @@ impl Gpu {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: self.samples,
+                    ..Default::default()
+                },
                 multiview_mask: None,
                 cache: None,
             })
@@ -871,7 +908,7 @@ impl Gpu {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("d3d"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.color_view,
+                    view: target.msaa_view.as_ref().unwrap_or(&target.color_view),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -898,6 +935,39 @@ impl Gpu {
                 pass.draw(range.clone(), 0..1);
             }
         }
+        self.queue.submit([encoder.finish()]);
+        self.needs_resolve = target.msaa_view.is_some();
+    }
+
+    /// Bring `Target::color` up to date with the multisampled drawing.
+    fn resolve(&mut self) {
+        if !std::mem::take(&mut self.needs_resolve) {
+            return;
+        }
+        let Some(target) = &self.target else {
+            return;
+        };
+        let Some(msaa_view) = &target.msaa_view else {
+            return;
+        };
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        // A pass that draws nothing, only to resolve at its end.
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("d3d resolve"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: msaa_view,
+                depth_slice: None,
+                resolve_target: Some(&target.color_view),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
         self.queue.submit([encoder.finish()]);
     }
 
@@ -976,6 +1046,7 @@ impl Gpu {
     /// `full` also the whole target (RGBA) with its width and height, in one
     /// round trip.
     pub fn read_frames(&mut self, full: bool) -> Option<(Vec<u8>, Option<(Vec<u8>, u32, u32)>)> {
+        self.resolve();
         let target = self.target.as_ref()?;
         let (w, h) = (target.width, target.height);
         let (full_w, full_h) = (target.full_width, target.full_height);
@@ -1059,6 +1130,9 @@ impl Gpu {
     pub fn present(&mut self, layer: *mut std::ffi::c_void, pixels: (u32, u32), frame: Frame) -> bool {
         if pixels.0 == 0 || pixels.1 == 0 {
             return false;
+        }
+        if matches!(frame, Frame::Target) {
+            self.resolve();
         }
         if self.screen.as_ref().is_none_or(|s| s.layer != layer) {
             match self.new_screen(layer, pixels) {
