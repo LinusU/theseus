@@ -6,6 +6,7 @@ mod mapping;
 mod memory;
 mod mmx;
 mod ops;
+pub mod profile;
 mod registers;
 
 pub use exe::EXEData;
@@ -110,7 +111,11 @@ impl Context {
     pub fn cpu_loop(&mut self, mut f: Cont) {
         let mut i = 0;
         let done: ContFn = Context::return_from_x86;
+        let profiling = profile::enabled();
         while f.0 as usize != done as usize {
+            if profiling {
+                profile::count(f.0 as usize);
+            }
             self.recent[i] = f.0;
             i = (i + 1) % self.recent.len();
             f = f.0(self);
