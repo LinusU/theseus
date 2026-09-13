@@ -12,8 +12,10 @@ See the bottom of this file ("Log") for the latest state. In short: a full
 race plays end to end — menus, track/bike select, racing with keyboard
 input, HUD, going off-track, GAME OVER — rendering correctly through the
 software renderer at 640x480x16, with the soundtrack playing off the
-ripped CD tracks and DirectSound sound effects. Not yet exercised:
-multiplayer, joystick, Direct3D.
+ripped CD tracks and DirectSound sound effects. With `-D3D` the game takes
+its Direct3D path instead, drawn through wgpu (see "Direct3D" under Known
+gaps): the attract-mode demo renders correctly, HUD included, supersampled.
+Not yet exercised: multiplayer, joystick, an actual race in `-D3D`.
 
 ## Layout
 
@@ -68,6 +70,13 @@ Useful environment variables (see `host/src/lib.rs`, `win32/winapi/src/trace.rs`
   can be checked visually. `python3 -c` a tiny PPM-to-PNG converter, or open
   the PPMs directly, to look at them.
 - `RUST_BACKTRACE=1` for panics inside winapi.
+- `THESEUS_D3D_SCALE=n` (default 2) renders Direct3D at n times the game's
+  resolution and averages it back down: antialiasing, no bigger window yet.
+- `THESEUS_D3D_FILTER=linear` smooths textures the game asked to sample
+  nearest.
+- `THESEUS_DUMP_TEXTURES=dir` writes the first 80 Direct3D textures as they
+  are uploaded (transparent pixels magenta), named by pixel format, for
+  checking texture decoding.
 
 ## About the game binary
 
@@ -91,9 +100,11 @@ Useful environment variables (see `host/src/lib.rs`, `win32/winapi/src/trace.rs`
   `-us/-fr/-gr/-it/-sp/-sw`, `-NbComp<n>`, `-J<n>`, `-SnapShot`. The 3.22
   build's flags are capitalized as shown and matched case-sensitively.
   `motoracer.ini` holds the flags GOG's launcher passes for Direct3D on
-  Windows; we don't use them. The game has a software renderer, so **Direct3D
-  is not needed**: run with `-NoD3D`, and `QueryInterface(IID_IDirect3D)` is
-  refused.
+  Windows; we don't use them. The game has a software renderer and a
+  Direct3D one: `-NoD3D` picks the first, `-D3D` the second. Its Direct3D is
+  the DirectX 3 immediate mode (`IDirect3D`, execute buffers, pre-transformed
+  `D3DTLVERTEX`, no z-buffer: it sorts its own geometry). Resolutions above
+  640x480 are only offered when a hardware Direct3D device is found.
 - Data: `data\*.BKF` archives, `data\ile0N\*.TRK` tracks, `data\*.BPT` text
   configs, `data\config.txt` (`-us`, the language). The game reads them with
   CreateFileA/ReadFile/SetFilePointer/GetFileSize relative to the current
@@ -161,7 +172,13 @@ structures on `kernel32::lock().process_heap`, drop the lock, then
   it).
 - `win32/winapi/src/ddraw/`: `ddraw1.rs` is IDirectDraw/IDirectDrawSurface
   (DirectX 1), `ddraw7.rs` is the DX7 flavour. Surfaces are software buffers
-  blitted to the host window.
+  blitted to the host window. `d3d.rs` is DirectX 3 Direct3D: it interprets
+  execute buffers and draws their triangles through `gpu.rs` (wgpu) into an
+  offscreen target, which is read back into the render target surface's
+  memory before DirectDraw hands that memory to the game or flips it, and
+  refreshed from that memory before the next triangles (see `cpu_access`).
+  Surfaces and palettes carry a `generation` so GPU copies of textures know
+  when they're stale.
 - `win32/winapi/src/dsound.rs`: DirectSound with a software mixer feeding
   `host`. Sound effects need nothing moto-specific from it.
 - `win32/winapi/src/winmm/mci.rs`: the `cdaudio` MCI device, backed by the
@@ -267,8 +284,15 @@ Two things about the game's side are worth knowing before changing any of it:
 7. **`IDirectSound3DBuffer`** (GUID present in the exe) does not exist;
    `QueryInterface` fails and the game falls back to plain stereo panning,
    which is what it does on hardware without 3D sound.
-8. **IDirect3D**: keep returning `E_NOINTERFACE` and run with `-noD3D`; the
-   game has a software renderer.
+8. **Direct3D** (`-D3D`): the demo renders correctly; only the demo has been
+   checked (headless, through frame dumps). Textures come in RGB565,
+   ARGB4444 and 8-bit palettized; `THESEUS_DUMP_TEXTURES` shows how they
+   decode. Still missing: the window is 640x480 however large the GPU target (the
+   supersampled image is averaged back down into the game's back buffer; to
+   show more detail, present the GPU target itself and composite the 2D on
+   top), `PROCESSVERTICES` transforms/lighting (unused by this game), a
+   z-buffer path, and any renderer on the web build (`gpu.rs` has a no-op
+   stand-in there).
 9. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
 10. **Exceptions and the Rust stack.** A caught C++ exception leaves a few Rust
     frames behind for good (see `kernel32/seh.rs`); thousands of exceptions
@@ -347,3 +371,21 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   tracks and a screen change every minute or so, neither shows. Shortening
   the `NN.wav` files to a few seconds each makes both obvious in a minute,
   which is the way to exercise the track-end paths.
+- 2026-09-13: Direct3D. The options screen only offered 640x480 because the
+  game filters display modes above that unless it finds a hardware Direct3D
+  device, so the goal became running its Direct3D path. Added DirectX 3
+  `IDirect3D` and friends (`ddraw/d3d.rs`), first as a logging probe, then as
+  an execute-buffer interpreter drawing through wgpu (`ddraw/gpu.rs`). On the
+  way: `GetSurfaceDesc` has to report `DDSCAPS_VIDEOMEMORY` or the game
+  refuses the hardware device; the `IDirectDrawSurface2` vtable had
+  `SetColorKey` in the wrong slot (every method up to `SetClipper` was off by
+  one); `IDirect3DDevice` has `SwapTextureHandles` where one might expect
+  `EnumTextureFormats`; `BRANCHFORWARD` must be followed (the game leaves gaps
+  in its buffers and branches over them); and D3D's counter-clockwise culling
+  is wgpu's front face. The runtime now prints the last blocks run when a jump
+  goes astray, which is how the vtable mistakes were found. Textures first
+  came out scrambled: converting a `DDSURFACEDESC` to `DDSURFACEDESC2`
+  dropped the pixel format, so every texture was created RGB565 while the
+  game filled it as palettized or ARGB4444 (`Lock` also returned a mostly
+  zeroed description, fixed on the way). Result: the attract demo, HUD
+  included, renders correctly, supersampled at 1280x960 on an M5 Max.
