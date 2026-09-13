@@ -17,5 +17,6 @@ zerocopy = { workspace = true }
 
 # Direct3D draws through wgpu natively; the web build has no renderer yet.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+png = "0.18"
 pollster = "0.4"
 wgpu = "30"

@@ -89,7 +89,9 @@ fn alpha_passes(func: u32, a: f32, r: f32) -> bool {
     // not depend on per-fragment branches.
     let t = textureSample(tex, samp, f.uv);
     let c = f.color;
-    if (f.flags & (1u << 13u)) != 0u && t.a == 0.0 {
+    // Half way, so a color-keyed replacement texture sampled smoothly keeps
+    // clean cut-out edges.
+    if (f.flags & (1u << 13u)) != 0u && t.a < 0.5 {
         discard;
     }
     var out: vec4f;
@@ -178,6 +180,9 @@ impl PipelineKey {
 pub struct SamplerKey {
     pub linear_mag: bool,
     pub linear_min: bool,
+    /// Linear filtering between mipmaps too, with anisotropy: for replacement
+    /// textures (see `TextureImage::smooth`), overriding the two above.
+    pub smooth: bool,
     /// D3DTADDRESS_*.
     pub address: u8,
 }
@@ -186,8 +191,32 @@ impl SamplerKey {
     pub const NEAREST: SamplerKey = SamplerKey {
         linear_mag: false,
         linear_min: false,
+        smooth: false,
         address: 3,
     };
+}
+
+/// RGBA pixels for `Gpu::texture`, with a smaller copy per mip level after
+/// the first.
+pub struct TextureImage {
+    pub width: u32,
+    pub height: u32,
+    /// Level 0 first, each level half the size of the one before (rounded
+    /// down, at least 1).
+    pub levels: Vec<Vec<u8>>,
+    /// Sample with `SamplerKey::smooth`, whatever the game asked for.
+    pub smooth: bool,
+}
+
+impl TextureImage {
+    pub fn single(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        TextureImage {
+            width,
+            height,
+            levels: vec![rgba],
+            smooth: false,
+        }
+    }
 }
 
 /// A run of vertices (three per triangle) drawn with one state.
@@ -202,6 +231,8 @@ pub struct Batch {
 #[cfg(not(target_family = "wasm"))]
 struct Texture {
     generation: u64,
+    /// See `TextureImage::smooth`.
+    smooth: bool,
     view: wgpu::TextureView,
     /// Bind groups for the samplers this texture has been drawn with.
     bind_groups: HashMap<SamplerKey, wgpu::BindGroup>,
@@ -361,7 +392,7 @@ impl Gpu {
             vertex_buffer: None,
             target: None,
         };
-        gpu.texture(WHITE, 0, 1, 1, || vec![255; 4]);
+        gpu.texture(WHITE, 0, || TextureImage::single(1, 1, vec![255; 4]));
         Some(gpu)
     }
 
@@ -423,6 +454,7 @@ impl Gpu {
             STAGING,
             Texture {
                 generation: 0,
+                smooth: false,
                 view: staging.create_view(&Default::default()),
                 bind_groups: HashMap::new(),
             },
@@ -510,49 +542,55 @@ impl Gpu {
     }
 
     /// Make sure a texture is uploaded. `key` identifies it across calls;
-    /// `pixels` (RGBA) is only asked for when `generation` changed.
-    pub fn texture(
-        &mut self,
-        key: u64,
-        generation: u64,
-        width: u32,
-        height: u32,
-        pixels: impl FnOnce() -> Vec<u8>,
-    ) {
+    /// `image` is only asked for when `generation` changed.
+    pub fn texture(&mut self, key: u64, generation: u64, image: impl FnOnce() -> TextureImage) {
         if let Some(texture) = self.textures.get(&key) {
             if texture.generation == generation {
                 return;
             }
         }
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+        let image = image();
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("d3d texture"),
-            size,
-            mip_level_count: 1,
+            size: wgpu::Extent3d {
+                width: image.width,
+                height: image.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: image.levels.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            texture.as_image_copy(),
-            &pixels(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            size,
-        );
+        for (level, pixels) in image.levels.iter().enumerate() {
+            let (width, height) = ((image.width >> level).max(1), (image.height >> level).max(1));
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         self.textures.insert(
             key,
             Texture {
                 generation,
+                smooth: image.smooth,
                 view: texture.create_view(&Default::default()),
                 bind_groups: HashMap::new(),
             },
@@ -631,7 +669,26 @@ impl Gpu {
 
     fn bind_group(&mut self, texture: u64, sampler: SamplerKey) -> Option<wgpu::BindGroup> {
         let device = &self.device;
+        let smooth = self.textures.get(&texture)?.smooth;
+        let sampler = SamplerKey { smooth, ..sampler };
         let sampler_obj = self.samplers.entry(sampler).or_insert_with(|| {
+            if sampler.smooth {
+                let address = match sampler.address {
+                    2 => wgpu::AddressMode::MirrorRepeat,
+                    3 => wgpu::AddressMode::ClampToEdge,
+                    _ => wgpu::AddressMode::Repeat,
+                };
+                return device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("d3d smooth"),
+                    address_mode_u: address,
+                    address_mode_v: address,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                    anisotropy_clamp: 16,
+                    ..Default::default()
+                });
+            }
             let address = match sampler.address {
                 2 => wgpu::AddressMode::MirrorRepeat,
                 3 => wgpu::AddressMode::ClampToEdge,
@@ -928,15 +985,7 @@ impl Gpu {
         None
     }
     pub fn set_target_size(&mut self, _width: u32, _height: u32) {}
-    pub fn texture(
-        &mut self,
-        _key: u64,
-        _generation: u64,
-        _width: u32,
-        _height: u32,
-        _pixels: impl FnOnce() -> Vec<u8>,
-    ) {
-    }
+    pub fn texture(&mut self, _key: u64, _generation: u64, _image: impl FnOnce() -> TextureImage) {}
     pub fn draw(&mut self, _vertices: &[Vertex], _batches: &[Batch]) {}
     pub fn clear(&mut self, _rect: Option<[u32; 4]>, _color: Option<[f32; 4]>, _depth: Option<f32>) {}
     pub fn upload(&mut self, _rgba: &[u8], _only_opaque: bool) {}

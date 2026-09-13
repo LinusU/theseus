@@ -10,6 +10,8 @@ mod gpu;
 mod ddraw1;
 mod ddraw2;
 mod ddraw7;
+#[cfg(not(target_family = "wasm"))]
+mod texture_pack;
 pub mod types;
 
 pub use d3d::*;
