@@ -1296,7 +1296,7 @@ pub mod IDirect3DDevice {
     }
 
     #[win32_derive::dllexport]
-    pub fn EndScene(_ctx: &mut Context, _this: u32) -> DD {
+    pub fn EndScene(ctx: &mut Context, _this: u32) -> DD {
         let mut d3d = state().d3d.borrow_mut();
         d3d.scenes += 1;
         if d3d.scenes % 600 == 0 {
@@ -1307,6 +1307,7 @@ pub mod IDirect3DDevice {
             };
             d3d.last_report = Some(now);
             log::info!("d3d: {} scenes{fps}, {} triangles", d3d.scenes, d3d.triangles);
+            runtime::profile::snapshot(ctx, &format!("{} scenes", d3d.scenes));
         }
         DD::OK
     }
