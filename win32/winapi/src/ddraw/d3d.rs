@@ -487,9 +487,46 @@ fn resolve_texture(ctx: &Context, d3d: &mut D3D, handle: u32) -> Option<TextureI
     ));
     let gpu = d3d.gpu.as_mut()?;
     gpu.texture(key, generation, surface.width, surface.height, || {
-        texture_rgba(&ctx.memory, &surface)
+        let rgba = texture_rgba(&ctx.memory, &surface);
+        dump_texture(&surface, &rgba);
+        rgba
     });
     Some(info)
+}
+
+/// With THESEUS_DUMP_TEXTURES=<dir>, write the first textures uploaded there
+/// as PPM images (transparent pixels in magenta), named by upload order and
+/// pixel format.
+fn dump_texture(surface: &Surface, rgba: &[u8]) {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        static DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        let Some(dir) = DIR
+            .get_or_init(|| std::env::var("THESEUS_DUMP_TEXTURES").ok())
+            .as_deref()
+        else {
+            return;
+        };
+        static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= 80 {
+            return;
+        }
+        let format = &surface.pixel_format;
+        let mut out = format!("P6\n{} {}\n255\n", surface.width, surface.height).into_bytes();
+        for p in rgba.chunks_exact(4) {
+            out.extend_from_slice(if p[3] == 0 { &[255, 0, 255] } else { &p[..3] });
+        }
+        let path = format!(
+            "{dir}/texture_{n:03}_flags{:x}_{}bit.ppm",
+            format.dwFlags, format.dwRGBBitCount
+        );
+        if let Err(err) = std::fs::write(&path, out) {
+            log::warn!("dump_texture: {path}: {err}");
+        }
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = (surface, rgba);
 }
 
 fn filter_is_linear(filter: u32) -> bool {
