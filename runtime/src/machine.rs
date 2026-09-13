@@ -87,6 +87,7 @@ impl Context {
     pub fn indirect(&self, addr: u32) -> Cont {
         if addr == 0 {
             self.dump();
+            self.dump_recent_blocks();
             panic!("jmp to null ptr");
         }
         if let Some(func) = self.cache.get(addr) {
