@@ -14,10 +14,16 @@ bin="$(pwd)/$bin"
 # Registry entries the installer would have created.
 export THESEUS_REGISTRY="$(pwd)/out/moto/moto.reg"
 
+# Upscaled textures, if a pack has been made (see "Texture packs" in README.md).
+if [ -z "${THESEUS_TEXTURE_PACK+set}" ] && [ -d scratch/moto/textures/pack ]; then
+    export THESEUS_TEXTURE_PACK="$(pwd)/scratch/moto/textures/pack"
+fi
+
 cd scratch/moto/install
 # The game checks that its CD is in the drive by volume label.
 export THESEUS_CD_LABEL=MOTO_RACER
-# A 1280x960 window for the game's 640x480; Direct3D renders at that size too.
+# A 1280x960 window for the game's 640x480 (THESEUS_WINDOW_SIZE or
+# THESEUS_FULLSCREEN for others); Direct3D renders at the window's resolution.
 export THESEUS_WINDOW_SCALE=${THESEUS_WINDOW_SCALE:-2}
 # Without arguments: Direct3D, and no frame rate cap (the game's default is
 # 30; its simulation runs on elapsed time, and presenting waits for the
