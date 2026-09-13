@@ -371,6 +371,9 @@ impl Surface {
         };
 
         let mut back = self.attached.as_ref().unwrap().borrow_mut();
+        if super::d3d::present(mem, &back, &mut window.borrow_mut().host) {
+            return;
+        }
         super::d3d::cpu_access(mem, &back, false);
         // A palette is only needed to expand indexed (8-bit) pixels; 16/32bpp
         // buffers convert without one, so gating this on `palette.is_some()`
@@ -411,7 +414,7 @@ fn dumping_frames() -> bool {
     dump_dir().is_some()
 }
 
-fn dump_frame(rgba: &[u8], width: u32, height: u32) {
+pub(crate) fn dump_frame(rgba: &[u8], width: u32, height: u32) {
     let Some(dir) = dump_dir() else {
         return;
     };

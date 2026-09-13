@@ -681,7 +681,10 @@ impl Gpu {
 
     /// Replace the target's contents with what the game drew itself (RGBA,
     /// the game's size), leaving depth alone.
-    pub fn upload(&mut self, rgba: &[u8]) {
+    ///
+    /// With `only_opaque`, pixels with alpha 0 leave the target as it is, so
+    /// just what changed can be laid over detail drawn at full resolution.
+    pub fn upload(&mut self, rgba: &[u8], only_opaque: bool) {
         let Some(target) = &self.target else {
             return;
         };
@@ -699,7 +702,8 @@ impl Gpu {
                 depth_or_array_layers: 1,
             },
         );
-        let quad = quad([0.0, 0.0, 1.0, 1.0], 0.0, [1.0; 4], 1 /* DECAL */);
+        let keyed = if only_opaque { flags::COLOR_KEY } else { 0 };
+        let quad = quad([0.0, 0.0, 1.0, 1.0], 0.0, [1.0; 4], 1 /* DECAL */ | keyed);
         self.draw(
             &quad,
             &[Batch {
@@ -714,6 +718,12 @@ impl Gpu {
     /// Read the target back at the game's size (RGBA), averaging each
     /// scale x scale block.
     pub fn read(&mut self) -> Option<Vec<u8>> {
+        let (full, width, height, scale) = self.read_full()?;
+        Some(downsample(&full, width / scale, height / scale, scale))
+    }
+
+    /// Read the whole target back (RGBA), with its width, height and scale.
+    pub fn read_full(&mut self) -> Option<(Vec<u8>, u32, u32, u32)> {
         let target = self.target.as_ref()?;
         let (scale, w, h) = (target.scale, target.width, target.height);
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -743,34 +753,46 @@ impl Gpu {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .ok()?;
-        let mut out = vec![0u8; (w * h * 4) as usize];
+        let (full_w, full_h) = ((w * scale) as usize, (h * scale) as usize);
+        let mut out = Vec::with_capacity(full_w * full_h * 4);
         {
             let data = slice.get_mapped_range().ok()?;
             let row = target.padded_row as usize;
-            let s = scale as usize;
-            let div = (s * s) as u32;
-            for y in 0..h as usize {
-                for x in 0..w as usize {
-                    let mut sum = [0u32; 4];
-                    for dy in 0..s {
-                        let base = (y * s + dy) * row + x * s * 4;
-                        for dx in 0..s {
-                            let p = &data[base + dx * 4..][..4];
-                            for c in 0..4 {
-                                sum[c] += p[c] as u32;
-                            }
-                        }
-                    }
-                    let o = (y * w as usize + x) * 4;
-                    for c in 0..4 {
-                        out[o + c] = ((sum[c] + div / 2) / div) as u8;
-                    }
-                }
+            for y in 0..full_h {
+                out.extend_from_slice(&data[y * row..][..full_w * 4]);
             }
         }
         target.readback.unmap();
-        Some(out)
+        Some((out, full_w as u32, full_h as u32, scale))
     }
+}
+
+/// Shrink an RGBA image `scale` times in each direction to `width` x
+/// `height`, averaging each block.
+pub fn downsample(full: &[u8], width: u32, height: u32, scale: u32) -> Vec<u8> {
+    let (w, h, s) = (width as usize, height as usize, scale as usize);
+    let row = w * s * 4;
+    let div = (s * s) as u32;
+    let mut out = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = [0u32; 4];
+            for dy in 0..s {
+                let base = (y * s + dy) * row + x * s * 4;
+                for dx in 0..s {
+                    let p = &full[base + dx * 4..][..4];
+                    for c in 0..4 {
+                        sum[c] += p[c] as u32;
+                    }
+                }
+            }
+            let o = (y * w + x) * 4;
+            for c in 0..4 {
+                out[o + c] = ((sum[c] + div / 2) / div) as u8;
+            }
+        }
+    }
+    out
 }
 
 /// Two triangles covering a rect given as fractions of the target
@@ -811,8 +833,11 @@ impl Gpu {
     }
     pub fn draw(&mut self, _vertices: &[Vertex], _batches: &[Batch]) {}
     pub fn clear(&mut self, _rect: Option<[u32; 4]>, _color: Option<[f32; 4]>, _depth: Option<f32>) {}
-    pub fn upload(&mut self, _rgba: &[u8]) {}
+    pub fn upload(&mut self, _rgba: &[u8], _only_opaque: bool) {}
     pub fn read(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    pub fn read_full(&mut self) -> Option<(Vec<u8>, u32, u32, u32)> {
         None
     }
 }

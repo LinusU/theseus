@@ -134,6 +134,12 @@ pub struct D3D {
     gpu_dirty: bool,
     /// The surface's memory may hold drawing the GPU target lacks.
     cpu_dirty: bool,
+    /// The surface's memory as of when it and the GPU target last agreed.
+    snapshot: Option<Vec<u8>>,
+    /// The GPU drew since the last flip, so the flip shows its image.
+    gpu_frame: bool,
+    /// Host texture the full-resolution frame is shown through.
+    present_texture: Option<(u32, u32, host::Surface)>,
     seen: BTreeSet<String>,
     scenes: u32,
     triangles: u64,
@@ -396,10 +402,7 @@ pub fn cpu_access(mem: &mut Memory, surface: &Surface, writing: bool) {
         if let (Some(gpu), Some(pixels)) = (d3d.gpu.as_mut(), surface.pixels) {
             if let Some(rgba) = gpu.read() {
                 write_rgba(mem, surface, pixels, &rgba);
-                d3d.note(format!(
-                    "read the GPU back into the render target ({})",
-                    if writing { "lock" } else { "flip" }
-                ));
+                d3d.snapshot = Some(surface_bytes(mem, surface, pixels).to_vec());
             }
         }
     }
@@ -429,27 +432,89 @@ fn write_rgba(mem: &mut Memory, surface: &Surface, pixels: u32, rgba: &[u8]) {
 }
 
 /// Before drawing, upload whatever the game drew into the target's memory.
-fn sync_to_gpu(ctx: &Context, d3d: &mut D3D) {
+///
+/// Only pixels that changed since the GPU and the memory last agreed (the
+/// snapshot) are uploaded, so the game's 2D lands on top of the 3D without
+/// replacing it with the game-resolution copy the memory holds.
+fn sync_to_gpu(mem: &Memory, d3d: &mut D3D, target: &Surface) {
     if !d3d.cpu_dirty {
         return;
     }
     d3d.cpu_dirty = false;
-    let Some(device) = &d3d.device else {
+    let Some(pixels) = target.pixels else {
         return;
     };
-    let rgba = {
-        let target = device.target.borrow();
-        target.to_rgba(&ctx.memory, &None).map(|p| {
-            let mut p = p.into_owned();
-            for px in p.chunks_exact_mut(4) {
+    let Some(rgba) = target.to_rgba(mem, &None) else {
+        return;
+    };
+    let mut rgba = rgba.into_owned();
+    let raw = surface_bytes(mem, target, pixels);
+    let bpp = target.bytes_per_pixel as usize;
+    let upload = match &d3d.snapshot {
+        Some(snapshot) if snapshot.len() == raw.len() => {
+            let mut changed = false;
+            for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+                let range = i * bpp..(i + 1) * bpp;
+                let same = raw[range.clone()] == snapshot[range];
+                changed |= !same;
+                px[3] = if same { 0 } else { 255 };
+            }
+            changed.then_some(true)
+        }
+        _ => {
+            for px in rgba.chunks_exact_mut(4) {
                 px[3] = 255;
             }
-            p
-        })
+            Some(false)
+        }
     };
-    if let (Some(rgba), Some(gpu)) = (rgba, d3d.gpu.as_mut()) {
-        gpu.upload(&rgba);
+    d3d.snapshot = Some(raw.to_vec());
+    if let (Some(only_opaque), Some(gpu)) = (upload, d3d.gpu.as_mut()) {
+        gpu.upload(&rgba, only_opaque);
     }
+}
+
+fn surface_bytes<'a>(mem: &'a Memory, surface: &Surface, pixels: u32) -> &'a [u8] {
+    let size = surface.width * surface.height * surface.bytes_per_pixel;
+    &mem[pixels..][..size as usize]
+}
+
+/// DirectDraw is flipping `surface` to the screen. If it is the render
+/// target and the GPU drew this frame, show the GPU's full-resolution image
+/// (with the game's 2D laid on top) instead of the surface's memory, and
+/// report that it was shown.
+pub fn present(mem: &mut Memory, surface: &Surface, host: &mut host::Window) -> bool {
+    let Ok(mut d3d) = state().d3d.try_borrow_mut() else {
+        return false;
+    };
+    let d3d = &mut *d3d;
+    let Some(device) = &d3d.device else {
+        return false;
+    };
+    if !std::ptr::eq(device.target.as_ptr(), surface) || !d3d.gpu_frame {
+        return false;
+    }
+    d3d.gpu_frame = false;
+    sync_to_gpu(mem, d3d, surface);
+    let Some((full, width, height, scale)) = d3d.gpu.as_mut().and_then(|gpu| gpu.read_full())
+    else {
+        return false;
+    };
+    // The back buffer still holds what the game would have seen.
+    if let Some(pixels) = surface.pixels {
+        let small = gpu::downsample(&full, surface.width, surface.height, scale);
+        write_rgba(mem, surface, pixels, &small);
+        d3d.snapshot = Some(surface_bytes(mem, surface, pixels).to_vec());
+    }
+    d3d.gpu_dirty = false;
+    if !matches!(&d3d.present_texture, Some((w, h, _)) if (*w, *h) == (width, height)) {
+        d3d.present_texture = Some((width, height, host.create_surface(width, height)));
+    }
+    let (_, _, texture) = d3d.present_texture.as_mut().unwrap();
+    texture.set_pixels(&full, width * 4);
+    super::ddraw::dump_frame(&full, width, height);
+    host.render(texture);
+    true
 }
 
 /// Where a texture handle's pixels are and how to draw them.
@@ -561,7 +626,8 @@ fn execute(ctx: &mut Context, data: u32, exec: &[u32; 5]) {
         return;
     };
     gpu.set_target_size(width, height);
-    sync_to_gpu(ctx, d3d);
+    let target = d3d.device.as_ref().unwrap().target.clone();
+    sync_to_gpu(&ctx.memory, d3d, &target.borrow());
 
     let mut vertices: Vec<gpu::Vertex> = Vec::new();
     let mut batches: Vec<Batch> = Vec::new();
@@ -723,6 +789,7 @@ fn execute(ctx: &mut Context, data: u32, exec: &[u32; 5]) {
     if !batches.is_empty() {
         d3d.gpu.as_mut().unwrap().draw(&vertices, &batches);
         d3d.gpu_dirty = true;
+        d3d.gpu_frame = true;
     }
 }
 
@@ -990,6 +1057,8 @@ pub mod IDirect3DDevice {
         d3d.device = None;
         d3d.gpu_dirty = false;
         d3d.cpu_dirty = false;
+        d3d.gpu_frame = false;
+        d3d.snapshot = None;
         0
     }
 
@@ -1491,7 +1560,8 @@ pub mod IDirect3DViewport {
             return DD::OK;
         };
         gpu.set_target_size(width, height);
-        sync_to_gpu(ctx, d3d);
+        let target = d3d.device.as_ref().unwrap().target.clone();
+        sync_to_gpu(&ctx.memory, d3d, &target.borrow());
         let gpu = d3d.gpu.as_mut().unwrap();
         for rect in rects {
             gpu.clear(
@@ -1501,6 +1571,7 @@ pub mod IDirect3DViewport {
             );
         }
         d3d.gpu_dirty = true;
+        d3d.gpu_frame = true;
         DD::OK
     }
 
@@ -1780,6 +1851,8 @@ pub fn surface_query_interface(
         // Whatever the surface holds so far goes under the first triangles.
         d3d.cpu_dirty = true;
         d3d.gpu_dirty = false;
+        d3d.gpu_frame = false;
+        d3d.snapshot = None;
         addr
     } else if *iid == IID_IDirect3DTexture {
         let addr = new_object(ctx, IDirect3DTexture::new);
