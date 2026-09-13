@@ -715,8 +715,13 @@ pub mod IDirectDrawSurface {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn SetClipper(_ctx: &mut Context, _this: u32, lpDDClipper: u32) -> DD {
+        // Fullscreen games detach the clipper (null) before drawing; there is
+        // no clipper object to attach anyway, CreateClipper is unimplemented.
+        if lpDDClipper != 0 {
+            log::warn!("SetClipper: ignoring clipper {lpDDClipper:#x}");
+        }
+        DD::OK
     }
 
     #[win32_derive::dllexport]

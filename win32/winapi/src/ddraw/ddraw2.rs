@@ -468,8 +468,8 @@ pub mod IDirectDrawSurface2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn SetClipper(ctx: &mut Context, this: u32) -> DD {
-        IDirectDrawSurface::SetClipper(ctx, this)
+    pub fn SetClipper(ctx: &mut Context, this: u32, lpDDClipper: u32) -> DD {
+        IDirectDrawSurface::SetClipper(ctx, this, lpDDClipper)
     }
 
     #[win32_derive::dllexport]
