@@ -62,7 +62,7 @@ impl State {
             // Don't rewrite what an earlier run already dumped.
             state.dumped = list_pngs(dir).into_keys().collect();
         }
-        if let Ok(dir) = std::env::var("THESEUS_TEXTURE_PACK") {
+        if let Some(dir) = std::env::var("THESEUS_TEXTURE_PACK").ok().filter(|d| !d.is_empty()) {
             state.pack = list_pngs(&dir);
             log::info!("textures: {} replacements in {dir}", state.pack.len());
         }
