@@ -27,9 +27,59 @@ pub struct MainThread {
     /// so it is tracked as they arrive.
     buttons: std::cell::Cell<host::MouseButton>,
     /// Windows are this many times the size the program asks for
-    /// (THESEUS_WINDOW_SCALE); mouse positions are scaled back down, so the
-    /// program never knows.
+    /// (THESEUS_WINDOW_SCALE). Whatever a window's size, mouse positions are
+    /// mapped back to the program's (see `to_program`), so it never knows.
     window_scale: u32,
+    /// THESEUS_WINDOW_SIZE=<width>x<height>: windows open at this size (in
+    /// points) instead, whatever size the program asks for.
+    window_size: Option<(u32, u32)>,
+    /// THESEUS_FULLSCREEN=1: windows cover the screen.
+    fullscreen: bool,
+}
+
+/// The size of the (single) window's contents as the program sees them. The
+/// window shows them scaled to fit, centered, so it can be any size.
+static PROGRAM_SIZE: [std::sync::atomic::AtomicU32; 2] =
+    [std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicU32::new(0)];
+
+fn program_size() -> (u32, u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (PROGRAM_SIZE[0].load(Relaxed), PROGRAM_SIZE[1].load(Relaxed))
+}
+
+fn set_program_size(width: u32, height: u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    PROGRAM_SIZE[0].store(width, Relaxed);
+    PROGRAM_SIZE[1].store(height, Relaxed);
+}
+
+/// Where contents of `program` size go in an `outer`-sized area, scaled to
+/// fit and centered: (x, y, width, height).
+pub fn fit_rect(outer: (u32, u32), program: (u32, u32)) -> (f32, f32, f32, f32) {
+    let (ow, oh) = (outer.0 as f32, outer.1 as f32);
+    let (pw, ph) = (program.0.max(1) as f32, program.1.max(1) as f32);
+    let scale = f32::min(ow / pw, oh / ph);
+    let (w, h) = (pw * scale, ph * scale);
+    ((ow - w) / 2.0, (oh - h) / 2.0, w, h)
+}
+
+/// A mouse position in a window, in the program's coordinates.
+fn to_program(window_id: sdl::video::SDL_WindowID, x: f32, y: f32) -> (u32, u32) {
+    let program = program_size();
+    let (mut ww, mut wh) = (0, 0);
+    unsafe {
+        let window = sdl::video::SDL_GetWindowFromID(window_id);
+        if window.is_null() || !sdl::video::SDL_GetWindowSize(window, &mut ww, &mut wh) {
+            return (x as u32, y as u32);
+        }
+    }
+    if program.0 == 0 || ww <= 0 || wh <= 0 {
+        return (x as u32, y as u32);
+    }
+    let (ox, oy, w, h) = fit_rect((ww as u32, wh as u32), program);
+    let px = ((x - ox) * program.0 as f32 / w).clamp(0.0, (program.0 - 1) as f32);
+    let py = ((y - oy) * program.1 as f32 / h).clamp(0.0, (program.1 - 1) as f32);
+    (px as u32, py as u32)
 }
 
 pub struct Host {
@@ -196,9 +246,10 @@ impl MainThread {
                     let event = &event.motion;
                     // Motion events do carry the mask, so resync from them.
                     self.buttons.set(mouse_buttons_from_sdl(event.state));
+                    let (x, y) = to_program(event.windowID, event.x, event.y);
                     return Some(host::Message::MouseMove(host::MouseMessage {
-                        x: (event.x / self.window_scale as f32) as u32,
-                        y: (event.y / self.window_scale as f32) as u32,
+                        x,
+                        y,
                         button: host::MouseButton::empty(),
                         buttons: mouse_buttons_from_sdl(event.state),
                     }));
@@ -223,9 +274,10 @@ impl MainThread {
                         buttons.remove(button);
                     }
                     self.buttons.set(buttons);
+                    let (x, y) = to_program(event.windowID, event.x, event.y);
                     let message = host::MouseMessage {
-                        x: (event.x / self.window_scale as f32) as u32,
-                        y: (event.y / self.window_scale as f32) as u32,
+                        x,
+                        y,
                         button,
                         buttons,
                     };
@@ -275,10 +327,17 @@ impl MainThread {
             .ok()
             .and_then(|s| s.parse().ok())
             .map_or(1, |scale: u32| scale.clamp(1, 8));
+        let window_size = std::env::var("THESEUS_WINDOW_SIZE").ok().and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+        });
+        let fullscreen = std::env::var("THESEUS_FULLSCREEN").is_ok_and(|v| !v.is_empty() && v != "0");
         Self {
             headless,
             buttons: Default::default(),
             window_scale,
+            window_size,
+            fullscreen,
         }
     }
 
@@ -339,6 +398,9 @@ pub struct Window {
     renderer: *mut sdl::render::SDL_Renderer,
     /// See `MainThread::window_scale`.
     scale: u32,
+    /// The window's size was chosen by the user (`MainThread::window_size`,
+    /// `fullscreen`), so the program resizing it only changes what is fitted in.
+    fixed_size: bool,
     /// With THESEUS_SHOW_FPS, the title the program gave the window, which
     /// gets the frames presented in the last second appended.
     fps_title: Option<CString>,
@@ -367,15 +429,24 @@ impl Window {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        set_program_size(width, height);
         if self.window.is_null() {
             return;
         }
         unsafe {
-            check(sdl::video::SDL_SetWindowSize(
-                self.window,
-                (width * self.scale) as i32,
-                (height * self.scale) as i32,
+            check(sdl::render::SDL_SetRenderLogicalPresentation(
+                self.renderer,
+                width as i32,
+                height as i32,
+                sdl::render::SDL_RendererLogicalPresentation::LETTERBOX,
             ));
+            if !self.fixed_size {
+                check(sdl::video::SDL_SetWindowSize(
+                    self.window,
+                    (width * self.scale) as i32,
+                    (height * self.scale) as i32,
+                ));
+            }
         }
     }
 
@@ -394,6 +465,9 @@ impl Window {
             // ));
             // check(sdl::render::SDL_RenderClear(self.renderer));
 
+            // Black bars where the window's shape differs from the program's.
+            check(sdl::render::SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255));
+            check(sdl::render::SDL_RenderClear(self.renderer));
             // Ignore any alpha in the input when doing the final render copy.
             check(sdl::render::SDL_SetTextureBlendMode(
                 surface.texture,
@@ -432,34 +506,54 @@ impl Window {
 
 impl MainThread {
     pub fn create_window(&self, title: &str, width: u32, height: u32) -> Window {
+        set_program_size(width, height);
+        let fixed_size = self.window_size.is_some() || self.fullscreen;
         if self.headless {
             return Window {
                 window: std::ptr::null_mut(),
                 renderer: std::ptr::null_mut(),
                 scale: self.window_scale,
+                fixed_size,
                 fps_title: None,
                 frames: 0,
                 frames_since: 0,
             };
         }
+        let (window_width, window_height) = self
+            .window_size
+            .unwrap_or((width * self.window_scale, height * self.window_scale));
         unsafe {
             let window = sdl::video::SDL_CreateWindow(
                 CString::new(title).unwrap().as_ptr(),
-                (width * self.window_scale) as i32,
-                (height * self.window_scale) as i32,
-                sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY,
+                window_width as i32,
+                window_height as i32,
+                sdl::video::SDL_WindowFlags::HIGH_PIXEL_DENSITY
+                    | sdl::video::SDL_WindowFlags::RESIZABLE,
             );
+            if self.fullscreen {
+                // Borderless, at the desktop's resolution and refresh rate.
+                check(sdl::video::SDL_SetWindowFullscreen(window, true));
+            }
             let renderer = sdl::render::SDL_CreateRenderer(window, std::ptr::null());
             check(sdl::render::SDL_RenderClear(renderer));
+            // Whole pixels, even when the window isn't a whole multiple of
+            // the program's size.
             check(sdl::render::SDL_SetDefaultTextureScaleMode(
                 renderer,
-                sdl::surface::SDL_ScaleMode::NEAREST,
+                sdl::surface::SDL_ScaleMode::PIXELART,
+            ));
+            check(sdl::render::SDL_SetRenderLogicalPresentation(
+                renderer,
+                width as i32,
+                height as i32,
+                sdl::render::SDL_RendererLogicalPresentation::LETTERBOX,
             ));
             let show_fps = std::env::var("THESEUS_SHOW_FPS").is_ok_and(|v| !v.is_empty());
             Window {
                 window,
                 renderer,
                 scale: self.window_scale,
+                fixed_size,
                 fps_title: show_fps.then(|| CString::new(title).unwrap()),
                 frames: 0,
                 frames_since: sdl::timer::SDL_GetTicks(),
