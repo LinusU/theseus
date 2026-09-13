@@ -17,4 +17,6 @@ export THESEUS_REGISTRY="$(pwd)/out/moto/moto.reg"
 cd scratch/moto/install
 # The game checks that its CD is in the drive by volume label.
 export THESEUS_CD_LABEL=MOTO_RACER
+# A 1280x960 window for the game's 640x480; Direct3D renders at that size too.
+export THESEUS_WINDOW_SCALE=${THESEUS_WINDOW_SCALE:-2}
 exec "$bin" "$@"
