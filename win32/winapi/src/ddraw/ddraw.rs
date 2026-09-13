@@ -145,6 +145,46 @@ impl DirectDraw {
         surface
     }
 
+    /// A new surface sharing `original`'s pixels (DuplicateSurface), with a
+    /// palette, color keys and reference count of its own.
+    pub fn duplicate_surface(
+        &mut self,
+        mem: &mut Memory,
+        original: &Rc<RefCell<Surface>>,
+        addr: u32,
+    ) -> Rc<RefCell<Surface>> {
+        let (params, pixels, palette, src_color_key, dst_color_key, shared) = {
+            let mut original = original.borrow_mut();
+            let pixels = original.lock(mem);
+            let params = SurfaceParams {
+                is_primary: false,
+                width: original.width,
+                height: original.height,
+                bytes_per_pixel: original.bytes_per_pixel,
+                pixel_format: original.pixel_format.clone(),
+                caps: original.caps,
+            };
+            (
+                params,
+                pixels,
+                original.palette.clone(),
+                original.src_color_key,
+                original.dst_color_key,
+                original.shared.clone(),
+            )
+        };
+        let duplicate = self.create_one_surface(addr, &params);
+        {
+            let mut surface = duplicate.borrow_mut();
+            surface.pixels = Some(pixels);
+            surface.palette = palette;
+            surface.src_color_key = src_color_key;
+            surface.dst_color_key = dst_color_key;
+            surface.shared = shared;
+        }
+        duplicate
+    }
+
     fn create_one_surface(&mut self, addr: u32, params: &SurfaceParams) -> Rc<RefCell<Surface>> {
         let window = self.window.as_ref().unwrap();
         let target = if params.is_primary {
@@ -165,6 +205,9 @@ impl DirectDraw {
             bytes_per_pixel: params.bytes_per_pixel,
             pixel_format: params.pixel_format.clone(),
             generation: next_generation(),
+            shared: Rc::new(SharedPixels {
+                generation: std::cell::Cell::new(next_generation()),
+            }),
             caps: params.caps,
             target,
             primary: Default::default(),
@@ -179,6 +222,11 @@ impl DirectDraw {
         state().surf.borrow_mut().insert(addr, surf.clone());
         surf
     }
+}
+
+/// See `Surface::shared`.
+pub struct SharedPixels {
+    pub generation: std::cell::Cell<u64>,
 }
 
 pub enum Target {
@@ -213,6 +261,10 @@ pub struct Surface {
     /// new palette or color key), so a copy made elsewhere knows it's stale.
     /// Unique across surfaces.
     pub generation: u64,
+    /// Shared by the surfaces using the same pixel memory (the original and
+    /// its DuplicateSurface copies): how many there are, and a generation for
+    /// changes to the pixels themselves, which all of them see.
+    pub shared: Rc<SharedPixels>,
     /// DDSCAPS as reported by GetSurfaceDesc.
     pub caps: DDSCAPS,
     pub target: Target,
@@ -261,6 +313,7 @@ impl Surface {
 
     pub fn unlock(&mut self, mem: &mut Memory) {
         self.generation = next_generation();
+        self.shared.generation.set(next_generation());
         match self.target {
             // Writes to the primary surface go straight to the screen.
             Target::Window(_) => self.present(mem),

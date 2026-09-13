@@ -206,21 +206,22 @@ pub mod IDirectDraw {
     #[win32_derive::dllexport]
     pub fn DuplicateSurface(
         ctx: &mut Context,
-        _this: u32,
+        this: u32,
         lpDDSurface: u32,
         lplpDupDDSurface: u32,
     ) -> DD {
-        // The duplicate shares the original's pixels; model it as a second
-        // pointer onto the same surface holding its own reference.
-        let Some(surface) = state().surf.borrow().get(&lpDDSurface).cloned() else {
+        // The duplicate shares the original's pixels but is a surface of its
+        // own: games give each copy a different palette.
+        let Some(original) = state().surf.borrow().get(&lpDDSurface).cloned() else {
             return DD::ERR_GENERIC;
         };
-        surface.borrow_mut().refs += 1;
         let addr = {
             let mut kernel32 = kernel32::lock();
             IDirectDrawSurface::new(ctx, &mut kernel32.process_heap)
         };
-        state().surf.borrow_mut().insert(addr, surface);
+        state()
+            .get_ddraw(this)
+            .duplicate_surface(&mut ctx.memory, &original, addr);
         ctx.memory.write::<u32>(lplpDupDDSurface, addr);
         DD::OK
     }
@@ -493,7 +494,9 @@ pub mod IDirectDrawSurface {
         };
         // Games recreate surfaces when changing screens, so returning the
         // pixels keeps the heap from growing without bound.
-        if let Some(pixels) = surface.borrow_mut().pixels.take() {
+        // Unless a DuplicateSurface copy still uses them.
+        let last_user = Rc::strong_count(&surface.borrow().shared) == 1;
+        if let (true, Some(pixels)) = (last_user, surface.borrow_mut().pixels.take()) {
             kernel32::lock().process_heap.free(&mut ctx.memory, pixels);
         }
         0

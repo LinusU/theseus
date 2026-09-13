@@ -532,7 +532,9 @@ fn resolve_texture(ctx: &Context, d3d: &mut D3D, handle: u32) -> Option<TextureI
     let surface = surface.borrow();
     let key = &*surface as *const Surface as u64;
     let palette_generation = surface.palette.as_ref().map_or(0, |p| p.borrow().generation);
-    let generation = surface.generation ^ palette_generation.rotate_left(32);
+    let generation = surface.generation
+        ^ surface.shared.generation.get().rotate_left(16)
+        ^ palette_generation.rotate_left(32);
     let info = TextureInfo {
         key,
         alpha: surface.pixel_format.dwFlags & 0x1 != 0,
@@ -1811,6 +1813,7 @@ pub mod IDirect3DTexture {
         }
         dst.src_color_key = key;
         dst.generation = crate::ddraw::next_generation();
+        dst.shared.generation.set(crate::ddraw::next_generation());
         DD::OK
     }
 
