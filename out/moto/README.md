@@ -402,6 +402,15 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   drawing now present the full-resolution GPU target, with the HUD and other
   2D uploaded as changed pixels only. Verified through headless frame dumps
   (1280x960 in the demo, 640x480 on the menus), not yet on screen.
+- 2026-09-13 (evening): Frame rate. The game limits itself to 30 fps
+  unless given `-FrameRateMax<n>` (21..98, or 0 for no limit; parsed at
+  0x414c4e into 0x4DC200). The limiter (0x459fd0) spins on `timeGetTime`
+  until 1000/n ms have passed, and the simulation runs on the average of the
+  last 24 frame times, so uncapping doesn't speed the game up. `run.sh`
+  without arguments now passes `-D3D -NoCpuDetect -FrameRateMax0`; the SDL
+  host presents with vsync, so frames come at the display's refresh (120 Hz
+  on a ProMotion MacBook). Headless, uncapped, at `THESEUS_D3D_SCALE=2` the
+  demo runs at about 200 scenes per second, readbacks included.
 - 2026-09-13 (later still): Every rider's bike had the same colors in
   `-D3D`. The game `DuplicateSurface`s one bike texture per rider and gives
   each duplicate its own palette; duplicates were modelled as extra pointers
