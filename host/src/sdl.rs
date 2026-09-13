@@ -339,6 +339,11 @@ pub struct Window {
     renderer: *mut sdl::render::SDL_Renderer,
     /// See `MainThread::window_scale`.
     scale: u32,
+    /// With THESEUS_SHOW_FPS, the title the program gave the window, which
+    /// gets the frames presented in the last second appended.
+    fps_title: Option<CString>,
+    frames: u32,
+    frames_since: u64,
 }
 
 impl Window {
@@ -402,6 +407,26 @@ impl Window {
             ));
             check(sdl::render::SDL_RenderPresent(self.renderer));
         }
+        self.count_frame();
+    }
+
+    fn count_frame(&mut self) {
+        let Some(title) = &self.fps_title else {
+            return;
+        };
+        self.frames += 1;
+        let now = unsafe { sdl::timer::SDL_GetTicks() };
+        let elapsed = now.saturating_sub(self.frames_since);
+        if elapsed < 1000 {
+            return;
+        }
+        let fps = self.frames as f64 * 1000.0 / elapsed as f64;
+        let text = format!("{} — {fps:.0} fps", title.to_string_lossy());
+        unsafe {
+            sdl::video::SDL_SetWindowTitle(self.window, CString::new(text).unwrap().as_ptr());
+        }
+        self.frames = 0;
+        self.frames_since = now;
     }
 }
 
@@ -412,6 +437,9 @@ impl MainThread {
                 window: std::ptr::null_mut(),
                 renderer: std::ptr::null_mut(),
                 scale: self.window_scale,
+                fps_title: None,
+                frames: 0,
+                frames_since: 0,
             };
         }
         unsafe {
@@ -427,10 +455,14 @@ impl MainThread {
                 renderer,
                 sdl::surface::SDL_ScaleMode::NEAREST,
             ));
+            let show_fps = std::env::var("THESEUS_SHOW_FPS").is_ok_and(|v| !v.is_empty());
             Window {
                 window,
                 renderer,
                 scale: self.window_scale,
+                fps_title: show_fps.then(|| CString::new(title).unwrap()),
+                frames: 0,
+                frames_since: sdl::timer::SDL_GetTicks(),
             }
         }
     }
