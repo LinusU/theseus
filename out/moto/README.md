@@ -76,9 +76,12 @@ Useful environment variables (see `host/src/lib.rs`, `win32/winapi/src/trace.rs`
   window). Screens the game draws in 2D are stretched to fit.
 - `THESEUS_D3D_SCALE=n` (default 2) renders Direct3D at n times the game's
   resolution. On a Retina display a scale-2 window has 4x the game's pixels,
-  so `THESEUS_D3D_SCALE=4` uses them all.
+  so `THESEUS_D3D_SCALE=4` uses them all (headless, uncapped, that runs the
+  demo at 200-400 scenes per second).
 - `THESEUS_D3D_FILTER=linear` smooths textures the game asked to sample
   nearest.
+- `THESEUS_SHOW_FPS=1` appends the frames presented per second to the
+  window title (updated every second; nothing when headless).
 - `THESEUS_DUMP_TEXTURES=dir` writes the first 80 Direct3D textures as they
   are uploaded (transparent pixels magenta), named by pixel format, for
   checking texture decoding.
@@ -411,6 +414,12 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   host presents with vsync, so frames come at the display's refresh (120 Hz
   on a ProMotion MacBook). Headless, uncapped, at `THESEUS_D3D_SCALE=2` the
   demo runs at about 200 scenes per second, readbacks included.
+- 2026-09-13 (night): `THESEUS_D3D_SCALE=4` for Retina. At first it ran at
+  110-140 scenes per second headless: profiling (`sample`) showed the CPU
+  averaging of the 2560x1920 readback taking most of the main thread. The
+  averaging is now a GPU pass into a game-size texture, read back alongside
+  the full image in one round trip: 200-400 per second. `THESEUS_SHOW_FPS`
+  shows the presented rate in the window title.
 - 2026-09-13 (later still): Every rider's bike had the same colors in
   `-D3D`. The game `DuplicateSurface`s one bike texture per rider and gives
   each duplicate its own palette; duplicates were modelled as extra pointers
