@@ -31,6 +31,7 @@ struct SurfaceParams {
     width: u32,
     height: u32,
     bytes_per_pixel: u32,
+    pixel_format: DDPIXELFORMAT,
     caps: DDSCAPS,
 }
 
@@ -87,6 +88,16 @@ impl DirectDraw {
             caps |= DDSCAPS::FRONTBUFFER | DDSCAPS::VISIBLE;
         }
 
+        // Textures come in formats of their own (palettized, with alpha);
+        // everything else matches the display.
+        let pixel_format = if desc.dwFlags.contains(DDSD::PIXELFORMAT)
+            && desc.ddpfPixelFormat.dwRGBBitCount != 0
+        {
+            desc.ddpfPixelFormat.clone()
+        } else {
+            get_pixel_format(bytes_per_pixel * 8)
+        };
+
         let surface = self.create_one_surface(
             new_pointer(),
             &SurfaceParams {
@@ -94,6 +105,7 @@ impl DirectDraw {
                 width,
                 height,
                 bytes_per_pixel,
+                pixel_format: pixel_format.clone(),
                 caps,
             },
         );
@@ -120,6 +132,7 @@ impl DirectDraw {
                     width,
                     height,
                     bytes_per_pixel,
+                    pixel_format,
                     caps: DDSCAPS::BACKBUFFER
                         | memory
                         | (requested & (DDSCAPS::FLIP | DDSCAPS::COMPLEX | DDSCAPS::_3DDEVICE)),
@@ -150,6 +163,7 @@ impl DirectDraw {
             width: params.width,
             height: params.height,
             bytes_per_pixel: params.bytes_per_pixel,
+            pixel_format: params.pixel_format.clone(),
             caps: params.caps,
             target,
             primary: Default::default(),
@@ -193,6 +207,7 @@ pub struct Surface {
     pub width: u32,
     pub height: u32,
     pub bytes_per_pixel: u32,
+    pub pixel_format: DDPIXELFORMAT,
     /// DDSCAPS as reported by GetSurfaceDesc.
     pub caps: DDSCAPS,
     pub target: Target,

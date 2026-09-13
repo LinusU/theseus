@@ -646,15 +646,15 @@ pub mod IDirectDrawSurface {
 
     #[win32_derive::dllexport]
     pub fn GetPixelFormat(ctx: &mut Context, this: u32, lpDDPixelFormat: u32) -> DD {
-        let bpp = state()
+        let format = state()
             .surf
             .borrow()
             .get(&this)
             .unwrap()
             .borrow()
-            .bytes_per_pixel
-            * 8;
-        ctx.memory.write(lpDDPixelFormat, get_pixel_format(bpp));
+            .pixel_format
+            .clone();
+        ctx.memory.write(lpDDPixelFormat, format);
         DD::OK
     }
 
@@ -663,7 +663,7 @@ pub mod IDirectDrawSurface {
         let desc = {
             let surfaces = state().surf.borrow_mut();
             let surface = surfaces.get(&this).unwrap().borrow();
-            let pixel_format = get_pixel_format(surface.bytes_per_pixel * 8);
+            let pixel_format = surface.pixel_format.clone();
             DDSURFACEDESC {
                 dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
                 dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT | DDSD::CAPS,
