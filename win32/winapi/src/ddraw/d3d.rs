@@ -142,6 +142,8 @@ pub struct D3D {
     present_texture: Option<(u32, u32, host::Surface)>,
     seen: BTreeSet<String>,
     scenes: u32,
+    /// Host time (ms) of the last scene count logged.
+    last_report: Option<u32>,
     triangles: u64,
 }
 
@@ -1283,7 +1285,13 @@ pub mod IDirect3DDevice {
         let mut d3d = state().d3d.borrow_mut();
         d3d.scenes += 1;
         if d3d.scenes % 600 == 0 {
-            log::info!("d3d: {} scenes, {} triangles", d3d.scenes, d3d.triangles);
+            let now = host::host().time();
+            let fps = match d3d.last_report {
+                Some(then) if now > then => format!(", {:.1} per second", 600_000.0 / (now - then) as f64),
+                _ => String::new(),
+            };
+            d3d.last_report = Some(now);
+            log::info!("d3d: {} scenes{fps}, {} triangles", d3d.scenes, d3d.triangles);
         }
         DD::OK
     }
