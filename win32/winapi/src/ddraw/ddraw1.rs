@@ -712,10 +712,22 @@ pub mod IDirectDrawSurface {
         assert_eq!(rect, 0);
 
         let pixels = surface.lock(&mut ctx.memory);
+        // The whole description, not just where the pixels are: texture
+        // loaders lock into the same buffer they read the format from.
         let desc = DDSURFACEDESC {
             dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
+            dwFlags: DDSD::WIDTH
+                | DDSD::HEIGHT
+                | DDSD::PITCH
+                | DDSD::PIXELFORMAT
+                | DDSD::CAPS
+                | DDSD::LPSURFACE,
+            dwWidth: surface.width,
+            dwHeight: surface.height,
             lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
             lpSurface: pixels,
+            ddpfPixelFormat: surface.pixel_format.clone(),
+            ddsCaps: surface.caps,
             ..DDSURFACEDESC::default()
         };
         desc.write_to_prefix(&mut ctx.memory[lpDesc..]).unwrap();
