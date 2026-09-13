@@ -19,4 +19,10 @@ cd scratch/moto/install
 export THESEUS_CD_LABEL=MOTO_RACER
 # A 1280x960 window for the game's 640x480; Direct3D renders at that size too.
 export THESEUS_WINDOW_SCALE=${THESEUS_WINDOW_SCALE:-2}
+# Without arguments: Direct3D, and no frame rate cap (the game's default is
+# 30; its simulation runs on elapsed time, and presenting waits for the
+# display's refresh, so frames come at up to e.g. 120 Hz).
+if [ $# -eq 0 ]; then
+    set -- -D3D -NoCpuDetect -FrameRateMax0
+fi
 exec "$bin" "$@"
