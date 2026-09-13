@@ -1,11 +1,19 @@
 struct Logger {}
 impl log::Log for Logger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        // Graphics libraries narrate every shader and adapter they touch;
+        // only their problems are of interest here.
+        let chatty = ["wgpu", "naga"]
+            .iter()
+            .any(|prefix| metadata.target().starts_with(prefix));
+        !chatty || metadata.level() <= log::Level::Warn
     }
 
     #[cfg(not(target_family = "wasm"))]
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
         use colored::Colorize;
         use log::Level::*;
         let level = match record.level() {
