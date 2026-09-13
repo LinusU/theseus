@@ -14,8 +14,10 @@ input, HUD, going off-track, GAME OVER — rendering correctly through the
 software renderer at 640x480x16, with the soundtrack playing off the
 ripped CD tracks and DirectSound sound effects. With `-D3D` the game takes
 its Direct3D path instead, drawn through wgpu (see "Direct3D" under Known
-gaps): the attract-mode demo renders correctly, HUD included, at 1280x960
-in a 1280x960 window.
+gaps): the attract-mode demo renders correctly, HUD included, at the
+window's full resolution (any window size, fullscreen, the display's
+refresh rate), and its textures can be dumped and replaced by upscaled ones
+(see "Texture packs").
 Not yet exercised: multiplayer, joystick, an actual race in `-D3D`.
 
 ## Layout
@@ -72,19 +74,32 @@ Useful environment variables (see `host/src/lib.rs`, `win32/winapi/src/trace.rs`
   the PPMs directly, to look at them.
 - `RUST_BACKTRACE=1` for panics inside winapi.
 - `THESEUS_WINDOW_SCALE=n` makes host windows n times the size the program
-  asks for, with mouse positions scaled back; `run.sh` sets 2 (a 1280x960
-  window). Screens the game draws in 2D are stretched to fit.
-- `THESEUS_D3D_SCALE=n` (default 2) renders Direct3D at n times the game's
-  resolution. On a Retina display a scale-2 window has 4x the game's pixels,
-  so `THESEUS_D3D_SCALE=4` uses them all (headless, uncapped, that runs the
-  demo at 200-400 scenes per second).
+  asks for; `run.sh` sets 2 (a 1280x960 window).
+- `THESEUS_WINDOW_SIZE=3840x2160` opens the window at that size (in points,
+  so on a Retina display it has twice as many pixels each way) and
+  `THESEUS_FULLSCREEN=1` makes it cover the screen at the desktop's
+  resolution and refresh rate. Windows can also be resized by hand. The game
+  is scaled to fit, keeping its 4:3 shape (black bars), and mouse positions
+  are mapped back.
+- Frames are presented in step with the display (`THESEUS_VSYNC=0` to not
+  wait), and the game runs uncapped from `run.sh` (`-FrameRateMax0`), so the
+  frame rate is the display's refresh rate: 120 on a 120 Hz screen.
+- Once Direct3D is in use, frames go straight from the GPU to the window
+  (see `d3d::present`) and the render target is as large as the game's area
+  of the window, in pixels: 2880x2160 for 4K. `THESEUS_D3D_SCALE=n` renders
+  at n times the game's resolution instead (headless the default is 2).
 - `THESEUS_D3D_FILTER=linear` smooths textures the game asked to sample
   nearest.
 - `THESEUS_SHOW_FPS=1` appends the frames presented per second to the
   window title (updated every second; nothing when headless).
-- `THESEUS_DUMP_TEXTURES=dir` writes the first 80 Direct3D textures as they
-  are uploaded (transparent pixels magenta), named by pixel format, for
-  checking texture decoding.
+- `THESEUS_DUMP_TEXTURES=dir` writes every Direct3D texture the first time
+  it is drawn with, as `dir/<hash>.png` (RGBA, transparent pixels have alpha
+  0), where the hash is of what the texture looks like. Run the demo or play
+  for a while to collect them; re-running adds to the directory.
+  `THESEUS_TEXTURE_PACK=dir` then draws with `dir/<hash>.png` wherever it
+  exists: edit or upscale the dumped PNGs (any size) into another directory
+  with the same names. Replacements get mipmaps and anisotropic filtering.
+  See "Texture packs" below.
 
 ## About the game binary
 
@@ -255,6 +270,30 @@ Two things about the game's side are worth knowing before changing any of it:
   to last exactly as long as the audio does — hence position being measured
   from what the audio device has consumed rather than what has been handed to
   it. Report a track as over early and the music restarts mid-phrase.
+
+## Texture packs
+
+The game's Direct3D textures are mostly 256x256 pages (RGB565, ARGB4444 and
+8-bit palettized; each bike's paint is a palette of its own). To replace
+them:
+
+```
+THESEUS_DUMP_TEXTURES=$PWD/scratch/moto/textures/dump out/moto/run.sh   # let the demo run through its tracks
+# upscale scratch/moto/textures/dump/*.png into e.g. scratch/moto/textures/pack/, keeping the names
+THESEUS_TEXTURE_PACK=$PWD/scratch/moto/textures/pack out/moto/run.sh
+```
+
+(`run.sh` changes to the install directory, hence the absolute paths.)
+
+Names are a hash of the decoded pixels and size, so a texture only matches
+when the game draws exactly those pixels: a palette change is a different
+texture, and each dump only has what was drawn during that run. The demo
+alone visits three tracks (desert road, snow, cave). Transparent pixels are
+alpha 0 in the dump; a replacement's alpha below one half is cut out the
+same way the game's color key is, so upscalers should keep the alpha
+channel crisp and fill transparent pixels' color from their neighbours to
+avoid dark fringes. The 2D screens (menus, HUD) are not textures and can't
+be replaced this way.
 
 ## Known gaps, in likely order of mattering
 
