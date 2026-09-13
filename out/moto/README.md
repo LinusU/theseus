@@ -295,6 +295,31 @@ channel crisp and fill transparent pixels' color from their neighbours to
 avoid dark fringes. The 2D screens (menus, HUD) are not textures and can't
 be replaced this way.
 
+## Draw distance
+
+Scenery used to appear a chunk at a time because the game only draws the
+track sections near the camera. Each frame, 0x40ce60 (a method of the track
+object at 0x52c108: `[+0]` section array, 252 bytes a section, `[+4]`
+section count, `[+0x24]` W = 10) finds the section nearest the camera and
+lists 4*W+5 sections ahead of it and 4+4 behind when looking down the track
+(split more evenly when looking across it), drawing each listed section's
+scenery objects as it goes; the list (0x5dabd8, room for 256, count in
+0x5dabcc) then decides which riders are drawn. Nothing else culls by
+distance: the depth-sort buckets (0x655d38) take anything.
+
+`src/lib.rs` lengthens both runs by `MOTO_DRAW_DISTANCE` sections (default
+80, so 125 ahead instead of 45; 0 is the original) by writing to the
+displacements of the four `lea`s that compute them, which translate.sh marks
+as patched code so they are read from memory. Capped at 100: the list has
+256 entries, and it must stay shorter than the shortest track (Track06, 435
+sections) or sections would be drawn twice. Raising W instead ([0x52c12c])
+works too but also multiplies the background objects drawn around the
+horizon, which is why the displacements are what's patched.
+
+Found by counting how often each block runs per frame
+(`THESEUS_PROFILE_BLOCKS=file`, snapshots every 600 scenes): loops that ran
+exactly 45 and 8 times a frame led to 0x40d1d7 and 0x40d2a6.
+
 ## Known gaps, in likely order of mattering
 
 0. **Multiple real (host-backed) windows.** user32 still models exactly one
@@ -332,17 +357,17 @@ be replaced this way.
    `QueryInterface` fails and the game falls back to plain stereo panning,
    which is what it does on hardware without 3D sound.
 8. **Direct3D** (`-D3D`): the demo renders correctly; only the demo has been
-   checked (headless, through frame dumps). Textures come in RGB565,
-   ARGB4444 and 8-bit palettized; `THESEUS_DUMP_TEXTURES` shows how they
-   decode. A flip after 3D drawing shows the GPU target itself (see
-   `d3d::present`); the game's 2D is laid over it by uploading only pixels
-   that changed since memory and GPU last agreed, and the back buffer still
-   gets an averaged-down copy. Screens with no 3D are the plain 640x480 back
-   buffer stretched. Each such frame costs a full readback (plus another when
-   the game locks the back buffer mid-frame), untimed so far. Still missing:
-   `PROCESSVERTICES` transforms/lighting (unused by this game), a
-   z-buffer path, and any renderer on the web build (`gpu.rs` has a no-op
-   stand-in there).
+   checked (headless through frame dumps, and briefly in a window). Textures
+   come in RGB565, ARGB4444 and 8-bit palettized. Once there is a GPU, flips
+   present straight to the window (`d3d::present`): the render target after
+   3D, with the game's 2D laid over it by uploading only the pixels that
+   changed since memory and GPU last agreed, or the back buffer itself on
+   screens without 3D. The game still gets an averaged-down copy of the
+   target whenever it locks the back buffer (one game-size readback a
+   frame). Still missing: `PROCESSVERTICES` transforms/lighting (unused by
+   this game), a z-buffer path, widescreen (the game projects onto a 640x480
+   reference, see 0x4995a0; the picture is 4:3 with black bars), and any
+   renderer on the web build (`gpu.rs` has a no-op stand-in there).
 9. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
 10. **Exceptions and the Rust stack.** A caught C++ exception leaves a few Rust
     frames behind for good (see `kernel32/seh.rs`); thousands of exceptions
@@ -464,3 +489,23 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   each duplicate its own palette; duplicates were modelled as extra pointers
   to one surface, so they shared a palette. They are now surfaces of their
   own sharing pixel memory (`Surface::shared`).
+- 2026-09-13/14 (overnight): Any window size, texture packs, draw distance.
+  - Windows: `THESEUS_WINDOW_SIZE`/`THESEUS_FULLSCREEN`, resizable, the game
+    fitted in with black bars and mouse positions mapped back. With a GPU,
+    frames are presented through wgpu onto a Metal layer over the SDL window
+    instead of being read back (a 4K window's 2880x2160 target would be 33 MB
+    a frame), with 4x MSAA since the target is no longer supersampled.
+    Measured in a 1920x1080-point window on a 100 Hz display: 100 frames
+    per second. (A steady 100 there is the display, not a cap.)
+  - Textures: dumped and replaced by content hash (`texture_pack.rs`);
+    `out/moto/upscale.py` turns a dump into a pack. Tried 4xTextureDAT2_otf
+    and RealESRGAN_x4plus through spandrel on the GPU, and SeedVR2-3B through
+    mflux (which needs a workaround for an mlx `repeat` incompatibility, in
+    the script). On these textures 4xTextureDAT2_otf looked best (sharp
+    lettering, no invented detail, ~1 s a texture); RealESRGAN is faster but
+    rings and invents rock texture; SeedVR2 (~9 s a texture, 6.8 GB of
+    weights) is good on photographic parts like the sky but softens
+    lettering. `run.sh` uses `scratch/moto/textures/pack` when present.
+  - Draw distance: see "Draw distance". Static reading of the binary found
+    the track structures but not the window; per-frame block counts
+    (`THESEUS_PROFILE_BLOCKS`) found it in minutes.
