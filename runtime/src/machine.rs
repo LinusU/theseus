@@ -95,6 +95,7 @@ impl Context {
         // TODO: this would be faster as a perfect hash if we really cared.
         let Ok(index) = self.blocks.binary_search_by_key(&addr, |(addr, _)| *addr) else {
             self.dump();
+            self.dump_recent_blocks();
             crate::log_missing_addr(addr);
             panic!(
                 "jmp to unknown addr {addr:#010x}; \
@@ -104,6 +105,19 @@ impl Context {
         let func = self.blocks[index].1;
         self.cache.insert(addr, func);
         Cont(func)
+    }
+
+    /// Print the addresses of the last few blocks run, one of which made the
+    /// jump being diagnosed. `recent` is a ring buffer whose position isn't
+    /// kept, so they come out in no particular order.
+    pub fn dump_recent_blocks(&self) {
+        println!("recent blocks (unordered):");
+        for func in &self.recent {
+            match self.blocks.iter().find(|&(_, f)| std::ptr::fn_addr_eq(*f, *func)) {
+                Some((addr, _)) => println!("  {addr:08x}"),
+                None => println!("  (not an x86 block)"),
+            }
+        }
     }
 
     pub fn proc_addr(&mut self, func: ContFn) -> u32 {
