@@ -14,7 +14,8 @@ input, HUD, going off-track, GAME OVER — rendering correctly through the
 software renderer at 640x480x16, with the soundtrack playing off the
 ripped CD tracks and DirectSound sound effects. With `-D3D` the game takes
 its Direct3D path instead, drawn through wgpu (see "Direct3D" under Known
-gaps): the attract-mode demo renders correctly, HUD included, supersampled.
+gaps): the attract-mode demo renders correctly, HUD included, at 1280x960
+in a 1280x960 window.
 Not yet exercised: multiplayer, joystick, an actual race in `-D3D`.
 
 ## Layout
@@ -70,8 +71,12 @@ Useful environment variables (see `host/src/lib.rs`, `win32/winapi/src/trace.rs`
   can be checked visually. `python3 -c` a tiny PPM-to-PNG converter, or open
   the PPMs directly, to look at them.
 - `RUST_BACKTRACE=1` for panics inside winapi.
+- `THESEUS_WINDOW_SCALE=n` makes host windows n times the size the program
+  asks for, with mouse positions scaled back; `run.sh` sets 2 (a 1280x960
+  window). Screens the game draws in 2D are stretched to fit.
 - `THESEUS_D3D_SCALE=n` (default 2) renders Direct3D at n times the game's
-  resolution and averages it back down: antialiasing, no bigger window yet.
+  resolution. On a Retina display a scale-2 window has 4x the game's pixels,
+  so `THESEUS_D3D_SCALE=4` uses them all.
 - `THESEUS_D3D_FILTER=linear` smooths textures the game asked to sample
   nearest.
 - `THESEUS_DUMP_TEXTURES=dir` writes the first 80 Direct3D textures as they
@@ -287,10 +292,13 @@ Two things about the game's side are worth knowing before changing any of it:
 8. **Direct3D** (`-D3D`): the demo renders correctly; only the demo has been
    checked (headless, through frame dumps). Textures come in RGB565,
    ARGB4444 and 8-bit palettized; `THESEUS_DUMP_TEXTURES` shows how they
-   decode. Still missing: the window is 640x480 however large the GPU target (the
-   supersampled image is averaged back down into the game's back buffer; to
-   show more detail, present the GPU target itself and composite the 2D on
-   top), `PROCESSVERTICES` transforms/lighting (unused by this game), a
+   decode. A flip after 3D drawing shows the GPU target itself (see
+   `d3d::present`); the game's 2D is laid over it by uploading only pixels
+   that changed since memory and GPU last agreed, and the back buffer still
+   gets an averaged-down copy. Screens with no 3D are the plain 640x480 back
+   buffer stretched. Each such frame costs a full readback (plus another when
+   the game locks the back buffer mid-frame), untimed so far. Still missing:
+   `PROCESSVERTICES` transforms/lighting (unused by this game), a
    z-buffer path, and any renderer on the web build (`gpu.rs` has a no-op
    stand-in there).
 9. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
@@ -389,3 +397,8 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   game filled it as palettized or ARGB4444 (`Lock` also returned a mostly
   zeroed description, fixed on the way). Result: the attract demo, HUD
   included, renders correctly, supersampled at 1280x960 on an M5 Max.
+- 2026-09-13 (later): A bigger window. `THESEUS_WINDOW_SCALE` (host) makes
+  the window larger than the game asked for; `run.sh` sets 2. Flips after 3D
+  drawing now present the full-resolution GPU target, with the HUD and other
+  2D uploaded as changed pixels only. Verified through headless frame dumps
+  (1280x960 in the demo, 640x480 on the menus), not yet on screen.
