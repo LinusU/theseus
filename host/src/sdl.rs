@@ -401,6 +401,9 @@ pub struct Window {
     /// The window's size was chosen by the user (`MainThread::window_size`,
     /// `fullscreen`), so the program resizing it only changes what is fitted in.
     fixed_size: bool,
+    /// A Metal view over the window for drawing to it with the GPU directly
+    /// (see `metal_layer`), once asked for.
+    metal_view: sdl::metal::SDL_MetalView,
     /// With THESEUS_SHOW_FPS, the title the program gave the window, which
     /// gets the frames presented in the last second appended.
     fps_title: Option<CString>,
@@ -450,6 +453,39 @@ impl Window {
         }
     }
 
+    /// The window's size in pixels (0x0 when headless).
+    pub fn pixel_size(&self) -> (u32, u32) {
+        if self.window.is_null() {
+            return (0, 0);
+        }
+        let (mut w, mut h) = (0, 0);
+        unsafe {
+            sdl::video::SDL_GetWindowSizeInPixels(self.window, &mut w, &mut h);
+        }
+        (w.max(0) as u32, h.max(0) as u32)
+    }
+
+    /// A `CAMetalLayer` covering the window, for a GPU API to present to.
+    /// From then on the window shows what is presented there, not `render`.
+    /// None when headless or not on macOS.
+    pub fn metal_layer(&mut self) -> Option<*mut std::ffi::c_void> {
+        if self.window.is_null() || !cfg!(target_os = "macos") {
+            return None;
+        }
+        unsafe {
+            if self.metal_view.is_null() {
+                // Added over the renderer's own view, which is left in place
+                // (surfaces made by `create_surface` belong to it).
+                self.metal_view = sdl::metal::SDL_Metal_CreateView(self.window);
+                if self.metal_view.is_null() {
+                    return None;
+                }
+            }
+            let layer = sdl::metal::SDL_Metal_GetLayer(self.metal_view);
+            (!layer.is_null()).then_some(layer)
+        }
+    }
+
     pub fn render(&mut self, surface: &mut Surface) {
         if self.window.is_null() {
             return;
@@ -481,10 +517,12 @@ impl Window {
             ));
             check(sdl::render::SDL_RenderPresent(self.renderer));
         }
-        self.count_frame();
+        self.frame_presented();
     }
 
-    fn count_frame(&mut self) {
+    /// Count a frame for THESEUS_SHOW_FPS; `render` does this itself, so only
+    /// frames presented some other way (see `metal_layer`) need it.
+    pub fn frame_presented(&mut self) {
         let Some(title) = &self.fps_title else {
             return;
         };
@@ -514,6 +552,7 @@ impl MainThread {
                 renderer: std::ptr::null_mut(),
                 scale: self.window_scale,
                 fixed_size,
+                metal_view: std::ptr::null_mut(),
                 fps_title: None,
                 frames: 0,
                 frames_since: 0,
@@ -554,6 +593,7 @@ impl MainThread {
                 renderer,
                 scale: self.window_scale,
                 fixed_size,
+                metal_view: std::ptr::null_mut(),
                 fps_title: show_fps.then(|| CString::new(title).unwrap()),
                 frames: 0,
                 frames_since: sdl::timer::SDL_GetTicks(),
