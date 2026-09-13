@@ -647,11 +647,12 @@ pub mod IDirectDrawSurface {
             let pixel_format = get_pixel_format(surface.bytes_per_pixel * 8);
             DDSURFACEDESC {
                 dwSize: std::mem::size_of::<DDSURFACEDESC>() as u32,
-                dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT,
+                dwFlags: DDSD::WIDTH | DDSD::HEIGHT | DDSD::PITCH | DDSD::PIXELFORMAT | DDSD::CAPS,
                 dwWidth: surface.width,
                 dwHeight: surface.height,
                 lPitch_dwLinearSize: surface.width * surface.bytes_per_pixel,
                 ddpfPixelFormat: pixel_format,
+                ddsCaps: surface.caps,
                 ..DDSURFACEDESC::default()
             }
         };

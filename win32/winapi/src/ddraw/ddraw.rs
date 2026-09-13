@@ -31,6 +31,7 @@ struct SurfaceParams {
     width: u32,
     height: u32,
     bytes_per_pixel: u32,
+    caps: DDSCAPS,
 }
 
 impl DirectDraw {
@@ -69,6 +70,23 @@ impl DirectDraw {
             self.bytes_per_pixel
         };
 
+        // Everything lives in "video memory" unless the app asked otherwise:
+        // Direct3D games refuse a hardware device whose render target isn't.
+        let requested = if desc.dwFlags.contains(DDSD::CAPS) {
+            desc.ddsCaps.dwCaps
+        } else {
+            DDSCAPS::empty()
+        };
+        let memory = if requested.contains(DDSCAPS::SYSTEMMEMORY) {
+            DDSCAPS::empty()
+        } else {
+            DDSCAPS::VIDEOMEMORY | DDSCAPS::LOCALVIDMEM
+        };
+        let mut caps = requested | memory;
+        if is_primary {
+            caps |= DDSCAPS::FRONTBUFFER | DDSCAPS::VISIBLE;
+        }
+
         let surface = self.create_one_surface(
             new_pointer(),
             &SurfaceParams {
@@ -76,6 +94,7 @@ impl DirectDraw {
                 width,
                 height,
                 bytes_per_pixel,
+                caps,
             },
         );
 
@@ -101,6 +120,9 @@ impl DirectDraw {
                     width,
                     height,
                     bytes_per_pixel,
+                    caps: DDSCAPS::BACKBUFFER
+                        | memory
+                        | (requested & (DDSCAPS::FLIP | DDSCAPS::COMPLEX | DDSCAPS::_3DDEVICE)),
                 },
             );
             back.borrow_mut().primary.replace(surface.clone());
@@ -128,6 +150,7 @@ impl DirectDraw {
             width: params.width,
             height: params.height,
             bytes_per_pixel: params.bytes_per_pixel,
+            caps: params.caps,
             target,
             primary: Default::default(),
             attached: Default::default(),
@@ -170,6 +193,8 @@ pub struct Surface {
     pub width: u32,
     pub height: u32,
     pub bytes_per_pixel: u32,
+    /// DDSCAPS as reported by GetSurfaceDesc.
+    pub caps: DDSCAPS,
     pub target: Target,
 
     // How does surface attachment actually work?
