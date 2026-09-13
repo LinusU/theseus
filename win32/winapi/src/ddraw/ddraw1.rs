@@ -203,8 +203,25 @@ pub mod IDirectDraw {
     }
 
     #[win32_derive::dllexport]
-    pub fn DuplicateSurface(_ctx: &mut Context, _this: u32) -> DD {
-        todo!()
+    pub fn DuplicateSurface(
+        ctx: &mut Context,
+        _this: u32,
+        lpDDSurface: u32,
+        lplpDupDDSurface: u32,
+    ) -> DD {
+        // The duplicate shares the original's pixels; model it as a second
+        // pointer onto the same surface holding its own reference.
+        let Some(surface) = state().surf.borrow().get(&lpDDSurface).cloned() else {
+            return DD::ERR_GENERIC;
+        };
+        surface.borrow_mut().refs += 1;
+        let addr = {
+            let mut kernel32 = kernel32::lock();
+            IDirectDrawSurface::new(ctx, &mut kernel32.process_heap)
+        };
+        state().surf.borrow_mut().insert(addr, surface);
+        ctx.memory.write::<u32>(lplpDupDDSurface, addr);
+        DD::OK
     }
 
     #[win32_derive::dllexport]

@@ -109,8 +109,13 @@ pub mod IDirectDraw2 {
     }
 
     #[win32_derive::dllexport]
-    pub fn DuplicateSurface(ctx: &mut Context, this: u32) -> DD {
-        IDirectDraw::DuplicateSurface(ctx, this)
+    pub fn DuplicateSurface(
+        ctx: &mut Context,
+        this: u32,
+        lpDDSurface: u32,
+        lplpDupDDSurface: u32,
+    ) -> DD {
+        IDirectDraw::DuplicateSurface(ctx, this, lpDDSurface, lplpDupDDSurface)
     }
 
     #[win32_derive::dllexport]
