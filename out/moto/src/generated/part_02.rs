@@ -10629,7 +10629,7 @@ pub fn x40d19e(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x18u32), 0x0u32);
     // 0040d1aa lea ecx,[eax*4+4]
-    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(0x4u32);
+    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x40d1ad));
     // 0040d1b1 mov [esp+6Ch],ecx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x6cu32), ctx.cpu.regs.ecx);
@@ -10652,7 +10652,7 @@ pub fn x40d1bd(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x3cu32), ctx.cpu.regs.eax);
     // 0040d1cc lea edx,[ecx*4+5]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.ecx * 4).wrapping_add(0x5u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.ecx * 4).wrapping_add(ctx.memory.read::<u32>(0x40d1cf));
     // 0040d1d3 mov [esp+24h],edx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x24u32), ctx.cpu.regs.edx);
@@ -10827,7 +10827,7 @@ pub fn x40d268(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x18u32), 0x1u32);
     // 0040d274 lea ecx,[eax*4+4]
-    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(0x4u32);
+    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x40d277));
     // 0040d27b mov [esp+6Ch],ecx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x6cu32), ctx.cpu.regs.ecx);
@@ -10861,7 +10861,7 @@ pub fn x40d288(ctx: &mut Context) -> Cont {
         .regs
         .ecx
         .wrapping_add((ctx.cpu.regs.eax * 4))
-        .wrapping_add(0x4u32);
+        .wrapping_add((ctx.memory.read::<u8>(0x40d2a1) as i8 as i32 as u32));
     // 0040d2a2 mov [esp+24h],edx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x24u32), ctx.cpu.regs.edx);
