@@ -750,10 +750,12 @@ fn tl_vertex(raw: &[u8; TLVERTEX_SIZE], width: f32, height: f32) -> gpu::Vertex 
     let d = |o: usize| u32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
     let (sx, sy, sz, rhw) = (f(0), f(4), f(8), f(12));
     let w = if rhw > 0.0 && rhw.is_finite() { 1.0 / rhw } else { 1.0 };
-    // Direct3D samples pixels at their integer coordinates, wgpu at their
-    // centers.
-    let x = (sx + 0.5) / width * 2.0 - 1.0;
-    let y = 1.0 - (sy + 0.5) / height * 2.0;
+    // Direct3D puts pixel centers at integer coordinates and wgpu half a
+    // pixel further on, but matching that would leave a half-pixel strip
+    // along the top and left that full-screen geometry never covers, which
+    // shows once the target is supersampled. Half a pixel of shift doesn't.
+    let x = sx / width * 2.0 - 1.0;
+    let y = 1.0 - sy / height * 2.0;
     // Games put far vertices at exactly 1; keep them inside the clip volume.
     let z = sz.clamp(0.0, 0.999_999);
     gpu::Vertex {
