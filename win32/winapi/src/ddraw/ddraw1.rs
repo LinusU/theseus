@@ -4,7 +4,7 @@ use runtime::Context;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    ddraw::{DD, GUID, Palette, ddraw2, get_pixel_format, state, types::*},
+    ddraw::{DD, GUID, Palette, d3d, ddraw2, get_pixel_format, state, types::*},
     heap::Heap,
     kernel32, stub,
     user32::HWND,
@@ -121,9 +121,8 @@ pub mod IDirectDraw {
                 ctx.memory.write::<u32>(ppvObject, addr);
                 DD::OK
             }
+            d3d::IID_IDirect3D => d3d::ddraw_query_interface(ctx, ppvObject),
             _ => {
-                // Includes IID_IDirect3D: no 3D hardware, so games use their
-                // software renderers.
                 log::warn!("IDirectDraw::QueryInterface({iid:?}): not supported");
                 DD::E_NOINTERFACE
             }
@@ -435,6 +434,9 @@ pub mod IDirectDrawSurface {
                 DD::OK
             }
             _ => {
+                if let Some(result) = d3d::surface_query_interface(ctx, this, &iid, ppvObject) {
+                    return result;
+                }
                 log::warn!("IDirectDrawSurface::QueryInterface({iid:?}): not supported");
                 DD::E_NOINTERFACE
             }

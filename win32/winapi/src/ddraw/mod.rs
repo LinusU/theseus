@@ -4,19 +4,21 @@ use std::{
     rc::Rc,
 };
 
+mod d3d;
 mod ddraw;
 mod ddraw1;
 mod ddraw2;
 mod ddraw7;
 pub mod types;
 
+pub use d3d::*;
 pub use ddraw::*;
 pub use ddraw1::*;
 pub use ddraw2::*;
 pub use ddraw7::*;
 pub use types::DD;
 
-pub const VTABLES: [(&'static str, &[&str]); 7] = [
+pub const VTABLES: [(&'static str, &[&str]); 14] = [
     ("IDirectDraw", IDirectDraw::VTABLE_ENTRIES.as_slice()),
     (
         "IDirectDrawSurface",
@@ -36,6 +38,16 @@ pub const VTABLES: [(&'static str, &[&str]); 7] = [
         "IDirectDrawPalette",
         IDirectDrawPalette::VTABLE_ENTRIES.as_slice(),
     ),
+    ("IDirect3D", IDirect3D::VTABLE_ENTRIES.as_slice()),
+    ("IDirect3DDevice", IDirect3DDevice::VTABLE_ENTRIES.as_slice()),
+    (
+        "IDirect3DExecuteBuffer",
+        IDirect3DExecuteBuffer::VTABLE_ENTRIES.as_slice(),
+    ),
+    ("IDirect3DViewport", IDirect3DViewport::VTABLE_ENTRIES.as_slice()),
+    ("IDirect3DMaterial", IDirect3DMaterial::VTABLE_ENTRIES.as_slice()),
+    ("IDirect3DLight", IDirect3DLight::VTABLE_ENTRIES.as_slice()),
+    ("IDirect3DTexture", IDirect3DTexture::VTABLE_ENTRIES.as_slice()),
 ];
 
 #[repr(C)]
@@ -64,6 +76,7 @@ pub struct State {
     pub ddraw: RefCell<Option<DirectDraw>>,
     pub surf: RefCell<HashMap<u32, Rc<RefCell<Surface>>>>,
     pub palette: RefCell<HashMap<u32, Rc<RefCell<Palette>>>>,
+    pub d3d: RefCell<D3D>,
 }
 
 impl State {
