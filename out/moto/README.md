@@ -402,3 +402,8 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   drawing now present the full-resolution GPU target, with the HUD and other
   2D uploaded as changed pixels only. Verified through headless frame dumps
   (1280x960 in the demo, 640x480 on the menus), not yet on screen.
+- 2026-09-13 (later still): Every rider's bike had the same colors in
+  `-D3D`. The game `DuplicateSurface`s one bike texture per rider and gives
+  each duplicate its own palette; duplicates were modelled as extra pointers
+  to one surface, so they shared a palette. They are now surfaces of their
+  own sharing pixel memory (`Surface::shared`).
