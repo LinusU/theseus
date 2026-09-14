@@ -316,6 +316,32 @@ sections) or sections would be drawn twice. Raising W instead ([0x52c12c])
 works too but also multiplies the background objects drawn around the
 horizon, which is why the displacements are what's patched.
 
+That lengthened the scenery but not the ground: the ground is also cut
+off by the camera's frustum, whose far plane is the `LenBPlane` of the
+current detail level. The game's settings give each of the five levels a
+row of distances at 0x51d1b8 (`LenRLPlane`, `LenBPlane`, `FlatZ`,
+`HorizFlatZ`, `MediumZone`, `HightZone`, `gouraudTexturedZ`, `texturedZ`,
+`gouraudZ`; `LenBPlane` is 12000, 12000, 12000, 14000, 18000, and the demo
+runs at level 4 from `CurrentDetail` at 0x4dc098). The three readers of
+`LenBPlane` (0x46e731, 0x46e90b, 0x480147) are patched the same way to read
+a table `src/lib.rs` fills in the unused end of .rdata (0x4dad30), scaled by
+the same factor as the section window, and the depth-to-bucket scale (0.25
+at 0x4d1f9c) shrinks in step so the far end still sorts.
+
+Bikes further than 1000 units from the camera were drawn with simpler
+models: 0x45f160 stores a level of detail at +0x638 of each rider (0 up to
+1000, 2 up to 2500, 3 up to 3000, 4 beyond), which picks the part list
+0x461440 draws. `src/lib.rs` makes all three choices 0 unless
+`MOTO_LOW_POLY_BIKES=1`.
+
+Both together crashed the game as a race started (`HeapSize` on a garbage
+heap handle): everything drawn is transformed into one array of 28-byte
+vertices at 0x6d20d8 (count in 0x68b014), made at startup for 8000
+(0x497ce0) and filled without a check. The demo's start line needs about
+2700; full-detail bikes about 6900, and the longer view on top about 10100,
+overwriting the globals that follow. `src/lib.rs` allocates room for 64000
+and points all 21 uses of the old address at it.
+
 Found by counting how often each block runs per frame
 (`THESEUS_PROFILE_BLOCKS=file`, snapshots every 600 scenes): loops that ran
 exactly 45 and 8 times a frame led to 0x40d1d7 and 0x40d2a6.
