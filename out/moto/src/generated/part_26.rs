@@ -5562,7 +5562,7 @@ pub fn x480136(ctx: &mut Context) -> Cont {
             .regs
             .eax
             .wrapping_add((ctx.cpu.regs.eax * 8))
-            .wrapping_add(0x51d1bcu32),
+            .wrapping_add(ctx.memory.read::<u32>(0x48014a)),
     );
     // 0048014e push ecx
     ctx.push32(ctx.cpu.regs.ecx);

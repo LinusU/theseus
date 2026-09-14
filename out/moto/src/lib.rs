@@ -7,7 +7,9 @@ mod generated;
 pub fn main() {
     let exe = &generated::EXEDATA;
     let mut ctx = winapi::load(exe);
-    widen_section_window(&mut ctx.memory, extra_sections());
+    let extra = extra_sections();
+    widen_section_window(&mut ctx.memory, extra);
+    lengthen_view(&mut ctx.memory, extra);
     grow_vertex_array(&mut ctx.memory);
     if !low_poly_bikes() {
         full_detail_bikes(&mut ctx.memory);
@@ -27,6 +29,8 @@ fn extra_sections() -> u32 {
     80
 }
 
+const MAX_EXTRA_SECTIONS: u32 = 100;
+
 /// Draw `extra` more track sections each way than the game does.
 ///
 /// Each frame the game lists the sections around the camera to draw, with
@@ -39,7 +43,7 @@ fn extra_sections() -> u32 {
 /// must stay shorter than the shortest track (435 sections, Track06), so
 /// `extra` is capped at 100.
 fn widen_section_window(memory: &mut runtime::Memory, extra: u32) {
-    let extra = extra.min(100);
+    let extra = extra.min(MAX_EXTRA_SECTIONS);
     // Last index of the sections ahead: lea ecx, [4*eax + 4].
     memory.write::<u32>(0x40d1ad, 4 + extra);
     // Number of sections ahead: lea edx, [4*ecx + 5].
@@ -48,6 +52,33 @@ fn widen_section_window(memory: &mut runtime::Memory, extra: u32) {
     memory.write::<u32>(0x40d277, 4 + extra);
     // Number of sections in all: lea edx, [ecx + 4*eax + 4] (a byte).
     memory.write::<u8>(0x40d2a1, (4 + extra) as u8);
+}
+
+/// Move the far plane out as far as `extra` more sections reach.
+///
+/// Scenery objects are drawn for every listed section (see
+/// `widen_section_window`), but the ground is cut off by the view frustum,
+/// whose far plane is the "LenBPlane" distance the game's settings give each
+/// detail level (a 36-byte row per level at 0x51d1b8, filled in from its
+/// configuration after startup): 12000 for levels 0-2, 14000 and 18000
+/// above. The three places that read it have their displacements translated
+/// as memory reads (see translate.sh) and are pointed at a table of longer
+/// distances here instead, in the unused end of .rdata. The depth-sorting
+/// buckets (8000 of them, 0x655d38) cover 4 units each; objects beyond that
+/// all share the last one, so they get coarser in step.
+fn lengthen_view(memory: &mut runtime::Memory, extra: u32) {
+    const LEN_B_PLANE: [f32; 5] = [12000.0, 12000.0, 12000.0, 14000.0, 18000.0];
+    const TABLE: u32 = 0x4dad30;
+    let scale = (45 + extra.min(MAX_EXTRA_SECTIONS)) as f32 / 45.0;
+    for (level, len) in LEN_B_PLANE.iter().enumerate() {
+        memory.write::<u32>(TABLE + 36 * level as u32, (len * scale).to_bits());
+    }
+    // mov ecx, [eax + 8*eax + 0x51d1bc] (twice) and fld [eax + 8*eax + 0x51d1bc].
+    for disp in [0x46e734, 0x46e90e, 0x48014a] {
+        memory.write::<u32>(disp, TABLE);
+    }
+    // Depth to bucket: fmul dword ptr [0x4d1f9c], read by the two inserts.
+    memory.write::<u32>(0x4d1f9c, (0.25 / scale).to_bits());
 }
 
 /// MOTO_LOW_POLY_BIKES=1: draw distant bikes with fewer polygons, as the

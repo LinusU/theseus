@@ -29,6 +29,11 @@ args=(
     --patched-code 45f1f3..45f1fd
     --patched-code 45f216..45f220
     --patched-code 45f274..45f27e
+    # Where the far plane distance for each detail level is read (see
+    # lengthen_view in src/lib.rs): displacements patched at startup.
+    --patched-code 46e731..46e738
+    --patched-code 46e90b..46e912
+    --patched-code 480147..48014e
     # Every use of the transformed-vertex array, which is moved to a larger
     # one (see grow_vertex_array in src/lib.rs).
     --patched-code 497ce2..497cec

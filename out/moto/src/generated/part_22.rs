@@ -10991,7 +10991,7 @@ pub fn x46e723(ctx: &mut Context) -> Cont {
             .regs
             .eax
             .wrapping_add((ctx.cpu.regs.eax * 8))
-            .wrapping_add(0x51d1bcu32),
+            .wrapping_add(ctx.memory.read::<u32>(0x46e734)),
     );
     // 0046e738 mov [esp+18h],ecx
     ctx.memory
@@ -11659,7 +11659,7 @@ pub fn x46e8b0(ctx: &mut Context) -> Cont {
                 .regs
                 .eax
                 .wrapping_add((ctx.cpu.regs.eax * 8))
-                .wrapping_add(0x51d1bcu32),
+                .wrapping_add(ctx.memory.read::<u32>(0x46e90e)),
         ) as f64,
     );
     // 0046e912 fmul dword ptr ds:[4D13B0h]
