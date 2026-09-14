@@ -24,6 +24,27 @@ args=(
     --patched-code 40d1cc..40d1d3
     --patched-code 40d274..40d27b
     --patched-code 40d29e..40d2a2
+    # Every use of the transformed-vertex array, which is moved to a larger
+    # one (see grow_vertex_array in src/lib.rs).
+    --patched-code 497ce2..497cec
+    --patched-code 498005..49800c
+    --patched-code 498032..498039
+    --patched-code 498410..498417
+    --patched-code 49843d..498444
+    --patched-code 498813..49881a
+    --patched-code 49883e..498845
+    --patched-code 498ac9..498ad0
+    --patched-code 498af6..498afd
+    --patched-code 498ec4..498ecb
+    --patched-code 498ef1..498ef8
+    --patched-code 49916c..499173
+    --patched-code 499199..4991a0
+    --patched-code 49b2d7..49b2de
+    --patched-code 49b4ca..49b4d1
+    --patched-code 49c7f2..49c7f8
+    --patched-code 49c800..49c806
+    --patched-code 49cc43..49cc49
+    --patched-code 49cc51..49cc57
 )
 cargo run -p tc -- "${args[@]}"
 echo cargo build --profile fast -p moto

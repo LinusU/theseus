@@ -8,6 +8,7 @@ pub fn main() {
     let exe = &generated::EXEDATA;
     let mut ctx = winapi::load(exe);
     widen_section_window(&mut ctx.memory, extra_sections());
+    grow_vertex_array(&mut ctx.memory);
     winapi::start(&mut ctx, exe);
 }
 
@@ -44,4 +45,43 @@ fn widen_section_window(memory: &mut runtime::Memory, extra: u32) {
     memory.write::<u32>(0x40d277, 4 + extra);
     // Number of sections in all: lea edx, [ecx + 4*eax + 4] (a byte).
     memory.write::<u8>(0x40d2a1, (4 + extra) as u8);
+}
+
+/// Move the array of transformed vertices somewhere with room for 8 times
+/// as many.
+///
+/// Everything drawn is transformed into one array per frame (0x6d20d8,
+/// 28 bytes a vertex, the count in 0x68b014), made at startup with room for
+/// 8000 (0x497ce0) and filled with no check. The demo's start line uses
+/// about 2700; full-detail bikes alone take it to about 6900, and with the
+/// longer view on top it overflows into the globals after it and the game
+/// crashes. Its 21 uses have their address constants translated as memory
+/// reads (see translate.sh) and are pointed at a larger array here.
+fn grow_vertex_array(memory: &mut runtime::Memory) {
+    const OLD: u32 = 0x6d20d8;
+    const VERTEX_SIZE: u32 = 28;
+    const VERTICES: u32 = 64000;
+    let new = winapi::kernel32::lock()
+        .mappings
+        .alloc("moto vertices".into(), VERTICES * VERTEX_SIZE);
+    // The loop constructing them: mov edi, OLD; mov esi, 7999.
+    memory.write::<u32>(0x497ce3, new);
+    memory.write::<u32>(0x497ce8, VERTICES - 1);
+    // lea reg, [4*reg + OLD].
+    for lea in [
+        0x498005, 0x498032, 0x498410, 0x49843d, 0x498813, 0x49883e, 0x498ac9, 0x498af6, 0x498ec4,
+        0x498ef1, 0x49916c, 0x499199, 0x49b2d7, 0x49b4ca,
+    ] {
+        memory.write::<u32>(lea + 3, new);
+    }
+    // lea reg, [eax + OLD] and [eax + OLD + 0x10].
+    for (lea, field) in [
+        (0x49c7f2, 0),
+        (0x49c800, 0x10),
+        (0x49cc43, 0),
+        (0x49cc51, 0x10),
+    ] {
+        assert_eq!(memory.read::<u32>(lea + 2), OLD + field);
+        memory.write::<u32>(lea + 2, new + field);
+    }
 }

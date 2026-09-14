@@ -6164,9 +6164,9 @@ pub fn x497ce0(ctx: &mut Context) -> Cont {
     // 00497ce1 push edi
     ctx.push32(ctx.cpu.regs.edi);
     // 00497ce2 mov edi,6D20D8h
-    ctx.cpu.regs.edi = 0x6d20d8u32;
+    ctx.cpu.regs.edi = ctx.memory.read::<u32>(0x497ce3);
     // 00497ce7 mov esi,1F3Fh
-    ctx.cpu.regs.esi = 0x1f3fu32;
+    ctx.cpu.regs.esi = ctx.memory.read::<u32>(0x497ce8);
     Cont(x497cec)
 }
 
@@ -7101,7 +7101,7 @@ pub fn x497ff1(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 00498005 lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x498008));
     // 0049800c mov eax,edx
     ctx.cpu.regs.eax = ctx.cpu.regs.edx;
     // 0049800e mov [esp+10h],edx
@@ -7135,7 +7135,7 @@ pub fn x497ff1(ctx: &mut Context) -> Cont {
     // 00498030 sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 00498032 lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498035));
     // 00498039 sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 0049803b mov [esp+14h],eax
@@ -8311,7 +8311,7 @@ pub fn x4983fc(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 00498410 lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x498413));
     // 00498417 mov eax,edx
     ctx.cpu.regs.eax = ctx.cpu.regs.edx;
     // 00498419 mov [esp+10h],edx
@@ -8345,7 +8345,7 @@ pub fn x4983fc(ctx: &mut Context) -> Cont {
     // 0049843b sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 0049843d lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498440));
     // 00498444 sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 00498446 mov [esp+14h],eax
@@ -9514,7 +9514,7 @@ pub fn x4987fe(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 00498813 lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498816));
     // 0049881a sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 0049881c mov [esp+10h],eax
@@ -9546,7 +9546,7 @@ pub fn x4987fe(ctx: &mut Context) -> Cont {
     // 0049883c sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 0049883e lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498841));
     // 00498845 sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 00498847 mov [esp+14h],eax
@@ -10324,7 +10324,7 @@ pub fn x498abc(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 00498ac9 lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x498acc));
     // 00498ad0 mov eax,edx
     ctx.cpu.regs.eax = ctx.cpu.regs.edx;
     // 00498ad2 mov [esp+10h],edx
@@ -10358,7 +10358,7 @@ pub fn x498abc(ctx: &mut Context) -> Cont {
     // 00498af4 sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 00498af6 lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498af9));
     // 00498afd sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 00498aff mov [esp+14h],eax
@@ -11523,7 +11523,7 @@ pub fn x498eb7(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 00498ec4 lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x498ec7));
     // 00498ecb mov eax,edx
     ctx.cpu.regs.eax = ctx.cpu.regs.edx;
     // 00498ecd mov [esp+10h],edx
@@ -11557,7 +11557,7 @@ pub fn x498eb7(ctx: &mut Context) -> Cont {
     // 00498eef sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 00498ef1 lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x498ef4));
     // 00498ef8 sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 00498efa mov [esp+14h],eax
@@ -12324,7 +12324,7 @@ pub fn x499158(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x30u32), 0x1cu32);
     // 0049916c lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x49916f));
     // 00499173 mov eax,edx
     ctx.cpu.regs.eax = ctx.cpu.regs.edx;
     // 00499175 mov [esp+10h],edx
@@ -12358,7 +12358,7 @@ pub fn x499158(ctx: &mut Context) -> Cont {
     // 00499197 sub edx,eax
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.eax, &mut ctx.cpu.flags);
     // 00499199 lea eax,[edx*4+6D20D8h]
-    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.eax = (ctx.cpu.regs.edx * 4).wrapping_add(ctx.memory.read::<u32>(0x49919c));
     // 004991a0 sub edx,edx
     ctx.cpu.regs.edx = sub(ctx.cpu.regs.edx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 004991a2 mov [esp+14h],eax

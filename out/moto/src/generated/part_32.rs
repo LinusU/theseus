@@ -1470,7 +1470,7 @@ pub fn x49b2c0(ctx: &mut Context) -> Cont {
     // 0049b2d6 push ebp
     ctx.push32(ctx.cpu.regs.ebp);
     // 0049b2d7 lea edx,[eax*4+6D20D8h]
-    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.edx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x49b2da));
     // 0049b2de mov ebx,ds:[68B014h]
     ctx.cpu.regs.ebx = ctx.memory.read::<u32>(0x68b014u32);
     // 0049b2e4 mov [esp+20h],edx
@@ -2132,7 +2132,7 @@ pub fn x49b490(ctx: &mut Context) -> Cont {
     // 0049b4c8 test ebx,ebx
     and(ctx.cpu.regs.ebx, ctx.cpu.regs.ebx, &mut ctx.cpu.flags);
     // 0049b4ca lea ecx,[eax*4+6D20D8h]
-    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.ecx = (ctx.cpu.regs.eax * 4).wrapping_add(ctx.memory.read::<u32>(0x49b4cd));
     // 0049b4d1 mov [ebp-8],ecx
     ctx.memory.write::<u32>(
         ctx.cpu.regs.ebp.wrapping_add(0xfffffff8u32),
@@ -8065,7 +8065,11 @@ pub fn x49c7d7(ctx: &mut Context) -> Cont {
     // 0049c7f0 cmp ebx,edx
     sub(ctx.cpu.regs.ebx, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 0049c7f2 lea ecx,[eax+6D20D8h]
-    ctx.cpu.regs.ecx = ctx.cpu.regs.eax.wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.ecx = ctx
+        .cpu
+        .regs
+        .eax
+        .wrapping_add(ctx.memory.read::<u32>(0x49c7f4));
     // 0049c7f8 mov [esp+1Ch],ecx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x1cu32), ctx.cpu.regs.ecx);
@@ -8077,7 +8081,11 @@ pub fn x49c7fe(ctx: &mut Context) -> Cont {
     // 0049c7fe mov ecx,edi
     ctx.cpu.regs.ecx = ctx.cpu.regs.edi;
     // 0049c800 lea ebx,[eax+6D20E8h]
-    ctx.cpu.regs.ebx = ctx.cpu.regs.eax.wrapping_add(0x6d20e8u32);
+    ctx.cpu.regs.ebx = ctx
+        .cpu
+        .regs
+        .eax
+        .wrapping_add(ctx.memory.read::<u32>(0x49c802));
     Cont(x49c806)
 }
 
@@ -8913,7 +8921,11 @@ pub fn x49cc28(ctx: &mut Context) -> Cont {
     // 0049cc41 cmp ebp,edx
     sub(ctx.cpu.regs.ebp, ctx.cpu.regs.edx, &mut ctx.cpu.flags);
     // 0049cc43 lea ecx,[eax+6D20D8h]
-    ctx.cpu.regs.ecx = ctx.cpu.regs.eax.wrapping_add(0x6d20d8u32);
+    ctx.cpu.regs.ecx = ctx
+        .cpu
+        .regs
+        .eax
+        .wrapping_add(ctx.memory.read::<u32>(0x49cc45));
     // 0049cc49 mov [esp+1Ch],ecx
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esp.wrapping_add(0x1cu32), ctx.cpu.regs.ecx);
@@ -8925,7 +8937,11 @@ pub fn x49cc4f(ctx: &mut Context) -> Cont {
     // 0049cc4f mov ecx,ebx
     ctx.cpu.regs.ecx = ctx.cpu.regs.ebx;
     // 0049cc51 lea esi,[eax+6D20E8h]
-    ctx.cpu.regs.esi = ctx.cpu.regs.eax.wrapping_add(0x6d20e8u32);
+    ctx.cpu.regs.esi = ctx
+        .cpu
+        .regs
+        .eax
+        .wrapping_add(ctx.memory.read::<u32>(0x49cc53));
     Cont(x49cc57)
 }
 
