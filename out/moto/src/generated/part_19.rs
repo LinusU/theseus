@@ -5191,8 +5191,13 @@ pub fn x45f1dc(ctx: &mut Context) -> Cont {
 
 pub fn x45f1f3(ctx: &mut Context) -> Cont {
     // 0045f1f3 mov dword ptr [esi+638h],4
-    ctx.memory
-        .write::<u32>(ctx.cpu.regs.esi.wrapping_add(0x638u32), 0x4u32);
+    ctx.memory.write::<u32>(
+        ctx.cpu
+            .regs
+            .esi
+            .wrapping_add(ctx.memory.read::<u32>(0x45f1f5)),
+        ctx.memory.read::<u32>(0x45f1f9),
+    );
     // 0045f1fd pop esi
     let x = ctx.pop32();
     ctx.cpu.regs.esi = x;
@@ -5222,8 +5227,13 @@ pub fn x45f20f(ctx: &mut Context) -> Cont {
 
 pub fn x45f216(ctx: &mut Context) -> Cont {
     // 0045f216 mov dword ptr [esi+638h],3
-    ctx.memory
-        .write::<u32>(ctx.cpu.regs.esi.wrapping_add(0x638u32), 0x3u32);
+    ctx.memory.write::<u32>(
+        ctx.cpu
+            .regs
+            .esi
+            .wrapping_add(ctx.memory.read::<u32>(0x45f218)),
+        ctx.memory.read::<u32>(0x45f21c),
+    );
     // 0045f220 pop esi
     let x = ctx.pop32();
     ctx.cpu.regs.esi = x;
@@ -5306,8 +5316,13 @@ pub fn x45f265(ctx: &mut Context) -> Cont {
 
 pub fn x45f274(ctx: &mut Context) -> Cont {
     // 0045f274 mov dword ptr [esi+638h],2
-    ctx.memory
-        .write::<u32>(ctx.cpu.regs.esi.wrapping_add(0x638u32), 0x2u32);
+    ctx.memory.write::<u32>(
+        ctx.cpu
+            .regs
+            .esi
+            .wrapping_add(ctx.memory.read::<u32>(0x45f276)),
+        ctx.memory.read::<u32>(0x45f27a),
+    );
     // 0045f27e pop esi
     let x = ctx.pop32();
     ctx.cpu.regs.esi = x;

@@ -24,6 +24,11 @@ args=(
     --patched-code 40d1cc..40d1d3
     --patched-code 40d274..40d27b
     --patched-code 40d29e..40d2a2
+    # The level of detail riders' bikes are drawn at by distance (see
+    # full_detail_bikes in src/lib.rs): immediates patched at startup.
+    --patched-code 45f1f3..45f1fd
+    --patched-code 45f216..45f220
+    --patched-code 45f274..45f27e
     # Every use of the transformed-vertex array, which is moved to a larger
     # one (see grow_vertex_array in src/lib.rs).
     --patched-code 497ce2..497cec

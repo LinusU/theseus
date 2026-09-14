@@ -9,6 +9,9 @@ pub fn main() {
     let mut ctx = winapi::load(exe);
     widen_section_window(&mut ctx.memory, extra_sections());
     grow_vertex_array(&mut ctx.memory);
+    if !low_poly_bikes() {
+        full_detail_bikes(&mut ctx.memory);
+    }
     winapi::start(&mut ctx, exe);
 }
 
@@ -45,6 +48,29 @@ fn widen_section_window(memory: &mut runtime::Memory, extra: u32) {
     memory.write::<u32>(0x40d277, 4 + extra);
     // Number of sections in all: lea edx, [ecx + 4*eax + 4] (a byte).
     memory.write::<u8>(0x40d2a1, (4 + extra) as u8);
+}
+
+/// MOTO_LOW_POLY_BIKES=1: draw distant bikes with fewer polygons, as the
+/// game does itself.
+fn low_poly_bikes() -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    return std::env::var("MOTO_LOW_POLY_BIKES").is_ok_and(|v| !v.is_empty() && v != "0");
+    #[cfg(target_family = "wasm")]
+    false
+}
+
+/// Draw every bike with its most detailed model, however far away.
+///
+/// Each frame 0x45f160 picks a rider's model by distance from the camera
+/// (the index at +0x638 of the rider, which the drawing at 0x461440 uses to
+/// pick a list of parts): 0 up to 1000, 2 up to 2500, 3 up to 3000 and 4
+/// beyond. The three `mov`s storing 2, 3 and 4 have their immediates
+/// translated as memory reads (see translate.sh), so storing 0 here makes
+/// them all pick the first.
+fn full_detail_bikes(memory: &mut runtime::Memory) {
+    for imm in [0x45f1f9, 0x45f21c, 0x45f27a] {
+        memory.write::<u32>(imm, 0);
+    }
 }
 
 /// Move the array of transformed vertices somewhere with room for 8 times
