@@ -268,8 +268,18 @@ pub fn CreateWindowExW(
 }
 
 #[win32_derive::dllexport]
-pub fn DestroyWindow(_ctx: &mut Context, _hWnd: HWND) -> bool {
-    stub!(true)
+pub fn DestroyWindow(_ctx: &mut Context, hWnd: HWND) -> bool {
+    // The window stays on screen until the program exits, but it gets told:
+    // programs post their quit message from one of these (MFC from
+    // WM_NCDESTROY), so without them closing the window never ends the
+    // message loop. Windows sends them before returning; they're posted
+    // instead, because the handlers can throw C++ exceptions that are caught
+    // outside a nested call into the program (see kernel32/seh.rs), which
+    // left the stack unbalanced when Moto Racer closed.
+    use super::message::{WM, post_message};
+    post_message(hWnd, WM::DESTROY as u32, 0, 0);
+    post_message(hWnd, WM::NCDESTROY as u32, 0, 0);
+    true
 }
 
 #[win32_derive::dllexport]

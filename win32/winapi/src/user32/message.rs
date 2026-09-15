@@ -18,12 +18,14 @@ pub type LPARAM = u32;
 
 #[derive(win32_derive::ABIEnum, Debug)]
 pub enum WM {
+    DESTROY = 0x2,
     ACTIVATE = 0x6,
     SETFOCUS = 0x7,
     PAINT = 0xf,
     QUIT = 0x12,
     SHOWWINDOW = 0x18,
     ACTIVATEAPP = 0x1c,
+    NCDESTROY = 0x82,
     TIMER = 0x113,
     KEYDOWN = 0x100,
     KEYUP = 0x101,
