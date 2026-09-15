@@ -351,6 +351,32 @@ Found by counting how often each block runs per frame
 (`THESEUS_PROFILE_BLOCKS=file`, snapshots every 600 scenes): loops that ran
 exactly 45 and 8 times a frame led to 0x40d1d7 and 0x40d2a6.
 
+## Sub-pixel vertices
+
+Scenery jittered as the camera moved because the game rounds every
+projected vertex to a whole pixel of its 640x480: 0x49b2c0 (the mesh
+transform, 26 callers) and 0x49b4e4 store screen x/y in the transformed
+vertex array (+0x10/+0x14) with `fistp`, and near-plane clipping (0x497d60)
+truncates through `_ftol`. Clipping against the screen, culling and
+sorting all use those integers (the clip bounds 0x62e448/0x625784 alone
+have over 400 uses), and so does every D3DTLVERTEX the game sends: at 4K,
+steps of 4.5 pixels.
+
+Rather than change the renderer, `src/lib.rs` installs a vertex hook
+(`winapi::ddraw::set_vertex_hook`, called on the vertices each
+PROCESSVERTICES copies). A D3DTLVERTEX's rhw is bit for bit the 1/z at
++0x18 of its entry in the array, whose +0 and +4 hold x and y already
+scaled by the focal length, so the position is `320 + x/z`, `240 - y/z`
+again without rounding. The hook uses that only when the entry's integers
+are the vertex's own and it is less than a pixel from them, which leaves
+alone vertices placed another way and 2D ones sharing a 1/z. About two
+thirds of the attract demo's vertices move. `MOTO_PIXEL_SNAP=1` turns it
+off.
+
+Found by counting how many vertices arrived with integer coordinates (all
+of them), then logging the return addresses of `IDirect3DExecuteBuffer::Lock`
+and `IDirect3DDevice::Execute` and probing the array from the hook.
+
 ## Known gaps, in likely order of mattering
 
 0. **Multiple real (host-backed) windows.** user32 still models exactly one
@@ -542,3 +568,8 @@ re-run `translate.sh` whenever `winapi::*::VTABLES`, `DYNAMIC_EXPORTS`,
   - Draw distance: see "Draw distance". Static reading of the binary found
     the track structures but not the window; per-frame block counts
     (`THESEUS_PROFILE_BLOCKS`) found it in minutes.
+- 2026-09-15: Jitter. Buildings shook slightly as the camera moved: the game
+  rounds vertices to whole 640x480 pixels, which a 4K window magnifies. See
+  "Sub-pixel vertices". Also a Topaz-upscaled pack: Topaz's image edges
+  don't tile, so the sky's panels showed seams (blended by hand), and fonts
+  bleed when smoothed (left out of the pack).
