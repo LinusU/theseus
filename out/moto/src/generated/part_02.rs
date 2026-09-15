@@ -7066,8 +7066,13 @@ pub fn x40c59a(ctx: &mut Context) -> Cont {
     ctx.memory
         .write::<u32>(ctx.cpu.regs.esi.wrapping_add(0x18u32), ctx.cpu.regs.edi);
     // 0040c5b4 mov dword ptr [esi+24h],0Ah
-    ctx.memory
-        .write::<u32>(ctx.cpu.regs.esi.wrapping_add(0x24u32), 0xau32);
+    ctx.memory.write::<u32>(
+        ctx.cpu
+            .regs
+            .esi
+            .wrapping_add((ctx.memory.read::<u8>(0x40c5b6) as i8 as i32 as u32)),
+        ctx.memory.read::<u32>(0x40c5b7),
+    );
     // 0040c5bb mov dword ptr [ebp-4],0FFFFFFFFh
     ctx.memory
         .write::<u32>(ctx.cpu.regs.ebp.wrapping_add(0xfffffffcu32), 0xffffffffu32);

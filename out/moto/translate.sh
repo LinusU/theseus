@@ -18,8 +18,10 @@ args=(
     --patched-code 4a4e24..4a4ec0
     --patched-code 4a4f8f..4a5020
     --patched-code 4a5b0b..4a5c70
-    # How many track sections the game lists as visible (see
-    # widen_section_window in src/lib.rs): displacements patched at startup.
+    # How far ahead the game draws the ground and track sections (see
+    # widen_section_window in src/lib.rs): the track's window size and the
+    # displacements of the counts derived from it, patched at startup.
+    --patched-code 40c5b4..40c5bb
     --patched-code 40d1aa..40d1b1
     --patched-code 40d1cc..40d1d3
     --patched-code 40d274..40d27b

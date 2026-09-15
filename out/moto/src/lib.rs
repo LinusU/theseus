@@ -17,8 +17,9 @@ pub fn main() {
     winapi::start(&mut ctx, exe);
 }
 
-/// MOTO_DRAW_DISTANCE: how many more track sections to draw, ahead and
-/// behind, than the game does itself (default 80; 0 for the original).
+/// MOTO_DRAW_DISTANCE: how many more track sections to draw ahead than the
+/// game does itself, with the ground to match (default 80; 0 for the
+/// original).
 fn extra_sections() -> u32 {
     #[cfg(not(target_family = "wasm"))]
     if let Ok(value) = std::env::var("MOTO_DRAW_DISTANCE") {
@@ -31,27 +32,37 @@ fn extra_sections() -> u32 {
 
 const MAX_EXTRA_SECTIONS: u32 = 100;
 
-/// Draw `extra` more track sections each way than the game does.
+/// Draw `extra` more track sections ahead than the game does, and the
+/// ground to match.
 ///
-/// Each frame the game lists the sections around the camera to draw, with
-/// their scenery (0x40ce60): with W = 10 from the track, 4*W+5 sections
-/// ahead and 4+4 behind when looking down the track, split more evenly when
-/// looking across it. That is why scenery appears a chunk at a time. The
-/// four `lea`s computing those counts have their displacements (+4/+5)
-/// translated as memory reads (see translate.sh), so adding to them here
-/// lengthens both runs. The list lives in a 256-entry array (0x5dabd8) and
-/// must stay shorter than the shortest track (435 sections, Track06), so
-/// `extra` is capped at 100.
+/// Each frame the game lists what to draw around the camera (0x40ce60, a
+/// method of the track at 0x52c108) from a window size W that the track's
+/// constructor sets to 10 (0x40c5b4): W blocks of ground ahead (large
+/// meshes, several sections long each, 0x40d03b) and 1 behind, then 4*W+5
+/// sections ahead, with their scenery objects, and 4+4 behind (split more
+/// evenly when looking across the track). That is why the ground and the
+/// scenery appeared a chunk at a time.
+///
+/// W is scaled up here so the ground and the sections reach as far as each
+/// other, and the displacements of the `lea`s computing the section counts
+/// (+4/+5) make up the rest of `extra`; all of them are translated as memory
+/// reads (see translate.sh). The section list lives in a 256-entry array
+/// (0x5dabd8) and must stay shorter than the shortest track (435 sections,
+/// Track06), so `extra` is capped.
 fn widen_section_window(memory: &mut runtime::Memory, extra: u32) {
     let extra = extra.min(MAX_EXTRA_SECTIONS);
+    let window = (40 + extra) / 4;
+    let rest = 45 + extra - (4 * window + 5);
+    // The track constructor's mov dword ptr [esi + 0x24], 10.
+    memory.write::<u32>(0x40c5b7, window);
     // Last index of the sections ahead: lea ecx, [4*eax + 4].
-    memory.write::<u32>(0x40d1ad, 4 + extra);
+    memory.write::<u32>(0x40d1ad, 4 + rest);
     // Number of sections ahead: lea edx, [4*ecx + 5].
-    memory.write::<u32>(0x40d1cf, 5 + extra);
+    memory.write::<u32>(0x40d1cf, 5 + rest);
     // Last index of the sections behind: lea ecx, [4*eax + 4].
-    memory.write::<u32>(0x40d277, 4 + extra);
+    memory.write::<u32>(0x40d277, 4 + rest);
     // Number of sections in all: lea edx, [ecx + 4*eax + 4] (a byte).
-    memory.write::<u8>(0x40d2a1, (4 + extra) as u8);
+    memory.write::<u8>(0x40d2a1, (4 + rest) as u8);
 }
 
 /// Move the far plane out as far as `extra` more sections reach.
