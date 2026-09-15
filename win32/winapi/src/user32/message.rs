@@ -22,6 +22,7 @@ pub enum WM {
     ACTIVATE = 0x6,
     SETFOCUS = 0x7,
     PAINT = 0xf,
+    CLOSE = 0x10,
     QUIT = 0x12,
     SHOWWINDOW = 0x18,
     ACTIVATEAPP = 0x1c,

@@ -338,8 +338,8 @@ pub fn DefWindowProcA(
 
 #[win32_derive::dllexport]
 pub fn DefWindowProcW(
-    _ctx: &mut Context,
-    _hWnd: HWND,
+    ctx: &mut Context,
+    hWnd: HWND,
     msg: Result<WM, u32>,
     _wParam: u32,
     _lParam: u32,
@@ -351,6 +351,10 @@ pub fn DefWindowProcW(
             return 0;
         }
     };
+    if let WM::CLOSE = msg {
+        DestroyWindow(ctx, hWnd);
+        return 0;
+    }
 
     let window = state().window.borrow();
     let mut window = window.as_ref().unwrap().borrow_mut();
