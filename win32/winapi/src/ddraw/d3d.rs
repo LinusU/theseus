@@ -50,7 +50,21 @@ pub const IID_IDirect3DTexture: GUID = GUID((
 const DEVICEDESC_SIZE: u32 = 0xcc;
 
 /// sizeof(D3DTLVERTEX), the only vertex layout implemented.
-const TLVERTEX_SIZE: usize = 32;
+pub const TLVERTEX_SIZE: usize = 32;
+
+/// Called with the vertices each PROCESSVERTICES copies, before they are
+/// drawn, as raw D3DTLVERTEX bytes: lets a program's own crate put back what
+/// the program lost making them (see `set_vertex_hook`).
+pub type VertexHook = fn(&Memory, &mut [[u8; TLVERTEX_SIZE]]);
+
+static VERTEX_HOOK: std::sync::OnceLock<VertexHook> = std::sync::OnceLock::new();
+
+/// Install the `VertexHook` (once, before the program runs).
+pub fn set_vertex_hook(hook: VertexHook) {
+    if VERTEX_HOOK.set(hook).is_err() {
+        log::warn!("d3d: vertex hook already set");
+    }
+}
 
 // D3DRENDERSTATETYPE values this file reads.
 const RS_TEXTUREHANDLE: usize = 1;
@@ -768,6 +782,9 @@ fn execute(ctx: &mut Context, data: u32, exec: &[u32; 5]) {
                         let src = data + vertex_offset + (start + j as u32) * TLVERTEX_SIZE as u32;
                         device.vertices[dest + j]
                             .copy_from_slice(&ctx.memory[src..][..TLVERTEX_SIZE]);
+                    }
+                    if let Some(hook) = VERTEX_HOOK.get() {
+                        hook(&ctx.memory, &mut device.vertices[dest..dest + n]);
                     }
                 }
             }
