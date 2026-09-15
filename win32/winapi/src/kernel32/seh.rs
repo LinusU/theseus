@@ -12,10 +12,12 @@
 //!
 //! A handler that finds a matching `catch` never returns: it unwinds (calling
 //! RtlUnwind), then resets esp and jumps into the middle of the catching
-//! function, and the rest of the program runs from there, inside the
-//! `call32_x86` that invoked the handler. That costs a few Rust stack frames per
-//! caught exception, which is fine for the error-path use these programs make
-//! of exceptions but would not survive thousands of them.
+//! function, and the program runs on from there, inside the `call32_x86` that
+//! invoked the handler, until it returns to the return address of a call
+//! further out (see `runtime::Context::call32_x86`). Until then that costs a
+//! few Rust stack frames per caught exception, which is fine for the
+//! error-path use these programs make of exceptions but would not survive
+//! thousands of them inside one callback.
 
 use runtime::Context;
 
@@ -113,7 +115,7 @@ fn describe(ctx: &Context, record: u32) -> String {
 /// RETURN_FROM_X86 sentinel and the real one is in eip_context.
 fn caller(ctx: &Context) -> u32 {
     let return_addr = ctx.memory.read::<u32>(ctx.cpu.regs.esp);
-    if return_addr == runtime::RETURN_FROM_X86_ADDR32 {
+    if runtime::is_return_marker(return_addr) {
         ctx.cpu.regs.eip_context
     } else {
         return_addr

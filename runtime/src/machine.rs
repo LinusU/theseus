@@ -90,6 +90,10 @@ impl Context {
             self.dump_recent_blocks();
             panic!("jmp to null ptr");
         }
+        if crate::is_return_marker(addr) {
+            crate::note_return(addr);
+            return Cont(Context::return_from_x86);
+        }
         if let Some(func) = self.cache.get(addr) {
             return Cont(func);
         }
