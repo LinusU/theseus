@@ -307,14 +307,19 @@ scenery objects as it goes; the list (0x5dabd8, room for 256, count in
 0x5dabcc) then decides which riders are drawn. Nothing else culls by
 distance: the depth-sort buckets (0x655d38) take anything.
 
-`src/lib.rs` lengthens both runs by `MOTO_DRAW_DISTANCE` sections (default
-80, so 125 ahead instead of 45; 0 is the original) by writing to the
-displacements of the four `lea`s that compute them, which translate.sh marks
-as patched code so they are read from memory. Capped at 100: the list has
-256 entries, and it must stay shorter than the shortest track (Track06, 435
-sections) or sections would be drawn twice. Raising W instead ([0x52c12c])
-works too but also multiplies the background objects drawn around the
-horizon, which is why the displacements are what's patched.
+The same method first draws W blocks of ground ahead of the camera and 1
+behind (0x40d03b; big meshes, about four sections long each, indexed from
+the section's `[+0x3c]`), and W comes from the track's constructor
+(`mov dword ptr [esi + 0x24], 10` at 0x40c5b4), not from the track file.
+`src/lib.rs` raises W with `MOTO_DRAW_DISTANCE` (default 80 extra sections:
+W = 30, so 125 sections and 30 ground blocks ahead; 0 is the original) by
+writing to that immediate, and makes up any remainder with the displacements
+of the four `lea`s that compute the section counts; translate.sh marks all
+of those as patched code so they are read from memory. Capped at 100 extra:
+the list has 256 entries, and it must stay shorter than the shortest track
+(Track06, 435 sections) or sections would be drawn twice. (A first version
+only padded the section counts, which drew the scenery further out but left
+it floating over missing ground.)
 
 That lengthened the scenery but not the ground: the ground is also cut
 off by the camera's frustum, whose far plane is the `LenBPlane` of the
@@ -396,10 +401,12 @@ exactly 45 and 8 times a frame led to 0x40d1d7 and 0x40d2a6.
    renderer on the web build (`gpu.rs` has a no-op stand-in there).
 9. **DirectPlay**: stubbed to fail; multiplayer is out of scope.
 10. **Exceptions and the Rust stack.** A caught C++ exception leaves a few Rust
-    frames behind for good (see `kernel32/seh.rs`); thousands of exceptions
-    would overflow the stack. If that happens, run the program on a thread
-    with a large stack, or rework the dispatch so handlers are entered by
-    returning a continuation rather than by a nested `call32_x86`.
+    frames behind until the program returns from the callback it was thrown
+    in (see `kernel32/seh.rs` and `runtime::Context::call32_x86`, which unwinds
+    them then). Thousands of exceptions inside one callback would still
+    overflow the Rust stack; if that happens, rework the dispatch so handlers
+    are entered by returning a continuation rather than by a nested
+    `call32_x86`.
 
 ## Next steps
 
