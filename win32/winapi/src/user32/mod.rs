@@ -1,3 +1,4 @@
+mod cursor;
 mod dialog;
 mod hook;
 mod input;
@@ -14,6 +15,7 @@ use std::{
     rc::Rc,
 };
 
+pub use cursor::*;
 pub use dialog::*;
 pub use hook::*;
 pub use input::*;
@@ -43,6 +45,7 @@ pub struct State {
     message_queue: RefCell<MessageQueue>,
     pub input: RefCell<Input>,
     pub hooks: RefCell<Vec<Hook>>,
+    pub cursors: RefCell<Cursors>,
     /// Dialogs created via CreateDialogIndirectParamA, and their controls.
     /// The one real window's HWND is hardcoded to 1 (see
     /// window::create_window), so this starts at 2 to stay disjoint from it.
@@ -63,6 +66,7 @@ pub fn state() -> &'static State {
         message_queue: Default::default(),
         input: Default::default(),
         hooks: Default::default(),
+        cursors: Default::default(),
         dialog_windows: RefCell::new(Handles::new(2)),
     })
 }

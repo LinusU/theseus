@@ -22,20 +22,6 @@ pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
 }
 
 #[win32_derive::dllexport]
-pub fn CreateCursor(
-    _ctx: &mut Context,
-    _hInst: HINSTANCE,
-    _xHotSpot: i32,
-    _yHotSpot: i32,
-    _nWidth: i32,
-    _nHeight: i32,
-    _pvANDPlane: Ptr<u8>,
-    _pvXORPlane: Ptr<u8>,
-) -> HCURSOR {
-    stub!(0)
-}
-
-#[win32_derive::dllexport]
 pub fn ReleaseCapture(_ctx: &mut Context) -> bool {
     stub!(true)
 }

@@ -4,11 +4,6 @@ use super::*;
 use crate::{Ptr, dllexport::win32flags, gdi32, handle::HANDLE, kernel32, stub};
 
 #[win32_derive::dllexport]
-pub fn LoadCursorA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpCursorName: Ptr<u8>) -> HCURSOR {
-    stub!(0)
-}
-
-#[win32_derive::dllexport]
 pub fn LoadIconA(_ctx: &mut Context, _hInstance: HINSTANCE, _lpIconName: Ptr<u8>) -> HICON {
     stub!(0)
 }
@@ -70,7 +65,6 @@ pub fn LoadImageA(
     gdi32::lock().new_bitmap_handle(bitmap).0
 }
 
-pub type HCURSOR = u32;
 pub type HICON = u32;
 pub type HMENU = u32;
 
@@ -80,15 +74,6 @@ pub fn LoadAcceleratorsW(
     _hInstance: HINSTANCE,
     _lpTableName: Ptr<u16>, /* WSTR */
 ) -> HACCEL {
-    stub!(0)
-}
-
-#[win32_derive::dllexport]
-pub fn LoadCursorW(
-    _ctx: &mut Context,
-    _hInstance: HINSTANCE,
-    _lpCursorName: Ptr<u16>, /* WSTR */
-) -> HCURSOR {
     stub!(0)
 }
 

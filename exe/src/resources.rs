@@ -51,6 +51,7 @@ pub enum RT {
     BITMAP = 2,
     ICON = 3,
     STRING = 6,
+    GROUP_CURSOR = 12,
 }
 
 #[derive(Debug, Eq)]
