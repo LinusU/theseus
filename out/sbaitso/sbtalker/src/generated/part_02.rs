@@ -7,6 +7,34 @@
 
 use super::*;
 
+pub fn x0d72_607a(ctx: &mut Context) -> Cont {
+    ctx.dump_dosbox(0x607a);
+    // 0d72:607a mov ax,[bp+12h]
+    ctx.cpu.regs.set_ax(ctx.memory.read::<u16>(segofs(
+        ctx.cpu.regs.get_ss(),
+        ctx.cpu.regs.get_bp().wrapping_add(0x12u16),
+    )));
+    ctx.dump_dosbox(0x607d);
+    // 0d72:607d mov [bp-4],ax
+    ctx.memory.write::<u16>(
+        segofs(
+            ctx.cpu.regs.get_ss(),
+            ctx.cpu.regs.get_bp().wrapping_add(0xfffcu16),
+        ),
+        ctx.cpu.regs.get_ax(),
+    );
+    ctx.dump_dosbox(0x6080);
+    // 0d72:6080 mov word ptr [bp-2],0
+    ctx.memory.write::<u16>(
+        segofs(
+            ctx.cpu.regs.get_ss(),
+            ctx.cpu.regs.get_bp().wrapping_add(0xfffeu16),
+        ),
+        0x0u16,
+    );
+    Cont(x0d72_6085)
+}
+
 pub fn x0d72_6085(ctx: &mut Context) -> Cont {
     ctx.dump_dosbox(0x6085);
     // 0d72:6085 mov di,[bp+6]
@@ -6146,6 +6174,10 @@ pub fn x1483_0940(ctx: &mut Context) -> Cont {
 
 pub fn unk_e4ae(_ctx: &mut Context) -> Cont {
     runtime::unknown_block(0xe4ae)
+}
+
+pub fn unk_e53d(_ctx: &mut Context) -> Cont {
+    runtime::unknown_block(0xe53d)
 }
 
 pub fn unk_e556(_ctx: &mut Context) -> Cont {

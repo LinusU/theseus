@@ -12630,7 +12630,7 @@ pub fn x0d72_08d7(ctx: &mut Context) -> Cont {
     );
     ctx.dump_dosbox(0x8ec);
     // 0d72:08ec jnp short 08FBh
-    panic!("Jnp not implemented");
+    ctx.jnp(Cont(x0d72_08ee), Cont(x0d72_08fb))
 }
 
 pub fn x0d72_08ee(ctx: &mut Context) -> Cont {
@@ -13330,7 +13330,7 @@ pub fn x0d72_09f7(ctx: &mut Context) -> Cont {
 pub fn x0d72_0a11(ctx: &mut Context) -> Cont {
     ctx.dump_dosbox(0xa11);
     // 0d72:0a11 jo short 0A1Fh
-    panic!("Jo not implemented");
+    ctx.jo(Cont(x0d72_0a13), Cont(x0d72_0a1f))
 }
 
 pub fn x0d72_0a13(ctx: &mut Context) -> Cont {
@@ -13380,7 +13380,7 @@ pub fn x0d72_0a1f(ctx: &mut Context) -> Cont {
     ));
     ctx.dump_dosbox(0xa2a);
     // 0d72:0a2a jp short 0A33h
-    panic!("Jp not implemented");
+    ctx.jp(Cont(x0d72_0a2c), Cont(x0d72_0a33))
 }
 
 pub fn x0d72_0a2c(ctx: &mut Context) -> Cont {
@@ -13993,7 +13993,7 @@ pub fn x0d72_0a8b(ctx: &mut Context) -> Cont {
     ));
     ctx.dump_dosbox(0xa9e);
     // 0d72:0a9e jp short 0AA8h
-    panic!("Jp not implemented");
+    ctx.jp(Cont(x0d72_0aa0), Cont(x0d72_0aa8))
 }
 
 pub fn x0d72_0a98(ctx: &mut Context) -> Cont {
@@ -14259,7 +14259,7 @@ pub fn x0d72_0b04(ctx: &mut Context) -> Cont {
     );
     ctx.dump_dosbox(0xb0d);
     // 0d72:0b0d jo short 0B14h
-    panic!("Jo not implemented");
+    ctx.jo(Cont(x0d72_0b0f), Cont(x0d72_0b14))
 }
 
 pub fn x0d72_0b0f(ctx: &mut Context) -> Cont {
@@ -15785,7 +15785,7 @@ pub fn x0d72_0dde(ctx: &mut Context) -> Cont {
     ));
     ctx.dump_dosbox(0xde7);
     // 0d72:0de7 jo short 0DF9h
-    panic!("Jo not implemented");
+    ctx.jo(Cont(x0d72_0de9), Cont(x0d72_0df9))
 }
 
 pub fn x0d72_0de9(ctx: &mut Context) -> Cont {
@@ -15812,7 +15812,7 @@ pub fn x0d72_0de9(ctx: &mut Context) -> Cont {
     );
     ctx.dump_dosbox(0xded);
     // 0d72:0ded jnp short 0DFEh
-    panic!("Jnp not implemented");
+    ctx.jnp(Cont(x0d72_0def), Cont(x0d72_0dfe))
 }
 
 pub fn x0d72_0def(ctx: &mut Context) -> Cont {
@@ -16008,7 +16008,7 @@ pub fn x0d72_0e09(ctx: &mut Context) -> Cont {
         .set_ax(add(ctx.cpu.regs.get_ax(), 0x434u16, &mut ctx.cpu.flags));
     ctx.dump_dosbox(0xe1b);
     // 0d72:0e1b jno short 0E67h
-    panic!("Jno not implemented");
+    ctx.jno(Cont(unk_e53d), Cont(x0d72_0e67))
 }
 
 pub fn x0d72_0e0a(ctx: &mut Context) -> Cont {
@@ -16079,7 +16079,7 @@ pub fn x0d72_0e0a(ctx: &mut Context) -> Cont {
         .set_ax(add(ctx.cpu.regs.get_ax(), 0x434u16, &mut ctx.cpu.flags));
     ctx.dump_dosbox(0xe1b);
     // 0d72:0e1b jno short 0E67h
-    panic!("Jno not implemented");
+    ctx.jno(Cont(unk_e53d), Cont(x0d72_0e67))
 }
 
 pub fn x0d72_0e67(ctx: &mut Context) -> Cont {
@@ -16498,7 +16498,7 @@ pub fn x0d72_0ec7(ctx: &mut Context) -> Cont {
     );
     ctx.dump_dosbox(0xed3);
     // 0d72:0ed3 jo short 0F40h
-    panic!("Jo not implemented");
+    ctx.jo(Cont(x0d72_0ed5), Cont(x0d72_0f40))
 }
 
 pub fn x0d72_0ec8(ctx: &mut Context) -> Cont {
@@ -17150,7 +17150,7 @@ pub fn x0d72_0f51(ctx: &mut Context) -> Cont {
         .set_al(sbb(ctx.cpu.regs.get_al(), 0x11u8, &mut ctx.cpu.flags));
     ctx.dump_dosbox(0xf5b);
     // 0d72:0f5b jno short 0F66h
-    panic!("Jno not implemented");
+    ctx.jno(Cont(x0d72_0f5d), Cont(x0d72_0f66))
 }
 
 pub fn x0d72_0f5d(ctx: &mut Context) -> Cont {
@@ -17587,7 +17587,7 @@ pub fn x0d72_0fab(ctx: &mut Context) -> Cont {
     );
     ctx.dump_dosbox(0xfb2);
     // 0d72:0fb2 jno short 1032h
-    panic!("Jno not implemented");
+    ctx.jno(Cont(x0d72_0fb4), Cont(x0d72_1032))
 }
 
 pub fn x0d72_0fb4(ctx: &mut Context) -> Cont {
@@ -17685,7 +17685,7 @@ pub fn x0d72_0fd3(ctx: &mut Context) -> Cont {
     ));
     ctx.dump_dosbox(0xfe1);
     // 0d72:0fe1 jp short 104Fh
-    panic!("Jp not implemented");
+    ctx.jp(Cont(x0d72_0fe3), Cont(x0d72_104f))
 }
 
 pub fn x0d72_0fd7(ctx: &mut Context) -> Cont {
@@ -17719,7 +17719,7 @@ pub fn x0d72_0fd9(ctx: &mut Context) -> Cont {
     ));
     ctx.dump_dosbox(0xfe1);
     // 0d72:0fe1 jp short 104Fh
-    panic!("Jp not implemented");
+    ctx.jp(Cont(x0d72_0fe3), Cont(x0d72_104f))
 }
 
 pub fn x0d72_0fe3(ctx: &mut Context) -> Cont {
@@ -18208,7 +18208,7 @@ pub fn x0d72_1032(ctx: &mut Context) -> Cont {
         .set_dx(dec(ctx.cpu.regs.get_dx(), &mut ctx.cpu.flags));
     ctx.dump_dosbox(0x103b);
     // 0d72:103b jnp short 1041h
-    panic!("Jnp not implemented");
+    ctx.jnp(Cont(x0d72_103d), Cont(x0d72_1041))
 }
 
 pub fn x0d72_1033(ctx: &mut Context) -> Cont {
@@ -18245,7 +18245,7 @@ pub fn x0d72_1033(ctx: &mut Context) -> Cont {
         .set_dx(dec(ctx.cpu.regs.get_dx(), &mut ctx.cpu.flags));
     ctx.dump_dosbox(0x103b);
     // 0d72:103b jnp short 1041h
-    panic!("Jnp not implemented");
+    ctx.jnp(Cont(x0d72_103d), Cont(x0d72_1041))
 }
 
 pub fn x0d72_103d(ctx: &mut Context) -> Cont {
@@ -22334,32 +22334,4 @@ pub fn x0d72_6065(ctx: &mut Context) -> Cont {
     ctx.dump_dosbox(0x6078);
     // 0d72:6078 jne short 6065h
     ctx.jne(Cont(x0d72_607a), Cont(x0d72_6065))
-}
-
-pub fn x0d72_607a(ctx: &mut Context) -> Cont {
-    ctx.dump_dosbox(0x607a);
-    // 0d72:607a mov ax,[bp+12h]
-    ctx.cpu.regs.set_ax(ctx.memory.read::<u16>(segofs(
-        ctx.cpu.regs.get_ss(),
-        ctx.cpu.regs.get_bp().wrapping_add(0x12u16),
-    )));
-    ctx.dump_dosbox(0x607d);
-    // 0d72:607d mov [bp-4],ax
-    ctx.memory.write::<u16>(
-        segofs(
-            ctx.cpu.regs.get_ss(),
-            ctx.cpu.regs.get_bp().wrapping_add(0xfffcu16),
-        ),
-        ctx.cpu.regs.get_ax(),
-    );
-    ctx.dump_dosbox(0x6080);
-    // 0d72:6080 mov word ptr [bp-2],0
-    ctx.memory.write::<u16>(
-        segofs(
-            ctx.cpu.regs.get_ss(),
-            ctx.cpu.regs.get_bp().wrapping_add(0xfffeu16),
-        ),
-        0x0u16,
-    );
-    Cont(x0d72_6085)
 }
