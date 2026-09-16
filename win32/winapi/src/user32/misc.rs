@@ -17,11 +17,6 @@ pub fn GetSystemMetrics(_ctx: &mut Context, nIndex: u32 /* SYSTEM_METRICS_INDEX 
 }
 
 #[win32_derive::dllexport]
-pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
-    if bShow { stub!(1) } else { stub!(0) }
-}
-
-#[win32_derive::dllexport]
 pub fn ReleaseCapture(_ctx: &mut Context) -> bool {
     stub!(true)
 }
@@ -368,11 +363,6 @@ pub fn WinHelpA(
 
 #[win32_derive::dllexport]
 pub fn GetDlgCtrlID(_ctx: &mut Context, _hWnd: HWND) -> i32 {
-    0
-}
-
-#[win32_derive::dllexport]
-pub fn GetCursor(_ctx: &mut Context) -> u32 {
     0
 }
 

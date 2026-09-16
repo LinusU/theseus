@@ -4,7 +4,7 @@
 use runtime::Context;
 
 use super::{HCURSOR, HINSTANCE, state};
-use crate::{Ptr, handle::Handles, kernel32};
+use crate::{HANDLE, Ptr, handle::Handles, kernel32};
 
 /// The IDC_* ids that LoadCursor(NULL, ...) accepts.
 const SYSTEM_CURSORS: &[u32] = &[
@@ -61,6 +61,11 @@ pub enum Cursor {
 #[derive(Default)]
 pub struct Cursors {
     handles: Handles<Cursor>,
+    /// The cursor last passed to SetCursor.
+    current: HCURSOR,
+    /// ShowCursor's display counter; the cursor shows while it's at least 0.
+    /// It starts at 0, as on a system with a mouse.
+    show_count: i32,
 }
 
 impl Cursors {
@@ -144,4 +149,26 @@ pub fn CreateCursor(
         .handles
         .add(Cursor::Created)
         .to_raw()
+}
+
+#[win32_derive::dllexport]
+pub fn SetCursor(_ctx: &mut Context, hCursor: HCURSOR) -> HCURSOR {
+    let mut cursors = state().cursors.borrow_mut();
+    if hCursor != 0 && cursors.handles.get(HANDLE::from_raw(hCursor)).is_none() {
+        log::warn!("SetCursor({hCursor:#x}): not a cursor");
+        return 0;
+    }
+    std::mem::replace(&mut cursors.current, hCursor)
+}
+
+#[win32_derive::dllexport]
+pub fn GetCursor(_ctx: &mut Context) -> HCURSOR {
+    state().cursors.borrow().current
+}
+
+#[win32_derive::dllexport]
+pub fn ShowCursor(_ctx: &mut Context, bShow: bool) -> i32 {
+    let mut cursors = state().cursors.borrow_mut();
+    cursors.show_count += if bShow { 1 } else { -1 };
+    cursors.show_count
 }
