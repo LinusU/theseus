@@ -119,6 +119,9 @@ impl kernel32::State {
         let process_heap = Heap::new(heap_addr, heap_size);
         peb.ProcessHeap = process_heap.addr;
         self.process_heap = process_heap;
+        // Movable global-memory handles live just past the heap region.
+        self.global_mem
+            .init_handles(self.process_heap.addr + self.process_heap.size);
 
         let peb_addr = (peb as *const _ as usize - origin) as u32;
         self.init_thread(ctx, peb_addr);

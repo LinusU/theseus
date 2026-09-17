@@ -55,6 +55,16 @@ pub fn teb_mut<'a>(ctx: &'a mut Context) -> &'a mut TEB {
     teb_ptr.aligned_mut(&mut ctx.memory)
 }
 
+/// Per-thread last-error value, stored in the calling thread's TEB.
+pub fn get_last_error(ctx: &mut Context) -> u32 {
+    teb(ctx).LastErrorValue
+}
+
+/// Set the calling thread's last-error value.
+pub fn set_last_error(ctx: &mut Context, err: u32) {
+    teb_mut(ctx).LastErrorValue = err;
+}
+
 impl kernel32::State {
     pub fn create_thread(
         &mut self,
@@ -90,6 +100,7 @@ impl kernel32::State {
         let teb = Ptr::<TEB>::new(teb_addr).aligned_mut(&mut ctx.memory);
         teb.Peb = peb_addr;
         teb.Tib._Self = teb_addr;
+        teb.LastErrorValue = 0;
         ctx.cpu.regs.fs_base = teb_addr;
 
         let stack_size = 64 << 10;

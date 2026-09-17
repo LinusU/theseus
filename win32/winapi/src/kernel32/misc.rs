@@ -1,12 +1,21 @@
 use runtime::Context;
 
-use crate::{Ptr, kernel32::lock, stub};
+use crate::{
+    Ptr,
+    kernel32::{get_last_error, lock, set_last_error},
+    stub,
+};
 
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 
 #[win32_derive::dllexport]
-pub fn GetLastError(_ctx: &mut Context) -> u32 {
-    0
+pub fn GetLastError(ctx: &mut Context) -> u32 {
+    get_last_error(ctx)
+}
+
+#[win32_derive::dllexport]
+pub fn SetLastError(ctx: &mut Context, dwErrCode: u32) {
+    set_last_error(ctx, dwErrCode);
 }
 
 #[win32_derive::dllexport]

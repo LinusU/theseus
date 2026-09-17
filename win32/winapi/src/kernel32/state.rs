@@ -4,7 +4,7 @@ use runtime::Mappings;
 
 use crate::{
     Handles,
-    heap::Heap,
+    heap::{GlobalMem, Heap},
     kernel32::{self, CommandLine, Object},
     locked_state::LockedState,
 };
@@ -13,6 +13,7 @@ pub struct State {
     pub mappings: Mappings,
     pub heaps: HashMap<u32, Heap>,
     pub process_heap: Heap,
+    pub global_mem: GlobalMem,
     pub image_base: u32,
     pub resources: std::ops::Range<u32>,
     pub command_line: CommandLine,
@@ -33,6 +34,7 @@ pub fn init_state(image_base: u32, resources: std::ops::Range<u32>) {
         heaps: HashMap::new(),
         mappings: Default::default(),
         process_heap: Default::default(),
+        global_mem: Default::default(),
         command_line: Default::default(),
         environ: Default::default(),
         next_thread_id: 2,
