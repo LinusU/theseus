@@ -14,7 +14,12 @@ use runtime::Memory;
 
 /// Size of the per-block header; data pointers are this many bytes past the
 /// block start, keeping them 8-byte aligned.
-const HEADER: u32 = 8;
+pub const HEADER: u32 = 8;
+
+/// Maximum number of occupied movable handles to skip while searching for a
+/// vacant one. Bounds the collision-skip so ordinary exhaustion can't scan a
+/// huge namespace; `reserve` reports failure once exceeded.
+pub const MAX_SKIP: u32 = 256;
 
 /// Round `size` up to an 8-byte multiple, or None on overflow.
 fn align8(size: u32) -> Option<u32> {
@@ -52,12 +57,19 @@ impl Heap {
         self.freelist.borrow_mut().alloc(mem, size)
     }
 
-    #[allow(unused)]
-    pub fn size(&self, mem: &mut Memory, addr: u32) -> u32 {
-        if addr < HEADER {
-            return 0;
-        }
-        mem.read::<u32>(addr - HEADER).saturating_sub(HEADER)
+    /// Whether `addr` is the exact data-pointer (base) of a live allocation in
+    /// this heap. Authoritative host-side bookkeeping: no header bytes are
+    /// inspected, so ordinary payloads can never impersonate an allocation.
+    pub fn contains(&self, addr: u32) -> bool {
+        self.freelist.borrow().live.contains_key(&addr)
+    }
+
+    /// Authoritative usable size (excluding the header) for a live allocation
+    /// data pointer, or 0 when `addr` is not a live allocation. Reads the
+    /// recorded block size rather than trusting guest memory.
+    pub fn size(&self, _mem: &mut Memory, addr: u32) -> u32 {
+        let total = self.freelist.borrow().live.get(&addr).copied().unwrap_or(0);
+        total.saturating_sub(HEADER)
     }
 
     pub fn free(&self, mem: &mut Memory, addr: u32) {
@@ -84,12 +96,18 @@ impl Heap {
 #[derive(Default)]
 struct FreeList {
     nodes: Vec<FreeNode>,
+    /// Authoritative registry of live allocations: block base -> total block
+    /// size (including the header). Maintained by alloc/free/realloc_in_place
+    /// so every allocation, free, and resize path shares the same source of
+    /// truth. Used to validate fixed global-memory handles.
+    live: HashMap<u32, u32>,
 }
 
 impl FreeList {
     fn new(addr: u32, size: u32) -> Self {
         FreeList {
             nodes: vec![FreeNode { addr, size }],
+            live: HashMap::new(),
         }
     }
 
@@ -104,17 +122,20 @@ impl FreeList {
             self.nodes.remove(i);
         }
         mem.write::<u32>(addr, total);
+        // Key the live registry by the returned data pointer (the handle).
+        self.live.insert(addr + HEADER, total);
         Some(addr + HEADER)
     }
 
     fn free(&mut self, mem: &mut Memory, addr: u32) {
         let hdr = addr - HEADER;
-        let size = mem.read::<u32>(hdr);
-        if self.nodes.iter().any(|n| n.range().contains(&hdr)) {
-            log::warn!("ignoring double free");
+        // Use the authoritative recorded size, not the (potentially spoofed)
+        // header bytes, and refuse to free an address that is not a live base.
+        let Some(total) = self.live.remove(&addr) else {
+            log::warn!("free of non-live allocation");
             return;
-        }
-        self.insert_free(hdr, size);
+        };
+        self.insert_free(hdr, total);
         // Mark the released block so a stale pointer to it no longer reads as a
         // live fixed allocation (e.g. GlobalHandle on a freed pointer).
         mem.write::<u32>(hdr, 0);
@@ -122,7 +143,9 @@ impl FreeList {
 
     fn realloc_in_place(&mut self, mem: &mut Memory, addr: u32, new_size: u32) -> Option<u32> {
         let hdr = addr - HEADER;
-        let old_total = mem.read::<u32>(hdr);
+        // Only a live allocation can be resized; read its recorded size rather
+        // than trusting header bytes.
+        let old_total = *self.live.get(&addr)?;
         let new_total = align8(new_size)?.checked_add(HEADER)?;
 
         if new_total == old_total {
@@ -132,6 +155,7 @@ impl FreeList {
             // Shrink: return the freed tail to the free list, keep the header.
             // The tail runs [hdr + new_total, hdr + old_total).
             self.insert_free(hdr + new_total, old_total - new_total);
+            self.live.insert(addr, new_total);
             mem.write::<u32>(hdr, new_total);
             return Some(addr);
         }
@@ -151,6 +175,7 @@ impl FreeList {
         if remove {
             self.nodes.remove(i);
         }
+        self.live.insert(addr, new_total);
         mem.write::<u32>(hdr, new_total);
         Some(addr)
     }
@@ -200,16 +225,10 @@ impl FreeList {
 }
 
 /// Entry in the FreeList.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct FreeNode {
     addr: u32,
     size: u32,
-}
-
-impl FreeNode {
-    fn range(&self) -> std::ops::Range<u32> {
-        self.addr..self.addr + self.size
-    }
 }
 
 /// Process-owned bookkeeping for movable global-memory objects (GMEM_MOVEABLE).
@@ -246,36 +265,58 @@ pub struct Movable {
 }
 
 impl GlobalMem {
-    /// Reserve the next movable handle. Handles start above the process heap
-    /// region (`heap_end + HEADER`) and increment, so no handle value can be a
-    /// live heap data pointer and its `- HEADER` offset can't alias a header.
-    pub fn next_handle(&mut self, heap_end: u32) -> u32 {
-        let handle = self.next_handle;
-        let next = handle.wrapping_add(1);
-        // If the counter wraps, restart safely above the heap region; stale
-        // numeric values are removed from bookkeeping on free, so reuse is OK.
-        self.next_handle = if next < heap_end {
-            heap_end + HEADER
-        } else {
-            next
-        };
-        handle
+    /// Reserve a vacant movable handle, skipping occupied values with a bounded
+    /// search. Handles are drawn from the namespace above the process heap
+    /// region (`heap_end + HEADER`) and never fall into the range of valid
+    /// fixed data pointers. Returns None when the namespace is exhausted; a
+    /// failed reservation never publishes a handle or replaces a live object.
+    pub fn reserve(&mut self, heap_end: u32) -> Option<u32> {
+        let ns_start = heap_end.checked_add(HEADER)?;
+        let mut h = self.next_handle.max(ns_start);
+        let mut skipped = 0u32;
+        loop {
+            if !self.movable.contains_key(&h) {
+                // Reserve it and advance the counter. A wrap past u32::MAX
+                // restarts at the namespace start, where the next reserve skips
+                // any occupied handles.
+                self.next_handle = h
+                    .checked_add(1)
+                    .map(|n| n.max(ns_start))
+                    .unwrap_or(ns_start);
+                return Some(h);
+            }
+            h = h
+                .checked_add(1)
+                .map(|n| n.max(ns_start))
+                .unwrap_or(ns_start);
+            skipped += 1;
+            if skipped > MAX_SKIP {
+                return None;
+            }
+        }
     }
 
-    /// Set the initial handle counter to just past the heap region.
-    pub fn init_handles(&mut self, heap_end: u32) {
-        self.next_handle = heap_end + HEADER;
-    }
-
-    /// Register a movable object under a fresh handle and insert reverse
-    /// lookup for its backing pointer (skipped when discarded).
-    pub fn add(&mut self, heap_end: u32, obj: Movable) -> u32 {
-        let handle = self.next_handle(heap_end);
+    /// Register a movable object under a handle, inserting the reverse lookup
+    /// for its backing pointer (skipped when discarded). Both maps are updated
+    /// together so they never diverge.
+    pub fn register(&mut self, handle: u32, obj: Movable) {
         if obj.ptr != 0 {
             self.by_ptr.insert(obj.ptr, handle);
         }
         self.movable.insert(handle, obj);
-        handle
+    }
+
+    /// Reserve a handle and register `obj` under it. Returns None (leaving no
+    /// registry entry) when the handle namespace is exhausted.
+    pub fn add(&mut self, heap_end: u32, obj: Movable) -> Option<u32> {
+        let handle = self.reserve(heap_end)?;
+        self.register(handle, obj);
+        Some(handle)
+    }
+
+    /// Set the initial handle counter to just past the heap region.
+    pub fn init_handles(&mut self, heap_end: u32) {
+        self.next_handle = heap_end.checked_add(HEADER).unwrap_or(u32::MAX);
     }
 }
 
@@ -512,5 +553,215 @@ mod tests {
         assert_eq!(heap.size(&mut mem, b), 64);
         heap.free(&mut mem, b);
         heap.free(&mut mem, c);
+    }
+
+    /// Deterministic xorshift PRNG for the seeded allocator test.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u32 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            (x >> 8) as u32
+        }
+
+        fn pick(&mut self, n: usize) -> usize {
+            self.next() as usize % n
+        }
+    }
+
+    /// Independent model of a live allocation: its data base and expected
+    /// usable bytes. Mirrors the allocator's own bookkeeping so a divergence
+    /// (size, overlap, or retained content) is caught by the checks.
+    struct LiveAlloc {
+        base: u32,
+        data: Vec<u8>,
+    }
+
+    /// Check the free-list invariants against the model's running freed-byte
+    /// total, within explicit heap bounds (the upstream check uses its own
+    /// BASE/HEAP_SIZE fixtures).
+    fn check_free(free: &FreeList, start: u32, size: u32, freed_bytes: u32) {
+        for n in &free.nodes {
+            assert!(n.size > 0, "zero-size free region {n:?}");
+            assert!(n.addr >= start, "region {n:?} below heap");
+            assert!(n.addr + n.size <= start + size, "region {n:?} beyond heap");
+        }
+        let mut prev: Option<&FreeNode> = None;
+        for n in &free.nodes {
+            if let Some(p) = prev {
+                assert!(
+                    p.addr + p.size < n.addr,
+                    "regions {p:?} and {n:?} not sorted/coalesced"
+                );
+            }
+            prev = Some(n);
+        }
+        let sum: u32 = free.nodes.iter().map(|n| n.size).sum();
+        assert_eq!(
+            sum, freed_bytes,
+            "freed {freed_bytes} but list sums to {sum}"
+        );
+    }
+
+    /// Verify the independent model against the allocator: live allocations do
+    /// not overlap, recorded sizes match the model, retained bytes are correct,
+    /// and the free list is ordered, non-overlapping, and coalesced.
+    fn check_model(
+        mem: &mut Memory,
+        heap: &Heap,
+        free: &FreeList,
+        live: &[LiveAlloc],
+        freed_bytes: u32,
+    ) {
+        let mut sorted: Vec<&LiveAlloc> = live.iter().collect();
+        sorted.sort_by_key(|a| a.base);
+        for w in sorted.windows(2) {
+            let a = &w[0];
+            let b = &w[1];
+            let a_end = a.base + heap.size(mem, a.base);
+            assert!(
+                a_end <= b.base,
+                "live allocations overlap: {:x}+{} and {:x}",
+                a.base,
+                heap.size(mem, a.base),
+                b.base
+            );
+        }
+        for a in live {
+            let usable = heap.size(mem, a.base);
+            assert_eq!(
+                usable as usize,
+                a.data.len(),
+                "recorded size at {:x}",
+                a.base
+            );
+            assert!(
+                mem[a.base..][..a.data.len()] == a.data[..],
+                "retained bytes at {:x}",
+                a.base
+            );
+        }
+        check_free(free, 0x2000, 0x400, freed_bytes);
+    }
+
+    /// A deterministic seeded operation sequence mixing allocation, free,
+    /// shrink, and growth under limited capacity, verified against an
+    /// independent model of live intervals and expected contents. After
+    /// releasing everything, usable capacity must be fully recovered.
+    #[test]
+    fn seeded_allocator_sequence() {
+        const START: u32 = 0x2000;
+        const SIZE: u32 = 0x400;
+        let mut mem = Memory::leak_new(1 << 20);
+        let heap = Heap::new(START, SIZE);
+        let mut rng = Rng(0x1234_5678);
+        let mut live: Vec<LiveAlloc> = vec![];
+        // Current total free bytes in the heap (starts as the whole heap).
+        let mut freed_bytes = SIZE;
+
+        for step in 0..300u32 {
+            let choice = rng.pick(4);
+            match choice {
+                0 => {
+                    // Allocate a random payload.
+                    let sz = 1 + rng.pick(96) as u32;
+                    if let Some(base) = heap.try_alloc(&mut mem, sz) {
+                        let usable = heap.size(&mut mem, base);
+                        freed_bytes -= usable + HEADER;
+                        let data: Vec<u8> = (0..usable)
+                            .map(|i| (step as u8).wrapping_add(i as u8))
+                            .collect();
+                        mem[base..][..usable as usize].copy_from_slice(&data);
+                        live.push(LiveAlloc { base, data });
+                    }
+                }
+                1 => {
+                    // Free a random live allocation.
+                    if !live.is_empty() {
+                        let i = rng.pick(live.len());
+                        let a = live.remove(i);
+                        let usable = heap.size(&mut mem, a.base);
+                        heap.free(&mut mem, a.base);
+                        freed_bytes += usable + HEADER;
+                    }
+                }
+                2 => {
+                    // Grow a random live allocation in place (may fail).
+                    if !live.is_empty() {
+                        let i = rng.pick(live.len());
+                        let old_usable = heap.size(&mut mem, live[i].base);
+                        let new_size = old_usable + 1 + rng.pick(64) as u32;
+                        if let Some(base) =
+                            heap.try_realloc_in_place(&mut mem, live[i].base, new_size)
+                        {
+                            assert_eq!(base, live[i].base);
+                            let old_total = old_usable + HEADER;
+                            let new_usable = heap.size(&mut mem, base);
+                            let new_total = new_usable + HEADER;
+                            freed_bytes -= new_total - old_total;
+                            let old_len = live[i].data.len();
+                            let new_len = new_usable as usize;
+                            let mut data = std::mem::take(&mut live[i].data);
+                            data.resize(new_len, 0);
+                            for j in old_len..new_len {
+                                data[j] = (step as u8).wrapping_add(j as u8);
+                            }
+                            // The app initializes the newly exposed region; the
+                            // allocator's in-place grow leaves it untouched.
+                            mem[base + old_len as u32..][..(new_len - old_len)]
+                                .copy_from_slice(&data[old_len..]);
+                            live[i].data = data;
+                        }
+                    }
+                }
+                3 => {
+                    // Shrink a random live allocation in place.
+                    if !live.is_empty() {
+                        let i = rng.pick(live.len());
+                        let old_usable = heap.size(&mut mem, live[i].base);
+                        let new_size = old_usable.saturating_sub(1 + rng.pick(48) as u32).max(1);
+                        let base = heap
+                            .try_realloc_in_place(&mut mem, live[i].base, new_size)
+                            .unwrap();
+                        assert_eq!(base, live[i].base);
+                        let old_total = old_usable + HEADER;
+                        let new_usable = heap.size(&mut mem, base);
+                        let new_total = new_usable + HEADER;
+                        freed_bytes += old_total - new_total;
+                        live[i].data.truncate(new_usable as usize);
+                    }
+                }
+                _ => unreachable!(),
+            }
+
+            // After every operation, verify the model against the allocator.
+            let free = heap.freelist.borrow();
+            check_model(&mut mem, &heap, &free, &live, freed_bytes);
+        }
+
+        // Release everything; usable capacity must be fully recovered.
+        for a in live {
+            let usable = heap.size(&mut mem, a.base);
+            heap.free(&mut mem, a.base);
+            freed_bytes += usable + HEADER;
+        }
+        let free = heap.freelist.borrow();
+        assert_eq!(
+            free.nodes,
+            [FreeNode {
+                addr: START,
+                size: SIZE
+            }]
+        );
+        assert_eq!(freed_bytes, SIZE);
+        drop(free);
+        let big = heap.try_alloc(&mut mem, SIZE - HEADER).unwrap();
+        assert_eq!(big, START + HEADER);
+        assert_eq!(heap.size(&mut mem, big), SIZE - HEADER);
+        assert!(heap.freelist.borrow().nodes.is_empty());
     }
 }

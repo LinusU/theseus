@@ -153,7 +153,13 @@ pub fn TlsAlloc(_ctx: &mut Context) -> u32 {
 
 #[win32_derive::dllexport]
 pub fn TlsGetValue(ctx: &mut Context, dwTlsIndex: u32) -> u32 {
-    teb(ctx).TlsSlots[dwTlsIndex as usize]
+    // A successful retrieval clears the calling thread's last error, so a
+    // stored zero does not look like failure under the documented
+    // error-checking pattern (SetLastError(ERROR_SUCCESS) before the call).
+    // Per-thread TEB storage keeps other threads' errors untouched.
+    let value = teb(ctx).TlsSlots[dwTlsIndex as usize];
+    set_last_error(ctx, 0);
+    value
 }
 
 #[win32_derive::dllexport]
