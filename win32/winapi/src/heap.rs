@@ -142,10 +142,11 @@ impl FreeList {
     }
 
     fn realloc_in_place(&mut self, mem: &mut Memory, addr: u32, new_size: u32) -> Option<u32> {
-        let hdr = addr - HEADER;
         // Only a live allocation can be resized; read its recorded size rather
-        // than trusting header bytes.
+        // than trusting header bytes, and derive the header address only after
+        // that check so an invalid address below HEADER can't underflow.
         let old_total = *self.live.get(&addr)?;
+        let hdr = addr.checked_sub(HEADER)?;
         let new_total = align8(new_size)?.checked_add(HEADER)?;
 
         if new_total == old_total {
@@ -553,6 +554,33 @@ mod tests {
         assert_eq!(heap.size(&mut mem, b), 64);
         heap.free(&mut mem, b);
         heap.free(&mut mem, c);
+    }
+
+    /// Resizing an address below HEADER must return None (never underflow the
+    /// header subtraction) and leave the heap unchanged.
+    #[test]
+    fn realloc_in_place_rejects_low_addresses() {
+        let mut mem = Memory::leak_new(1 << 20);
+        let heap = Heap::new(0x10000, 0x10000);
+        let a = heap.try_alloc(&mut mem, 8).unwrap();
+        let before = {
+            let free = heap.freelist.borrow();
+            nodes(&free)
+        };
+        for addr in [0u32, 1, HEADER - 1] {
+            assert!(
+                heap.try_realloc_in_place(&mut mem, addr, 16).is_none(),
+                "resize of {:x} should be rejected",
+                addr
+            );
+        }
+        // The heap is unchanged and the live allocation still resizes normally.
+        let free = heap.freelist.borrow();
+        assert_eq!(nodes(&free), before);
+        drop(free);
+        assert_eq!(heap.size(&mut mem, a), 8);
+        assert_eq!(heap.try_realloc_in_place(&mut mem, a, 32), Some(a));
+        heap.free(&mut mem, a);
     }
 
     /// Deterministic xorshift PRNG for the seeded allocator test.

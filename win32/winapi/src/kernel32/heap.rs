@@ -1276,6 +1276,12 @@ mod tests {
     /// Dirty a 16-byte usable block, free it, prove the freed storage is
     /// reused dirty, then allocate `flags`/`sz` with ZEROINIT and require every
     /// byte reported by GlobalSize to be zero (not merely the requested size).
+    ///
+    /// The handle `z` is opaque when `flags` includes GMEM_MOVEABLE, so the
+    /// verification always inspects the bytes at the locked pointer `p`, not at
+    /// the handle value. A `p == d` assertion proves this controlled first-fit
+    /// fixture actually reused the dirtied allocation rather than some other
+    /// (possibly already-zero) storage.
     fn dirty_reuse_zeroinit(ctx: &mut Context, flags: GMEM, sz: u32) {
         let d = kernel32::GlobalAlloc(ctx, GMEM::empty(), 16);
         let du = kernel32::GlobalSize(ctx, d);
@@ -1283,26 +1289,35 @@ mod tests {
         kernel32::GlobalFree(ctx, Ptr::new(d));
         // Prove the fixture actually supplies dirty reused storage.
         let r = kernel32::GlobalAlloc(ctx, GMEM::empty(), 16);
+        assert_eq!(r, d, "first-fit fixture did not reuse the freed block");
         assert!(
             ctx.memory[r..][..16].iter().any(|&b| b != 0),
             "freed storage not reused as dirty"
         );
         kernel32::GlobalFree(ctx, Ptr::new(r));
         let z = kernel32::GlobalAlloc(ctx, flags, sz);
-        assert!(z != 0);
+        assert_ne!(z, 0);
+        let p = kernel32::GlobalLock(ctx, z);
+        assert_ne!(p, 0);
+        // This is a controlled first-fit allocator fixture, so verify that the
+        // allocation being checked actually reused the dirtied storage.
+        assert_eq!(p, d, "fixture did not reuse the dirtied allocation");
         let usable = kernel32::GlobalSize(ctx, z);
         assert!(usable >= sz);
         assert!(
-            ctx.memory[z..][..usable as usize].iter().all(|&b| b == 0),
+            ctx.memory[p..][..usable as usize].iter().all(|&b| b == 0),
             "size {sz}: usable {usable} not fully zeroed"
         );
-        kernel32::GlobalFree(ctx, Ptr::new(z));
+        kernel32::GlobalUnlock(ctx, z);
+        assert_eq!(kernel32::GlobalFree(ctx, Ptr::new(z)), 0);
     }
 
     /// Dirty a usable block, free it, and force reuse for odd-sized
     /// GMEM_ZEROINIT requests; every byte reported by GlobalSize must be zero,
-    /// not merely the requested range. Covers fixed, movable, and the fixed
-    /// zero-byte case, each with its own dirty fixture.
+    /// not merely the requested range. Covers fixed and movable (each with its
+    /// own dirty fixture) and the fixed zero-byte case. The movable zero-byte
+    /// case is a discarded handle with no backing to inspect, so it is not
+    /// exercised here.
     #[test]
     fn zeroinit_clears_full_usable() {
         let _g = SERIAL.lock();
@@ -1310,8 +1325,8 @@ mod tests {
 
         for sz in [1u32, 3, 7, 9] {
             dirty_reuse_zeroinit(&mut ctx, GMEM::ZEROINIT, sz);
+            dirty_reuse_zeroinit(&mut ctx, GMEM::MOVEABLE | GMEM::ZEROINIT, sz);
         }
-        dirty_reuse_zeroinit(&mut ctx, GMEM::MOVEABLE | GMEM::ZEROINIT, 3);
         dirty_reuse_zeroinit(&mut ctx, GMEM::ZEROINIT, 0);
     }
 
@@ -1603,6 +1618,13 @@ mod tests {
         // First backed allocation consumes u32::MAX.
         let a = kernel32::GlobalAlloc(&mut ctx, GMEM::MOVEABLE, 16);
         assert!(a != 0);
+        // Snapshot the registry immediately before the failing calls: the set
+        // of movable handles and every backing-pointer mapping.
+        let (movable_before, by_ptr_before) = {
+            let state = kernel32::lock();
+            let keys: Vec<u32> = state.global_mem.movable.keys().copied().collect();
+            (keys, state.global_mem.by_ptr.clone())
+        };
         // Now the counter wraps to the occupied restart region: every caller
         // must fail cleanly.
         assert_eq!(kernel32::GlobalAlloc(&mut ctx, GMEM::MOVEABLE, 16), 0);
@@ -1615,8 +1637,25 @@ mod tests {
         );
         assert_eq!(gerr(&mut ctx), ERROR_NOT_ENOUGH_MEMORY);
 
+        // The failing calls must not have added, removed, or altered any
+        // registry entry or backing mapping.
+        {
+            let state = kernel32::lock();
+            assert_eq!(
+                state.global_mem.movable.len(),
+                movable_before.len(),
+                "movable registry grew/shrunk"
+            );
+            let keys: Vec<u32> = state.global_mem.movable.keys().copied().collect();
+            assert_eq!(keys, movable_before, "movable registry entries changed");
+            assert_eq!(
+                state.global_mem.by_ptr, by_ptr_before,
+                "backing-pointer mappings changed"
+            );
+        }
+
         // The original fixed pointer and the surviving backed allocation are
-        // intact; no registry entry or heap capacity was lost.
+        // intact.
         assert_eq!(kernel32::GlobalSize(&mut ctx, f), 32);
         assert_eq!(&ctx.memory[f..][..32], b"0123456789abcdef0123456789abcdef");
         assert_eq!(kernel32::GlobalLock(&mut ctx, f), f);
@@ -1636,5 +1675,17 @@ mod tests {
         kernel32::GlobalFree(&mut ctx, Ptr::new(a));
         kernel32::GlobalFree(&mut ctx, Ptr::new(f));
         kernel32::GlobalFree(&mut ctx, Ptr::new(g));
+
+        // After releasing the backed allocations, the heap's full recoverable
+        // capacity must be available: a fixed allocation of the whole heap
+        // (minus the header) succeeds and reports the full usable size.
+        let cap = {
+            let state = kernel32::lock();
+            state.process_heap.size
+        };
+        let big = kernel32::GlobalAlloc(&mut ctx, GMEM::empty(), cap - HEADER);
+        assert_ne!(big, 0, "full recoverable capacity not available");
+        assert_eq!(kernel32::GlobalSize(&mut ctx, big), cap - HEADER);
+        kernel32::GlobalFree(&mut ctx, Ptr::new(big));
     }
 }
